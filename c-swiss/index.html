@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code 源码解读 · 档案栅格风</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Geist+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:        oklch(0.985 0.003 240);
+    --paper-alt:    oklch(0.962 0.004 240);
+    --paper-sink:   oklch(0.945 0.005 240);
+    --ink:          oklch(0.175 0.008 240);
+    --ink-dim:      oklch(0.40  0.008 240);
+    --ink-faint:    oklch(0.62  0.006 240);
+    --ink-ghost:    oklch(0.78  0.005 240);
+    --rule:         oklch(0.80  0.006 240);
+    --rule-hair:    oklch(0.88  0.005 240);
+    --oxide:        oklch(0.52  0.185 28);
+    --oxide-soft:   oklch(0.70  0.11 30);
+
+    --sans: "Familjen Grotesk", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+    --mono: "Geist Mono", ui-monospace, monospace;
+
+    --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
+    --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px; --s-9: 96px; --s-10: 128px;
+
+    --col: 1fr;
+    --gutter: 32px;
+  }
+  *,*::before,*::after { box-sizing: border-box; }
+  html { background: var(--paper); color: var(--ink); }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    font-size: 15.5px;
+    line-height: 1.6;
+    font-feature-settings: "kern", "liga", "calt", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* showcase nav */
+  .showcase-bar {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: var(--s-3) var(--s-6);
+    background: color-mix(in oklch, var(--paper) 90%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .showcase-bar a { color: var(--ink-dim); text-decoration: none; }
+  .showcase-bar a:hover { color: var(--oxide); }
+  .showcase-bar .switcher { display: flex; gap: var(--s-5); }
+  .showcase-bar .switcher a.current {
+    color: var(--oxide);
+    font-weight: 500;
+  }
+
+  /* registry header */
+  .registry {
+    display: grid;
+    grid-template-columns: 140px 1fr auto auto;
+    gap: var(--s-5);
+    padding: var(--s-3) var(--s-6);
+    background: var(--paper-alt);
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    align-items: center;
+    color: var(--ink-faint);
+  }
+  .registry .rtag {
+    color: var(--oxide);
+    font-weight: 500;
+    letter-spacing: 0.18em;
+  }
+  .registry .rkv { color: var(--ink-dim); }
+  .registry .rkv b { color: var(--ink); font-weight: 500; }
+
+  .wrap {
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: var(--s-10) var(--s-6) var(--s-10);
+  }
+
+  /* masthead — strict grid */
+  .masthead {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
+    gap: var(--s-8);
+    padding-bottom: var(--s-8);
+    border-bottom: 2px solid var(--ink);
+    margin-bottom: var(--s-9);
+  }
+  .masthead .left .idx {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--oxide);
+    margin-bottom: var(--s-4);
+  }
+  .masthead .left h1 {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: clamp(3rem, 7.5vw, 6.4rem);
+    line-height: 0.92;
+    letter-spacing: -0.035em;
+    margin: 0 0 var(--s-5) 0;
+    color: var(--ink);
+  }
+  .masthead .left h1 .ital {
+    font-style: italic;
+    font-weight: 400;
+    color: var(--oxide);
+  }
+  .masthead .left .caption {
+    font-family: var(--sans);
+    font-weight: 400;
+    font-size: clamp(1rem, 1.8vw, 1.15rem);
+    line-height: 1.55;
+    color: var(--ink-dim);
+    max-width: 40ch;
+    margin: 0;
+  }
+
+  /* facts table */
+  .facts {
+    border-top: 1px solid var(--ink);
+    align-self: start;
+  }
+  .facts dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 1fr auto;
+  }
+  .facts dt, .facts dd {
+    padding: var(--s-3) 0;
+    border-bottom: 1px solid var(--rule-hair);
+    margin: 0;
+  }
+  .facts dt {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    align-self: center;
+  }
+  .facts dd {
+    text-align: right;
+    font-family: var(--sans);
+    font-weight: 500;
+    color: var(--ink);
+    font-size: 16px;
+    letter-spacing: -0.01em;
+  }
+  .facts dd.num {
+    font-family: var(--mono);
+    font-feature-settings: "tnum";
+    font-weight: 400;
+  }
+  .facts dd .unit {
+    color: var(--ink-faint);
+    font-family: var(--mono);
+    font-size: 11px;
+    margin-left: 6px;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+  }
+
+  /* synopsis */
+  .synopsis {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: var(--s-7);
+    margin-bottom: var(--s-10);
+    padding-bottom: var(--s-7);
+    border-bottom: 1px solid var(--rule);
+  }
+  .synopsis .sig {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--oxide);
+  }
+  .synopsis .body { max-width: 64ch; }
+  .synopsis p {
+    margin: 0 0 var(--s-4) 0;
+    font-size: 1.0625rem;
+    line-height: 1.72;
+    color: var(--ink);
+  }
+  .synopsis p:last-child { margin: 0; color: var(--ink-dim); }
+  .synopsis code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    color: var(--oxide);
+    letter-spacing: 0.02em;
+  }
+  .synopsis em {
+    font-style: italic;
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  /* section heading */
+  .sh {
+    display: grid;
+    grid-template-columns: 180px 1fr auto;
+    gap: var(--s-5);
+    align-items: baseline;
+    padding-bottom: var(--s-4);
+    border-bottom: 1px solid var(--ink);
+    margin-bottom: 0;
+  }
+  .sh .no {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--oxide);
+    font-weight: 500;
+  }
+  .sh h2 {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: clamp(1.6rem, 3vw, 2.1rem);
+    letter-spacing: -0.02em;
+    margin: 0;
+    color: var(--ink);
+  }
+  .sh .range {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  /* Table-of-contents: tabular, with column headers */
+  .toc-table {
+    width: 100%;
+    margin-bottom: var(--s-9);
+    border-collapse: collapse;
+    font-family: var(--sans);
+  }
+  .toc-table thead th {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-weight: 500;
+    color: var(--ink-faint);
+    text-align: left;
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper);
+    vertical-align: baseline;
+  }
+  .toc-table thead th.r { text-align: right; }
+  .toc-table thead th.num { text-align: center; width: 70px; }
+
+  .toc-table tr.part-sep td {
+    padding: var(--s-6) var(--s-4) var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--ink);
+  }
+  .toc-table tr.part-sep .p-no {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--oxide);
+  }
+  .toc-table tr.part-sep .p-name {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: 22px;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+  .toc-table tr.part-sep .p-note {
+    font-family: var(--sans);
+    font-style: italic;
+    color: var(--ink-dim);
+    font-size: 14px;
+    font-weight: 400;
+  }
+  .toc-table tr.part-sep .p-span {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    text-align: right;
+    letter-spacing: 0.06em;
+  }
+
+  .toc-table tr.ch-row { transition: background 0.15s; }
+  .toc-table tr.ch-row:hover { background: var(--paper-alt); }
+  .toc-table tr.ch-row:hover .ch-link { color: var(--oxide); }
+  .toc-table tr.ch-row:hover .ch-no { color: var(--oxide); }
+  .toc-table tr.ch-row td {
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--rule-hair);
+    vertical-align: baseline;
+  }
+  .toc-table .ch-no {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
+    text-align: center;
+    font-feature-settings: "tnum";
+    width: 70px;
+  }
+  .toc-table .ch-link {
+    font-family: var(--sans);
+    font-size: 16px;
+    color: var(--ink);
+    text-decoration: none;
+    letter-spacing: -0.005em;
+  }
+  .toc-table .ch-link .en {
+    font-style: italic;
+    color: var(--oxide-soft);
+    font-weight: 500;
+  }
+  .toc-table .ch-topic {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.06em;
+  }
+  .toc-table .ch-refs {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-dim);
+    text-align: right;
+    font-feature-settings: "tnum";
+    white-space: nowrap;
+  }
+  .toc-table .ch-refs .u {
+    color: var(--ink-faint);
+    font-size: 10.5px;
+    margin-left: 4px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  /* sample — strict grid layout */
+  .sample {
+    display: grid;
+    grid-template-columns: 180px 1fr 220px;
+    gap: var(--s-7);
+    margin-top: var(--s-6);
+    padding-top: var(--s-7);
+  }
+  .sample .meta-col {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    line-height: 1.7;
+    letter-spacing: 0.04em;
+  }
+  .sample .meta-col dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--s-4);
+  }
+  .sample .meta-col dt {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--oxide);
+    margin: 0 0 2px 0;
+  }
+  .sample .meta-col dd {
+    margin: 0;
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    letter-spacing: -0.01em;
+  }
+  .sample .meta-col dd.m {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.02em;
+  }
+
+  .sample .body-col {
+    max-width: 68ch;
+  }
+  .sample .body-col .sample-tag {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--oxide);
+    margin-bottom: var(--s-3);
+  }
+  .sample .body-col h3 {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: clamp(1.75rem, 3.5vw, 2.2rem);
+    letter-spacing: -0.02em;
+    line-height: 1.12;
+    margin: 0 0 var(--s-5) 0;
+  }
+  .sample .body-col h3 .num {
+    font-family: var(--mono);
+    font-size: 0.55em;
+    letter-spacing: 0.12em;
+    color: var(--ink-faint);
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 400;
+  }
+  .sample .body-col p {
+    margin: 0 0 var(--s-4) 0;
+    font-size: 1.03rem;
+    line-height: 1.75;
+  }
+  .sample .body-col p code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    color: var(--oxide);
+    padding: 0.05em 0.3em;
+    background: color-mix(in oklch, var(--oxide) 7%, transparent);
+    border-radius: 2px;
+  }
+  .sample .body-col em { font-style: italic; color: var(--ink); font-weight: 500; }
+
+  .cite {
+    font-family: var(--sans);
+    color: var(--oxide);
+    text-decoration: none;
+    border-bottom: 1px solid color-mix(in oklch, var(--oxide) 35%, transparent);
+    padding-bottom: 1px;
+  }
+  .cite:hover { border-bottom-color: var(--oxide); }
+  .cite .sup {
+    font-family: var(--mono);
+    font-size: 0.7em;
+    vertical-align: super;
+    margin-left: 3px;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
+  }
+
+  figure.codeblock {
+    margin: var(--s-6) 0;
+    background: var(--paper-sink);
+    border-top: 1px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+  }
+  figure.codeblock figcaption {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    padding: var(--s-3) var(--s-5);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    border-bottom: 1px dashed var(--rule);
+  }
+  figure.codeblock figcaption .file { color: var(--oxide); text-transform: none; letter-spacing: 0.02em; }
+  figure.codeblock pre {
+    margin: 0;
+    padding: var(--s-4) var(--s-5);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.85;
+    color: var(--ink);
+    overflow-x: auto;
+  }
+  figure.codeblock pre .kw { color: var(--oxide); font-weight: 500; }
+  figure.codeblock pre .cm { color: var(--ink-faint); font-style: italic; }
+  figure.codeblock pre .str { color: oklch(0.42 0.12 250); }
+
+  blockquote.ep {
+    margin: var(--s-6) 0;
+    padding: var(--s-4) 0 var(--s-4) var(--s-5);
+    border-left: 1px solid var(--ink);
+    font-family: var(--sans);
+    font-style: italic;
+    font-size: 1.1rem;
+    line-height: 1.55;
+    color: var(--ink);
+  }
+  blockquote.ep cite {
+    display: block;
+    font-style: normal;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-top: var(--s-3);
+  }
+
+  /* footer */
+  footer.fo {
+    margin-top: var(--s-10);
+    padding-top: var(--s-5);
+    border-top: 2px solid var(--ink);
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: var(--s-6);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  footer.fo .mark {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: 15px;
+    text-transform: none;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  footer.fo .mark .dot { color: var(--oxide); }
+
+  /* responsive */
+  @media (max-width: 960px) {
+    .masthead { grid-template-columns: 1fr; gap: var(--s-6); }
+    .synopsis { grid-template-columns: 1fr; gap: var(--s-3); }
+    .sh { grid-template-columns: auto 1fr; }
+    .sh .range { grid-column: 2; text-align: left; }
+    .sample { grid-template-columns: 1fr; }
+    .sample .meta-col { order: 2; border-top: 1px solid var(--rule); padding-top: var(--s-4); }
+    .registry { grid-template-columns: auto 1fr; }
+    .registry .rkv:last-child { display: none; }
+  }
+  @media (max-width: 600px) {
+    .wrap { padding: var(--s-7) var(--s-4); }
+    .toc-table thead th.topic,
+    .toc-table td.ch-topic { display: none; }
+  }
+
+  ::selection { background: color-mix(in oklch, var(--oxide) 28%, transparent); color: var(--ink); }
+</style>
+</head>
+<body>
+
+<nav class="showcase-bar">
+  <a href="../index.html">← showcase</a>
+  <div class="switcher">
+    <a href="../a-editorial/index.html">A · Editorial</a>
+    <a href="../b-terminal/index.html">B · Terminal</a>
+    <a href="../c-swiss/index.html" class="current">C · Swiss</a>
+  </div>
+</nav>
+
+<div class="registry">
+  <span class="rtag">registry · cc-src</span>
+  <span class="rkv">catalog / <b>23 chapters</b></span>
+  <span class="rkv">rev <b>2026-04-21</b></span>
+  <span class="rkv">status <b>drafting</b></span>
+</div>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="left">
+      <div class="idx">volume 01 · engineering monograph · 2026</div>
+      <h1>Claude Code<br><span class="ital">源码解读</span></h1>
+      <p class="caption">对 Claude Code 仓库的一次深读。每一章只挑一个值得借鉴的设计点，讲透就停。</p>
+    </div>
+
+    <aside class="facts">
+      <dl>
+        <dt>chapters</dt><dd class="num">23</dd>
+        <dt>prose</dt><dd class="num">≈ 15,123 <span class="unit">lines</span></dd>
+        <dt>source refs</dt><dd class="num">≈ 1,200 <span class="unit">file : line</span></dd>
+        <dt>language</dt><dd>简体中文</dd>
+        <dt>audience</dt><dd>staff eng.</dd>
+        <dt>license</dt><dd>—</dd>
+      </dl>
+    </aside>
+  </header>
+
+  <section class="synopsis">
+    <div class="sig">§ 00 · 提要</div>
+    <div class="body">
+      <p>这本书<em>不是</em>用户手册，也<em>不是</em> API 参考。它是对 Claude Code 仓库的一次深读 —— 只讲<em>值得带走的工程做法</em>：Agent Loop 怎么把九类横切关注点拼成一条可读主干；sub-agent 用什么机制共用父 session 的 token 预算；权限系统怎么做到"每次都问"却不烦；Skills、Plugins、MCP、Hooks 这几层扩展机制如何分工。</p>
+      <p>每一章只讲一个设计点。凡结论必附 <code>path/file.ts:line</code> 级别的源码引用。禁用空洞评价，只说<em>为什么这样做</em>、<em>换一种会怎样</em>、<em>成本是什么、收益是什么</em>。</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sh">
+      <div class="no">§ 01 · catalogue</div>
+      <h2>章节清单</h2>
+      <div class="range">23 items · 5 parts</div>
+    </div>
+
+    <table class="toc-table">
+      <thead>
+        <tr>
+          <th class="num">§</th>
+          <th>title</th>
+          <th class="topic">topic</th>
+          <th class="r">source refs</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="part-sep">
+          <td colspan="4">
+            <div style="display:flex; align-items:baseline; gap:var(--s-5); justify-content:space-between; flex-wrap: wrap;">
+              <div style="display:flex; align-items:baseline; gap:var(--s-4);">
+                <span class="p-no">part · i</span>
+                <span class="p-name">总览</span>
+                <span class="p-note">—— 先把"功能叫什么"和"真实形态"铺平</span>
+              </div>
+              <span class="p-span">§ 01 — 02</span>
+            </div>
+          </td>
+        </tr>
+        <tr class="ch-row"><td class="ch-no">01</td><td><a href="#" class="ch-link">功能全景清单</a></td><td class="ch-topic">entry · commands · tools</td><td class="ch-refs">84<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">02</td><td><a href="#" class="ch-link">典型使用场景 <span class="en">· showcase</span></a></td><td class="ch-topic">five real tasks</td><td class="ch-refs">31<span class="u">refs</span></td></tr>
+
+        <tr class="part-sep">
+          <td colspan="4">
+            <div style="display:flex; align-items:baseline; gap:var(--s-5); justify-content:space-between; flex-wrap: wrap;">
+              <div style="display:flex; align-items:baseline; gap:var(--s-4);">
+                <span class="p-no">part · ii</span>
+                <span class="p-name">核心引擎</span>
+                <span class="p-note">—— 主循环、子 agent、计划、隔离、上下文、工具、权限</span>
+              </div>
+              <span class="p-span">§ 03 — 09</span>
+            </div>
+          </td>
+        </tr>
+        <tr class="ch-row"><td class="ch-no">03</td><td><a href="#" class="ch-link"><span class="en">Agent Loop</span> · 推理-工具循环主引擎</a></td><td class="ch-topic">QueryEngine · query()</td><td class="ch-refs">112<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">04</td><td><a href="#" class="ch-link">Multi-Agent 与 Sub-Agent 协程调度</a></td><td class="ch-topic">coroutine · depth</td><td class="ch-refs">68<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">05</td><td><a href="#" class="ch-link"><span class="en">Plan Mode</span> · 让 Agent 先想后做</a></td><td class="ch-topic">read-only phase</td><td class="ch-refs">42<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">06</td><td><a href="#" class="ch-link"><span class="en">Worktree</span> 隔离模式</a></td><td class="ch-topic">git isolation</td><td class="ch-refs">39<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">07</td><td><a href="#" class="ch-link">上下文管理与记忆</a></td><td class="ch-topic">compact · memory</td><td class="ch-refs">77<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">08</td><td><a href="#" class="ch-link">工具系统 · <span class="en">Tool 接口与 ToolSearch</span></a></td><td class="ch-topic">deferred tools</td><td class="ch-refs">64<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">09</td><td><a href="#" class="ch-link">权限模型 · 每次都问却不烦</a></td><td class="ch-topic">permission ladder</td><td class="ch-refs">58<span class="u">refs</span></td></tr>
+
+        <tr class="part-sep">
+          <td colspan="4">
+            <div style="display:flex; align-items:baseline; gap:var(--s-5); justify-content:space-between; flex-wrap: wrap;">
+              <div style="display:flex; align-items:baseline; gap:var(--s-4);">
+                <span class="p-no">part · iii</span>
+                <span class="p-name">扩展机制</span>
+                <span class="p-note">—— 四层扩展面如何分工</span>
+              </div>
+              <span class="p-span">§ 10 — 14</span>
+            </div>
+          </td>
+        </tr>
+        <tr class="ch-row"><td class="ch-no">10</td><td><a href="#" class="ch-link"><span class="en">Skills</span> 技能系统</a></td><td class="ch-topic">prompt pack</td><td class="ch-refs">52<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">11</td><td><a href="#" class="ch-link"><span class="en">Plugins</span> 插件系统</a></td><td class="ch-topic">out-of-tree</td><td class="ch-refs">47<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">12</td><td><a href="#" class="ch-link"><span class="en">MCP</span> 集成与 upstream 代理</a></td><td class="ch-topic">bridge</td><td class="ch-refs">61<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">13</td><td><a href="#" class="ch-link"><span class="en">Cron</span> / 定时任务</a></td><td class="ch-topic">schedule</td><td class="ch-refs">44<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">14</td><td><a href="#" class="ch-link"><span class="en">Hooks</span> · 用户可编程的生命周期</a></td><td class="ch-topic">lifecycle</td><td class="ch-refs">55<span class="u">refs</span></td></tr>
+
+        <tr class="part-sep">
+          <td colspan="4">
+            <div style="display:flex; align-items:baseline; gap:var(--s-5); justify-content:space-between; flex-wrap: wrap;">
+              <div style="display:flex; align-items:baseline; gap:var(--s-4);">
+                <span class="p-no">part · iv</span>
+                <span class="p-name">交互与集成</span>
+                <span class="p-note">—— 从主动提示到多端、从后台到远程</span>
+              </div>
+              <span class="p-span">§ 15 — 20</span>
+            </div>
+          </td>
+        </tr>
+        <tr class="ch-row"><td class="ch-no">15</td><td><a href="#" class="ch-link"><span class="en">Proactive</span> · 主动提示而不打扰</a></td><td class="ch-topic">nudges</td><td class="ch-refs">33<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">16</td><td><a href="#" class="ch-link"><span class="en">Background tasks</span> 后台任务</a></td><td class="ch-topic">async</td><td class="ch-refs">40<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">17</td><td><a href="#" class="ch-link"><span class="en">Remote sessions</span> 与 Teleport</a></td><td class="ch-topic">broker</td><td class="ch-refs">49<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">18</td><td><a href="#" class="ch-link">IDE / Chrome / Computer Use</a></td><td class="ch-topic">multi-host</td><td class="ch-refs">72<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">19</td><td><a href="#" class="ch-link"><span class="en">Buddy</span> 宠物系统</a></td><td class="ch-topic">companion</td><td class="ch-refs">29<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">20</td><td><a href="#" class="ch-link">输入层 · 语音 / Vim / 键位</a></td><td class="ch-topic">input stack</td><td class="ch-refs">51<span class="u">refs</span></td></tr>
+
+        <tr class="part-sep">
+          <td colspan="4">
+            <div style="display:flex; align-items:baseline; gap:var(--s-5); justify-content:space-between; flex-wrap: wrap;">
+              <div style="display:flex; align-items:baseline; gap:var(--s-4);">
+                <span class="p-no">part · v</span>
+                <span class="p-name">工程与 SDK</span>
+                <span class="p-note">—— 从 Ink 到可观测，再到把它当库用</span>
+              </div>
+              <span class="p-span">§ 21 — 23</span>
+            </div>
+          </td>
+        </tr>
+        <tr class="ch-row"><td class="ch-no">21</td><td><a href="#" class="ch-link"><span class="en">Ink</span> 终端 UI 背后的工程</a></td><td class="ch-topic">react in terminal</td><td class="ch-refs">46<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">22</td><td><a href="#" class="ch-link">成本 / 可观测 / 调试</a></td><td class="ch-topic">observability</td><td class="ch-refs">54<span class="u">refs</span></td></tr>
+        <tr class="ch-row"><td class="ch-no">23</td><td><a href="#" class="ch-link"><span class="en">Agent SDK</span> · 把 Claude Code 当库用</a></td><td class="ch-topic">embed</td><td class="ch-refs">38<span class="u">refs</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="sh">
+      <div class="no">§ 02 · specimen</div>
+      <h2>试读一段</h2>
+      <div class="range">ch.03 · lines 1 — 96</div>
+    </div>
+
+    <div class="sample">
+      <aside class="meta-col">
+        <dl>
+          <dt>chapter</dt>
+          <dd class="m">§ 03</dd>
+          <dt>reading</dt>
+          <dd>32 min</dd>
+          <dt>refs</dt>
+          <dd class="m">47</dd>
+          <dt>related</dt>
+          <dd class="m">§ 04 · § 07 · § 09</dd>
+          <dt>key files</dt>
+          <dd class="m" style="line-height:1.8">src/query.ts<br>src/QueryEngine.ts<br>src/services/tools/toolExecution.ts</dd>
+          <dt>last edit</dt>
+          <dd class="m">2026-04-18</dd>
+        </dl>
+      </aside>
+
+      <article class="body-col">
+        <div class="sample-tag">specimen · chapter opening</div>
+        <h3><span class="num">chapter 03 · part ii</span>Agent Loop：推理-工具循环主引擎</h3>
+
+        <p>你在终端敲一条"把 <code>src/utils/foo.ts</code> 里的 <code>memoize</code> 换成 <code>lodash/memoize</code>"，按下回车。之后发生的事是一条流水线：模型先 yield 一段文本，再 yield 一个 <code>tool_use</code>，工具执行完把 <code>tool_result</code> 喂回模型，再 yield 下一个 <code>tool_use</code>，直到 <code>end_turn</code>。</p>
+
+        <p>屏幕上看到的这条"tool_use → tool_result → assistant → tool_use → …"，在 Anthropic 官方文档里是 5 行伪码；在 Claude Code 里是一个 1729 行的 async generator 加上 1295 行的包装类，共同处理<em>伪码没告诉你的那些问题</em>：流式工具执行、模型 fallback、上下文超限、输出被截断、stop hook 反复拦截、用户提前打断、权限请求等待。</p>
+
+        <p>Claude Code 把一条 agent 会话拆成两层 —— 外层 <a href="#" class="cite">QueryEngine<span class="sup">§3.1</span></a> 是 session 级对象，每 conversation 一个，持有跨 turn 不变的东西；内层 <a href="#" class="cite">query()<span class="sup">§3.2</span></a> 是一个纯 async generator，只管消息进、消息出，不接 UI 状态、不管 session 存储。</p>
+
+        <figure class="codeblock">
+          <figcaption>
+            <span><span class="file">src/QueryEngine.ts</span> · lines 184 — 207</span>
+            <span>typescript</span>
+          </figcaption>
+<pre><span class="cm">// One QueryEngine per conversation.</span>
+<span class="cm">// Each submitMessage() call starts a new turn.</span>
+<span class="kw">export class</span> QueryEngine {
+  <span class="kw">private</span> config: QueryEngineConfig
+  <span class="kw">private</span> mutableMessages: Message[]
+  <span class="kw">private</span> abortController: AbortController
+  <span class="kw">private</span> permissionDenials: SDKPermissionDenial[]
+  <span class="kw">private</span> totalUsage: NonNullableUsage
+  <span class="kw">private</span> readFileState: FileStateCache
+  <span class="kw">private</span> discoveredSkillNames = <span class="kw">new</span> Set&lt;<span class="str">string</span>&gt;()
+  <span class="cm">// ...</span>
+}</pre>
+        </figure>
+
+        <p>分层的意义在 <code>query()</code> 的复用性：它既被 <code>QueryEngine.submitMessage</code> 调用（主线程），也被 sub-agent 调用（子 query 起一个嵌套循环，见 § 04），也被 compact 子任务调用（见 § 07）。分层因此不是可有可无。</p>
+
+        <blockquote class="ep">
+          query() 不该知道"美元"或"JSON schema 重试"这种应用层概念。它只负责把消息往外 yield，QueryEngine 在外面决定何时喊停。
+          <cite>§ 3.4 — 错误预算的三条独立通道</cite>
+        </blockquote>
+      </article>
+
+      <div></div>
+    </div>
+  </section>
+
+  <footer class="fo">
+    <div class="mark">claude code<span class="dot"> · </span>源码解读</div>
+    <div>set in familjen grotesk · geist mono</div>
+    <div>draft · rev 2026-04</div>
+  </footer>
+</div>
+
+</body>
+</html>

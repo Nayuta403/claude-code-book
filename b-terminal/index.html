@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code 源码解读 · 日志本风</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500;12..96,600;12..96,700&family=Azeret+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&family=Noto+Sans+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:          oklch(0.165 0.012 55);
+    --bg-raise:    oklch(0.205 0.014 55);
+    --bg-sink:     oklch(0.135 0.010 55);
+    --fg:          oklch(0.930 0.010 85);
+    --fg-dim:      oklch(0.690 0.012 75);
+    --fg-faint:    oklch(0.480 0.014 65);
+    --rule:        oklch(0.270 0.014 55);
+    --rule-soft:   oklch(0.225 0.013 55);
+    --amber:       oklch(0.785 0.135 72);
+    --amber-dim:   oklch(0.620 0.115 68);
+    --ember:       oklch(0.620 0.155 40);
+
+    --sans: "Bricolage Grotesque", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+    --mono: "Azeret Mono", ui-monospace, monospace;
+
+    --s-1: 4px;
+    --s-2: 8px;
+    --s-3: 12px;
+    --s-4: 16px;
+    --s-5: 24px;
+    --s-6: 32px;
+    --s-7: 48px;
+    --s-8: 64px;
+    --s-9: 96px;
+  }
+
+  *,*::before,*::after { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--fg); }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.70; /* +0.05 for light-on-dark */
+    font-feature-settings: "kern", "liga", "calt", "ss01";
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    position: relative;
+  }
+  body::before {
+    /* subtle warm scanline-like noise */
+    content: "";
+    position: fixed; inset: 0; pointer-events: none; z-index: 100;
+    background:
+      repeating-linear-gradient(0deg,
+        transparent 0, transparent 2px,
+        color-mix(in oklch, var(--amber) 2%, transparent) 2px,
+        color-mix(in oklch, var(--amber) 2%, transparent) 3px);
+    mix-blend-mode: screen;
+    opacity: 0.35;
+  }
+
+  /* showcase nav */
+  .showcase-bar {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: var(--s-3) var(--s-6);
+    background: color-mix(in oklch, var(--bg) 85%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+  }
+  .showcase-bar a { color: var(--fg-dim); text-decoration: none; }
+  .showcase-bar a:hover { color: var(--amber); }
+  .showcase-bar .switcher { display: flex; gap: var(--s-5); }
+  .showcase-bar .switcher a.current { color: var(--fg); }
+  .showcase-bar .switcher a.current::before {
+    content: "◆ "; color: var(--amber);
+  }
+
+  /* pager header */
+  .pager {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: var(--s-5);
+    padding: var(--s-3) var(--s-6);
+    background: var(--bg-sink);
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--fg-faint);
+  }
+  .pager .path { color: var(--fg-dim); }
+  .pager .path .slash { color: var(--fg-faint); }
+  .pager .path .file { color: var(--amber); }
+  .pager .center { text-align: center; letter-spacing: 0.08em; text-transform: uppercase; }
+  .pager .right { color: var(--fg-faint); }
+  .pager .right b { color: var(--fg-dim); font-weight: 400; }
+
+  /* wrap */
+  .wrap {
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: var(--s-9) var(--s-6) var(--s-9);
+  }
+
+  /* masthead */
+  .masthead {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--s-5);
+    padding-bottom: var(--s-8);
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: var(--s-8);
+  }
+  .kicker {
+    display: inline-flex; align-items: center; gap: var(--s-3);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--amber);
+  }
+  .kicker::before {
+    content: "";
+    width: 8px; height: 8px;
+    background: var(--amber);
+    box-shadow: 0 0 12px var(--amber);
+    animation: blink 1.6s infinite;
+  }
+  @keyframes blink { 0%,60%{opacity:1} 70%,100%{opacity:0.3} }
+
+  .book-title {
+    font-family: var(--sans);
+    font-variation-settings: "opsz" 96;
+    font-weight: 500;
+    font-size: clamp(3rem, 9vw, 7.2rem);
+    line-height: 0.95;
+    letter-spacing: -0.035em;
+    margin: 0;
+    color: var(--fg);
+  }
+  .book-title .slash { color: var(--amber); font-weight: 400; }
+  .book-title .cn { display: inline-block; margin-left: 0.15em; font-weight: 400; }
+
+  .subtitle {
+    font-family: var(--sans);
+    font-weight: 300;
+    font-size: clamp(1.05rem, 2vw, 1.3rem);
+    line-height: 1.55;
+    color: var(--fg-dim);
+    max-width: 58ch;
+    margin: 0;
+  }
+
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: var(--s-5);
+    margin-top: var(--s-5);
+    padding-top: var(--s-5);
+    border-top: 1px dashed var(--rule);
+    font-family: var(--mono);
+    font-size: 11.5px;
+  }
+  .meta-grid .mk { color: var(--fg-faint); text-transform: uppercase; letter-spacing: 0.1em; font-size: 10.5px; }
+  .meta-grid .mv { color: var(--fg); font-size: 15px; margin-top: 4px; font-family: var(--sans); font-weight: 500; letter-spacing: -0.01em; }
+
+  /* intro */
+  .intro {
+    max-width: 68ch;
+    margin: 0 0 var(--s-9) 0;
+    padding-left: var(--s-6);
+    border-left: 1px solid var(--rule);
+  }
+  .intro p {
+    margin: 0 0 var(--s-4) 0;
+    font-size: 1.0625rem;
+    line-height: 1.75;
+    color: var(--fg);
+  }
+  .intro p:last-child { margin: 0; color: var(--fg-dim); }
+  .intro em { font-style: normal; color: var(--amber); }
+
+  /* section head (TUI-style) */
+  .sect-head {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+    gap: var(--s-3);
+    margin-bottom: var(--s-6);
+    font-family: var(--mono);
+  }
+  .sect-head .prompt { color: var(--amber); font-size: 13px; font-weight: 500; }
+  .sect-head .cmd { color: var(--fg); font-size: 13px; letter-spacing: 0.02em; }
+  .sect-head .cmd .flag { color: var(--fg-faint); }
+  .sect-head .line {
+    height: 1px;
+    background: var(--rule);
+    margin-left: var(--s-3);
+  }
+
+  /* Table-of-contents — pager/log style */
+  .toc {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--bg-sink);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .toc .part {
+    border-top: 1px solid var(--rule);
+  }
+  .toc .part:first-child { border-top: none; }
+  .toc .part-row {
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    gap: var(--s-4);
+    padding: var(--s-4) var(--s-5);
+    background: color-mix(in oklch, var(--amber) 6%, var(--bg-sink));
+    align-items: baseline;
+    border-bottom: 1px solid var(--rule);
+  }
+  .toc .part-row .p-id {
+    color: var(--amber);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .toc .part-row .p-title {
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 20px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+  .toc .part-row .p-span {
+    color: var(--fg-faint);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+
+  .toc .ch-row {
+    display: grid;
+    grid-template-columns: 56px 1fr auto;
+    gap: var(--s-4);
+    padding: var(--s-3) var(--s-5);
+    border-top: 1px solid var(--rule-soft);
+    align-items: baseline;
+    text-decoration: none;
+    color: var(--fg);
+    transition: background 0.15s, color 0.15s;
+  }
+  .toc .ch-row:hover {
+    background: color-mix(in oklch, var(--amber) 5%, transparent);
+  }
+  .toc .ch-row:hover .ch-num { color: var(--amber); }
+  .toc .ch-row:hover .ch-meta { color: var(--fg-dim); }
+
+  .toc .ch-num {
+    color: var(--fg-faint);
+    font-feature-settings: "tnum";
+    letter-spacing: 0.04em;
+    font-size: 12.5px;
+  }
+  .toc .ch-num::before { content: "$ "; color: var(--amber-dim); opacity: 0.5; }
+  .toc .ch-title {
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 15.5px;
+    font-weight: 400;
+    letter-spacing: -0.005em;
+  }
+  .toc .ch-title .en {
+    font-family: var(--mono);
+    font-size: 13.5px;
+    color: var(--amber-dim);
+  }
+  .toc .ch-title .sep {
+    color: var(--fg-faint);
+    margin: 0 0.5em;
+  }
+  .toc .ch-meta {
+    color: var(--fg-faint);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    text-align: right;
+  }
+
+  /* sample reading section */
+  .sample {
+    margin-top: var(--s-9);
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--s-6);
+  }
+  .sample-card {
+    background: var(--bg-raise);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: var(--s-7) var(--s-8);
+    position: relative;
+    max-width: 960px;
+  }
+  .sample-card::before {
+    content: "file: ch03-agent-loop.md  ·  lines 1—96  ·  encoding utf-8  ·  mode read-only";
+    display: block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--fg-faint);
+    padding-bottom: var(--s-4);
+    margin-bottom: var(--s-6);
+    border-bottom: 1px dashed var(--rule);
+  }
+
+  .sample-card h3 {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: clamp(1.8rem, 3.8vw, 2.4rem);
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin: 0 0 var(--s-5) 0;
+  }
+  .sample-card h3 .ch {
+    display: block;
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--amber);
+    font-weight: 400;
+    margin-bottom: var(--s-3);
+  }
+  .sample-card p {
+    margin: 0 0 var(--s-4) 0;
+    font-size: 1.0625rem;
+    line-height: 1.8;
+    color: var(--fg);
+    max-width: 72ch;
+  }
+  .sample-card p code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    color: var(--amber);
+    background: color-mix(in oklch, var(--amber) 10%, transparent);
+    padding: 0.08em 0.4em;
+    border-radius: 2px;
+  }
+  .sample-card em {
+    font-style: normal;
+    color: var(--amber);
+  }
+
+  .cite {
+    display: inline-grid;
+    grid-template-columns: auto auto;
+    gap: var(--s-2);
+    align-items: baseline;
+    padding: 2px 8px;
+    background: color-mix(in oklch, var(--amber) 8%, transparent);
+    border: 1px solid color-mix(in oklch, var(--amber) 25%, transparent);
+    border-radius: 2px;
+    color: var(--amber);
+    text-decoration: none;
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+  .cite:hover {
+    background: color-mix(in oklch, var(--amber) 18%, transparent);
+    border-color: var(--amber);
+  }
+  .cite .ref {
+    color: var(--fg-dim);
+  }
+
+  figure.codeblock {
+    margin: var(--s-6) 0;
+    background: var(--bg-sink);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  figure.codeblock figcaption {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    padding: var(--s-3) var(--s-5);
+    background: color-mix(in oklch, var(--amber) 4%, var(--bg-sink));
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  figure.codeblock figcaption .file { color: var(--amber); }
+  figure.codeblock figcaption .tag {
+    text-transform: uppercase; letter-spacing: 0.12em; font-size: 10px;
+    color: var(--fg-faint);
+  }
+
+  figure.codeblock pre {
+    margin: 0;
+    padding: var(--s-5) 0 var(--s-5) 0;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.75;
+    color: var(--fg);
+    overflow-x: auto;
+    counter-reset: ln 183;
+  }
+  figure.codeblock pre .line {
+    display: block;
+    padding-left: 56px;
+    position: relative;
+    white-space: pre;
+  }
+  figure.codeblock pre .line::before {
+    counter-increment: ln;
+    content: counter(ln);
+    position: absolute;
+    left: 0;
+    width: 44px;
+    text-align: right;
+    color: var(--fg-faint);
+    font-size: 11.5px;
+    padding-right: var(--s-3);
+    border-right: 1px solid var(--rule-soft);
+    opacity: 0.7;
+  }
+  figure.codeblock .kw { color: var(--amber); }
+  figure.codeblock .cm { color: var(--fg-faint); }
+  figure.codeblock .str { color: oklch(0.78 0.105 150); }
+
+  /* footer */
+  footer.log {
+    margin-top: var(--s-9);
+    padding-top: var(--s-6);
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--s-4);
+    align-items: center;
+  }
+  footer.log .logo {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: 16px;
+    color: var(--fg-dim);
+    letter-spacing: -0.01em;
+  }
+  footer.log .logo .dot { color: var(--amber); }
+  footer.log .lines { text-align: right; line-height: 1.7; }
+
+  @media (max-width: 820px) {
+    .pager .center { display: none; }
+    .toc .part-row { grid-template-columns: auto 1fr; }
+    .toc .part-row .p-span { grid-column: 2; margin-top: 2px; }
+    .toc .ch-row { grid-template-columns: 44px 1fr; }
+    .toc .ch-meta { grid-column: 2; margin-top: 2px; }
+    .sample-card { padding: var(--s-5) var(--s-5); }
+  }
+  @media (max-width: 520px) {
+    .wrap { padding: var(--s-7) var(--s-4); }
+  }
+
+  ::selection { background: color-mix(in oklch, var(--amber) 35%, transparent); color: var(--fg); }
+</style>
+</head>
+<body>
+
+<nav class="showcase-bar">
+  <a href="../index.html">← showcase</a>
+  <div class="switcher">
+    <a href="../a-editorial/index.html">A · Editorial</a>
+    <a href="../b-terminal/index.html" class="current">B · Terminal</a>
+    <a href="../c-swiss/index.html">C · Swiss</a>
+  </div>
+</nav>
+
+<div class="pager">
+  <div class="path">~<span class="slash">/</span>book<span class="slash">/</span>chapters<span class="slash">/</span><span class="file">all</span></div>
+  <div class="center">claude code · source reading · v0.3</div>
+  <div class="right">23 files  ·  ~<b>15,123</b> lines  ·  last turn <b>just now</b></div>
+</div>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="kicker">reading session online</div>
+    <h1 class="book-title">claude-code<span class="slash">/</span>source<br><span class="cn">源码解读</span></h1>
+    <p class="subtitle">把一个十万行的终端 agent 当成源码读物。每一章只挑一个值得借鉴的设计点讲透，不追求覆盖度。</p>
+
+    <div class="meta-grid">
+      <div><div class="mk">chapters</div><div class="mv">23</div></div>
+      <div><div class="mk">prose lines</div><div class="mv">~15,000</div></div>
+      <div><div class="mk">audience</div><div class="mv">staff eng.</div></div>
+      <div><div class="mk">references</div><div class="mv">file.ts : line</div></div>
+      <div><div class="mk">status</div><div class="mv" style="color:var(--amber)">drafting</div></div>
+    </div>
+  </header>
+
+  <section class="intro">
+    <p>这本书<em>不是</em>用户手册，也<em>不是</em> API 参考。它是对 Claude Code 仓库的一次深读 —— 只讲值得带走的工程做法。</p>
+    <p>Agent Loop 怎么把九类横切关注点拼成一条可读主干；sub-agent 用什么机制共用父 session 的 token 预算；权限系统怎么做到"每次都问"却不烦；Skills / Plugins / MCP / Hooks 这几层扩展机制如何分工。</p>
+    <p>每一章只讲一个设计点。凡结论必附 <code>path/file.ts:line</code> 级别的源码引用。禁用空评价，只说为什么这样做、换一种会怎样、成本是什么。</p>
+  </section>
+
+  <section>
+    <div class="sect-head">
+      <span class="prompt">$</span>
+      <span class="cmd">ls ./chapters <span class="flag">--tree</span></span>
+      <span class="line"></span>
+    </div>
+
+    <div class="toc">
+      <div class="part">
+        <div class="part-row">
+          <span class="p-id">part · i</span>
+          <span class="p-title">总览</span>
+          <span class="p-span">ch.01 — 02</span>
+        </div>
+        <a href="#" class="ch-row">
+          <span class="ch-num">ch.01</span>
+          <span class="ch-title">功能全景清单 <span class="sep">·</span> <span class="en">feature inventory</span></span>
+          <span class="ch-meta">入口 · 命令 · 工具</span>
+        </a>
+        <a href="#" class="ch-row">
+          <span class="ch-num">ch.02</span>
+          <span class="ch-title">典型使用场景 <span class="sep">·</span> <span class="en">showcase</span></span>
+          <span class="ch-meta">five real tasks</span>
+        </a>
+      </div>
+
+      <div class="part">
+        <div class="part-row">
+          <span class="p-id">part · ii</span>
+          <span class="p-title">核心引擎</span>
+          <span class="p-span">ch.03 — 09</span>
+        </div>
+        <a href="#" class="ch-row"><span class="ch-num">ch.03</span><span class="ch-title"><span class="en">Agent Loop</span> <span class="sep">·</span> 推理-工具循环主引擎</span><span class="ch-meta">QueryEngine · query()</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.04</span><span class="ch-title">Multi-Agent 与 Sub-Agent 协程调度</span><span class="ch-meta">coroutine</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.05</span><span class="ch-title"><span class="en">Plan Mode</span> <span class="sep">·</span> 让 Agent 先想后做</span><span class="ch-meta">read-only phase</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.06</span><span class="ch-title"><span class="en">Worktree</span> 隔离模式</span><span class="ch-meta">git isolation</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.07</span><span class="ch-title">上下文管理与记忆</span><span class="ch-meta">compact · memory</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.08</span><span class="ch-title">工具系统 <span class="sep">·</span> <span class="en">Tool 接口 · ToolSearch</span></span><span class="ch-meta">deferred tools</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.09</span><span class="ch-title">权限模型 <span class="sep">·</span> 每次都问却不烦</span><span class="ch-meta">permission ladder</span></a>
+      </div>
+
+      <div class="part">
+        <div class="part-row">
+          <span class="p-id">part · iii</span>
+          <span class="p-title">扩展机制</span>
+          <span class="p-span">ch.10 — 14</span>
+        </div>
+        <a href="#" class="ch-row"><span class="ch-num">ch.10</span><span class="ch-title"><span class="en">Skills</span> 技能系统</span><span class="ch-meta">prompt pack</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.11</span><span class="ch-title"><span class="en">Plugins</span> 插件系统</span><span class="ch-meta">out-of-tree</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.12</span><span class="ch-title"><span class="en">MCP</span> 集成与 upstream 代理</span><span class="ch-meta">bridge</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.13</span><span class="ch-title"><span class="en">Cron</span> / 定时任务 <span class="sep">·</span> 持续运行</span><span class="ch-meta">schedule</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.14</span><span class="ch-title"><span class="en">Hooks</span> <span class="sep">·</span> 用户可编程的生命周期</span><span class="ch-meta">lifecycle</span></a>
+      </div>
+
+      <div class="part">
+        <div class="part-row">
+          <span class="p-id">part · iv</span>
+          <span class="p-title">交互与集成</span>
+          <span class="p-span">ch.15 — 20</span>
+        </div>
+        <a href="#" class="ch-row"><span class="ch-num">ch.15</span><span class="ch-title"><span class="en">Proactive</span> <span class="sep">·</span> 主动提示而不打扰</span><span class="ch-meta">nudges</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.16</span><span class="ch-title"><span class="en">Background tasks</span> 后台任务</span><span class="ch-meta">async</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.17</span><span class="ch-title"><span class="en">Remote sessions</span> 与 Teleport</span><span class="ch-meta">broker</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.18</span><span class="ch-title">IDE / Chrome / Computer Use <span class="sep">·</span> 多端集成</span><span class="ch-meta">multi-host</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.19</span><span class="ch-title"><span class="en">Buddy</span> 宠物系统</span><span class="ch-meta">companion</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.20</span><span class="ch-title">输入层 <span class="sep">·</span> 语音 / Vim / 键位</span><span class="ch-meta">input stack</span></a>
+      </div>
+
+      <div class="part">
+        <div class="part-row">
+          <span class="p-id">part · v</span>
+          <span class="p-title">工程与 SDK</span>
+          <span class="p-span">ch.21 — 23</span>
+        </div>
+        <a href="#" class="ch-row"><span class="ch-num">ch.21</span><span class="ch-title"><span class="en">Ink</span> 终端 UI 背后的工程</span><span class="ch-meta">react in terminal</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.22</span><span class="ch-title">成本 / 可观测 / 调试</span><span class="ch-meta">observability</span></a>
+        <a href="#" class="ch-row"><span class="ch-num">ch.23</span><span class="ch-title"><span class="en">Agent SDK</span> <span class="sep">·</span> 把 Claude Code 当库用</span><span class="ch-meta">embed</span></a>
+      </div>
+    </div>
+  </section>
+
+  <section class="sample">
+    <div class="sect-head">
+      <span class="prompt">$</span>
+      <span class="cmd">cat chapters/ch03 <span class="flag">--head 96</span></span>
+      <span class="line"></span>
+    </div>
+
+    <article class="sample-card">
+      <h3>
+        <span class="ch">chapter · 03</span>
+        Agent Loop：推理-工具循环主引擎
+      </h3>
+
+      <p>你在终端敲一条"把 <code>src/utils/foo.ts</code> 里的 <code>memoize</code> 换成 <code>lodash/memoize</code>"，按下回车。之后发生的事是一条流水线：模型先 yield 一段文本，再 yield 一个 <code>tool_use</code>，工具执行完把 <code>tool_result</code> 喂回模型，再 yield 下一个 <code>tool_use</code>，直到 <code>end_turn</code>。</p>
+
+      <p>屏幕上看到的这条 <em>tool_use → tool_result → assistant → tool_use → …</em>，在 Anthropic 官方文档里是 5 行伪码；在 Claude Code 里是一个 1729 行的 async generator 加上 1295 行的包装类，共同处理伪码没告诉你的那些问题：流式工具执行、模型 fallback、上下文超限、输出被截断、stop hook 反复拦截、用户提前打断、权限请求等待。</p>
+
+      <p>Claude Code 把一条 agent 会话拆成两层 —— 外层 <a href="#" class="cite">QueryEngine<span class="ref">src/QueryEngine.ts:184</span></a> 是 session 级对象，每 conversation 一个，持有跨 turn 不变的东西；内层 <a href="#" class="cite">query()<span class="ref">src/query.ts:219</span></a> 是一个纯 async generator，只管消息进、消息出，不接 UI 状态、不管 session 存储。</p>
+
+      <figure class="codeblock">
+        <figcaption>
+          <span><span class="file">src/QueryEngine.ts</span> : 184 — 207</span>
+          <span class="tag">typescript · read-only</span>
+        </figcaption>
+<pre><span class="line"><span class="cm">// One QueryEngine per conversation.</span></span>
+<span class="line"><span class="cm">// submitMessage() starts a new turn.</span></span>
+<span class="line"><span class="kw">export class</span> QueryEngine {</span>
+<span class="line">  <span class="kw">private</span> config: QueryEngineConfig</span>
+<span class="line">  <span class="kw">private</span> mutableMessages: Message[]</span>
+<span class="line">  <span class="kw">private</span> abortController: AbortController</span>
+<span class="line">  <span class="kw">private</span> permissionDenials: SDKPermissionDenial[]</span>
+<span class="line">  <span class="kw">private</span> totalUsage: NonNullableUsage</span>
+<span class="line">  <span class="kw">private</span> readFileState: FileStateCache</span>
+<span class="line">  <span class="kw">private</span> discoveredSkillNames = <span class="kw">new</span> Set&lt;<span class="str">string</span>&gt;()</span>
+<span class="line">  <span class="cm">// ...</span></span>
+<span class="line">}</span></pre>
+      </figure>
+
+      <p>分层的意义在 <code>query()</code> 的复用性：它既被 <code>QueryEngine.submitMessage</code> 调用（主线程），也被 sub-agent 调用（子 query 起一个嵌套循环），也被 compact 子任务调用。分层因此不是可有可无。</p>
+
+      <p style="color:var(--fg-dim); font-size: 0.98rem; padding-top: var(--s-4); border-top: 1px dashed var(--rule)">
+        <span style="font-family:var(--mono); color:var(--amber); font-size: 12px">EOF — preview · 96 / 1492 lines</span>
+      </p>
+    </article>
+  </section>
+
+  <footer class="log">
+    <div class="logo">claude-code<span class="dot">/</span>source · 源码解读</div>
+    <div class="lines">
+      typeface · bricolage grotesque + azeret mono<br>
+      draft · 2026
+    </div>
+  </footer>
+</div>
+
+</body>
+</html>

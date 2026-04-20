@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code 源码解读 · 编辑部专著风</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,500;0,7..72,600;1,7..72,400;1,7..72,500&family=Martian+Mono:wght@300;400;500&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<style>
+  :root {
+    --paper:        oklch(0.975 0.012 75);
+    --paper-sink:   oklch(0.945 0.016 70);
+    --paper-deep:   oklch(0.905 0.020 68);
+    --ink:          oklch(0.22  0.017 50);
+    --ink-dim:      oklch(0.44  0.018 52);
+    --ink-faint:    oklch(0.62  0.014 58);
+    --rule:         oklch(0.82  0.022 65);
+    --rule-hair:    oklch(0.88  0.016 65);
+    --ember:        oklch(0.48  0.135 48);
+    --ember-soft:   oklch(0.58  0.095 50);
+
+    --serif-display: "Young Serif", "Noto Serif SC", "LXGW WenKai", ui-serif, serif;
+    --serif-body:    "Literata", "LXGW WenKai", "Noto Serif SC", ui-serif, serif;
+    --mono:          "Martian Mono", ui-monospace, monospace;
+
+    --space-1:  4px;
+    --space-2:  8px;
+    --space-3:  12px;
+    --space-4:  16px;
+    --space-5:  24px;
+    --space-6:  32px;
+    --space-7:  48px;
+    --space-8:  64px;
+    --space-9:  96px;
+    --space-10: 144px;
+  }
+
+  *,*::before,*::after { box-sizing: border-box; }
+  html { background: var(--paper); color: var(--ink); }
+  body {
+    margin: 0;
+    font-family: var(--serif-body);
+    font-size: 17px;
+    line-height: 1.7;
+    font-feature-settings: "kern", "liga", "calt", "onum", "pnum";
+    background:
+      radial-gradient(ellipse 800px 300px at 20% 0%, oklch(0.95 0.022 60) 0%, transparent 60%),
+      radial-gradient(ellipse 600px 400px at 100% 100%, oklch(0.94 0.024 55) 0%, transparent 60%),
+      var(--paper);
+    min-height: 100vh;
+  }
+
+  /* showcase nav bar */
+  .showcase-bar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: var(--space-3) var(--space-6);
+    background: color-mix(in oklch, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule-hair);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .showcase-bar a { color: var(--ink-dim); text-decoration: none; }
+  .showcase-bar a:hover { color: var(--ember); }
+  .showcase-bar .switcher { display: flex; gap: var(--space-5); }
+  .showcase-bar .switcher a.current {
+    color: var(--ink);
+    border-bottom: 1px solid var(--ember);
+    padding-bottom: 2px;
+  }
+
+  /* layout */
+  .wrap {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: var(--space-9) var(--space-6) var(--space-10);
+  }
+
+  /* masthead */
+  .masthead {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-5);
+    padding-bottom: var(--space-8);
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: var(--space-9);
+  }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .book-title {
+    font-family: var(--serif-display);
+    font-weight: 400;
+    font-size: clamp(3.2rem, 8vw, 6.4rem);
+    line-height: 0.96;
+    letter-spacing: -0.02em;
+    margin: 0;
+    color: var(--ink);
+  }
+  .book-title .amp {
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-weight: 400;
+    color: var(--ember);
+    font-size: 0.85em;
+    padding: 0 0.1em;
+  }
+  .subtitle {
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-size: clamp(1.1rem, 2.2vw, 1.4rem);
+    line-height: 1.45;
+    color: var(--ink-dim);
+    max-width: 52ch;
+    margin: 0;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-5);
+    align-items: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-top: var(--space-2);
+  }
+  .meta-row span { white-space: nowrap; }
+  .meta-row .dot { color: var(--ember-soft); }
+
+  /* opening paragraph with drop cap */
+  .opening {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-5);
+    max-width: 62ch;
+    margin: 0 auto var(--space-9) 0;
+    padding-left: clamp(0px, 4vw, 64px);
+  }
+  .opening p {
+    margin: 0;
+    font-size: 1.125rem;
+    line-height: 1.75;
+  }
+  .opening p:first-of-type::first-letter {
+    font-family: var(--serif-display);
+    font-size: 4.8em;
+    float: left;
+    line-height: 0.85;
+    padding: 0.05em 0.12em 0 0;
+    color: var(--ember);
+    font-weight: 400;
+  }
+  .opening p em { color: var(--ink); font-style: italic; }
+
+  /* TOC */
+  .toc-section {
+    margin-top: var(--space-9);
+  }
+  .section-head {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: baseline;
+    gap: var(--space-5);
+    margin-bottom: var(--space-7);
+  }
+  .section-head .glyph {
+    font-family: var(--serif-display);
+    font-size: 3rem;
+    color: var(--ember);
+    line-height: 1;
+  }
+  .section-head h2 {
+    font-family: var(--serif-display);
+    font-weight: 400;
+    font-size: clamp(1.8rem, 3.5vw, 2.4rem);
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .section-head .line {
+    height: 1px;
+    background: var(--rule);
+    align-self: center;
+  }
+
+  .part {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: var(--space-7);
+    padding: var(--space-7) 0;
+    border-top: 1px solid var(--rule-hair);
+  }
+  .part:first-of-type { border-top: 1px solid var(--rule); }
+  .part-head {
+    position: sticky;
+    top: 80px;
+    align-self: start;
+  }
+  .part-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--ember);
+    margin-bottom: var(--space-2);
+  }
+  .part-title {
+    font-family: var(--serif-display);
+    font-weight: 400;
+    font-size: 1.9rem;
+    line-height: 1.1;
+    margin: 0;
+    color: var(--ink);
+  }
+  .part-note {
+    font-family: var(--serif-body);
+    font-style: italic;
+    font-size: 0.92rem;
+    color: var(--ink-faint);
+    margin-top: var(--space-3);
+    max-width: 18ch;
+    line-height: 1.5;
+  }
+
+  .ch-list { list-style: none; padding: 0; margin: 0; }
+  .ch-list li {
+    display: grid;
+    grid-template-columns: 56px 1fr auto;
+    align-items: baseline;
+    gap: var(--space-4);
+    padding: var(--space-4) 0;
+    border-top: 1px solid var(--rule-hair);
+    transition: background 0.2s ease;
+  }
+  .ch-list li:first-child { border-top: none; }
+  .ch-list li:hover { background: color-mix(in oklch, var(--ember) 4%, transparent); }
+  .ch-list .num {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
+    font-feature-settings: "tnum";
+  }
+  .ch-list a {
+    font-family: var(--serif-body);
+    font-size: 1.15rem;
+    color: var(--ink);
+    text-decoration: none;
+    line-height: 1.4;
+  }
+  .ch-list a:hover { color: var(--ember); }
+  .ch-list a .en {
+    font-style: italic;
+    color: var(--ember-soft);
+    font-weight: 500;
+  }
+  .ch-list .tag {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    white-space: nowrap;
+  }
+
+  /* sample reading block */
+  .sample {
+    margin-top: var(--space-10);
+    display: grid;
+    grid-template-columns: minmax(0, 68ch) minmax(140px, 220px);
+    gap: var(--space-8);
+    align-items: start;
+  }
+  .sample-main h3 {
+    font-family: var(--serif-display);
+    font-weight: 400;
+    font-size: clamp(2rem, 4vw, 2.6rem);
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    margin: 0 0 var(--space-5) 0;
+  }
+  .sample-main h3 .ch-num {
+    font-family: var(--serif-body);
+    font-style: italic;
+    color: var(--ember);
+    font-size: 0.7em;
+    margin-right: 0.5em;
+    font-weight: 400;
+  }
+  .sample-main p {
+    margin: 0 0 var(--space-5) 0;
+    font-size: 1.075rem;
+    line-height: 1.8;
+  }
+  .sample-main p code,
+  .sample-main li code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: color-mix(in oklch, var(--paper-deep) 50%, transparent);
+    padding: 0.1em 0.4em;
+    border-radius: 2px;
+    color: var(--ember);
+  }
+  .sample-main .cite {
+    color: var(--ember);
+    text-decoration: none;
+    border-bottom: 1px solid color-mix(in oklch, var(--ember) 40%, transparent);
+  }
+  .sample-main .cite:hover {
+    border-bottom-color: var(--ember);
+  }
+
+  figure.codeblock {
+    margin: var(--space-6) 0;
+    padding: 0;
+  }
+  figure.codeblock figcaption {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--ink-faint);
+    margin-bottom: var(--space-2);
+    padding-left: var(--space-5);
+    border-left: 1px solid var(--rule);  /* 1px hairline, not a colored accent stripe */
+  }
+  figure.codeblock pre {
+    margin: 0;
+    padding: var(--space-5) var(--space-6);
+    background: var(--paper-sink);
+    border-top: 1px solid var(--rule-hair);
+    border-bottom: 1px solid var(--rule-hair);
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.75;
+    color: var(--ink);
+  }
+  figure.codeblock pre .kw { color: var(--ember); }
+  figure.codeblock pre .cm { color: var(--ink-faint); font-style: italic; }
+  figure.codeblock pre .str { color: var(--ember-soft); }
+
+  blockquote.pull {
+    margin: var(--space-7) 0;
+    padding: 0 0 0 var(--space-6);
+    border-left: 1px solid var(--rule);  /* 1px hairline rule, inline editorial touch */
+    font-family: var(--serif-display);
+    font-size: clamp(1.3rem, 2.4vw, 1.65rem);
+    line-height: 1.35;
+    color: var(--ink);
+    font-style: normal;
+  }
+  blockquote.pull .attr {
+    display: block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    margin-top: var(--space-3);
+    font-style: normal;
+  }
+
+  /* marginalia */
+  .marginalia {
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.65;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
+    border-top: 1px solid var(--rule-hair);
+    padding-top: var(--space-4);
+    display: grid;
+    gap: var(--space-4);
+  }
+  .marginalia .mitem { display: grid; gap: 2px; }
+  .marginalia .mlabel {
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--ember);
+    font-size: 10px;
+  }
+  .marginalia .mval {
+    font-family: var(--serif-body);
+    color: var(--ink);
+    font-size: 13px;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+  .marginalia .mval.roman {
+    font-family: var(--serif-display);
+    font-size: 22px;
+    line-height: 1;
+    margin-top: 2px;
+  }
+
+  /* footer */
+  footer.colophon {
+    margin-top: var(--space-10);
+    padding-top: var(--space-6);
+    border-top: 1px solid var(--rule);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--space-5);
+    align-items: end;
+  }
+  footer.colophon .mark {
+    font-family: var(--serif-display);
+    font-size: 2rem;
+    line-height: 1;
+    color: var(--ember);
+  }
+  footer.colophon .note {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    text-align: right;
+    line-height: 1.6;
+  }
+
+  /* Responsive */
+  @media (max-width: 960px) {
+    .part { grid-template-columns: 1fr; gap: var(--space-4); }
+    .part-head { position: static; }
+    .sample { grid-template-columns: 1fr; }
+    .ch-list li { grid-template-columns: 44px 1fr; }
+    .ch-list .tag { grid-column: 2; margin-top: 2px; }
+  }
+  @media (max-width: 600px) {
+    .wrap { padding: var(--space-7) var(--space-4) var(--space-8); }
+    .showcase-bar { padding: var(--space-3) var(--space-4); }
+    .showcase-bar .switcher { gap: var(--space-3); }
+  }
+
+  /* selection */
+  ::selection { background: color-mix(in oklch, var(--ember) 30%, transparent); color: var(--ink); }
+</style>
+</head>
+<body>
+
+<nav class="showcase-bar">
+  <a href="../index.html">← showcase</a>
+  <div class="switcher">
+    <a href="../a-editorial/index.html" class="current">A · Editorial</a>
+    <a href="../b-terminal/index.html">B · Terminal</a>
+    <a href="../c-swiss/index.html">C · Swiss</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="kicker">An engineering monograph · 2026</div>
+    <h1 class="book-title">Claude Code<br><span class="amp">&amp;</span> 源码解读</h1>
+    <p class="subtitle">二十三章，一条主轴 —— 把一个十万行的终端 agent 拆到"值得借鉴的设计点"这一层。</p>
+    <div class="meta-row">
+      <span>23 章</span><span class="dot">·</span>
+      <span>约 15,000 行正文</span><span class="dot">·</span>
+      <span>写给工程师</span><span class="dot">·</span>
+      <span>source ref. on every claim</span>
+    </div>
+  </header>
+
+  <section class="opening">
+    <p>这本书不是用户手册，也不是 API 参考。它是对 Claude Code 仓库的一次深读 —— 只讲<em>值得带走的工程做法</em>：Agent Loop 怎么把九类横切关注点拼成一条可读主干；sub-agent 用什么机制共用父 session 的 token 预算；权限系统怎么做到"每次都问"却不烦；Skills、Plugins、MCP、Hooks 这几层扩展机制如何分工。</p>
+    <p>每一章只讲一个设计点。凡结论必附 <code>path/file.ts:line</code> 级别的源码引用。禁用"优雅 / 精妙 / 惊艳"这类空评价，只说<em>为什么这样做</em>、<em>换一种会怎样</em>、<em>成本是什么、收益是什么</em>。</p>
+  </section>
+
+  <section class="toc-section" id="toc">
+    <div class="section-head">
+      <span class="glyph">§</span>
+      <h2>目次</h2>
+      <span class="line"></span>
+    </div>
+
+    <div class="part">
+      <div class="part-head">
+        <div class="part-label">Part I</div>
+        <h3 class="part-title">总览</h3>
+        <p class="part-note">先把"功能叫什么"和"真实使用形态"铺平</p>
+      </div>
+      <ol class="ch-list" start="1">
+        <li><span class="num">01</span><a href="#">功能全景清单</a><span class="tag">入口 · 命令 · 工具</span></li>
+        <li><span class="num">02</span><a href="#">典型使用场景 <span class="en">showcase</span></a><span class="tag">five real tasks</span></li>
+      </ol>
+    </div>
+
+    <div class="part">
+      <div class="part-head">
+        <div class="part-label">Part II</div>
+        <h3 class="part-title">核心引擎</h3>
+        <p class="part-note">主循环、子 agent、计划、隔离、上下文、工具、权限</p>
+      </div>
+      <ol class="ch-list" start="3">
+        <li><span class="num">03</span><a href="#"><span class="en">Agent Loop</span> — 推理·工具循环主引擎</a><span class="tag">QueryEngine · query()</span></li>
+        <li><span class="num">04</span><a href="#">Multi-Agent 与 Sub-Agent 协程调度</a><span class="tag">coroutine</span></li>
+        <li><span class="num">05</span><a href="#"><span class="en">Plan Mode</span> — 让 Agent 先想后做</a><span class="tag">read-only phase</span></li>
+        <li><span class="num">06</span><a href="#"><span class="en">Worktree</span> 隔离模式</a><span class="tag">git isolation</span></li>
+        <li><span class="num">07</span><a href="#">上下文管理与记忆</a><span class="tag">compaction · memory</span></li>
+        <li><span class="num">08</span><a href="#">工具系统 — <span class="en">Tool 接口与 ToolSearch 懒加载</span></a><span class="tag">deferred tools</span></li>
+        <li><span class="num">09</span><a href="#">权限模型 — 每次都问却不烦</a><span class="tag">permission ladder</span></li>
+      </ol>
+    </div>
+
+    <div class="part">
+      <div class="part-head">
+        <div class="part-label">Part III</div>
+        <h3 class="part-title">扩展机制</h3>
+        <p class="part-note">四层扩展面如何分工：Skills / Plugins / MCP / Hooks</p>
+      </div>
+      <ol class="ch-list" start="10">
+        <li><span class="num">10</span><a href="#"><span class="en">Skills</span> 技能系统</a><span class="tag">prompt pack</span></li>
+        <li><span class="num">11</span><a href="#"><span class="en">Plugins</span> 插件系统</a><span class="tag">out-of-tree</span></li>
+        <li><span class="num">12</span><a href="#"><span class="en">MCP</span> 集成与 upstream 代理</a><span class="tag">bridge</span></li>
+        <li><span class="num">13</span><a href="#"><span class="en">Cron</span> / 定时任务 — 让 Agent 持续运行</a><span class="tag">schedule</span></li>
+        <li><span class="num">14</span><a href="#"><span class="en">Hooks</span> — 用户可编程的生命周期</a><span class="tag">lifecycle</span></li>
+      </ol>
+    </div>
+
+    <div class="part">
+      <div class="part-head">
+        <div class="part-label">Part IV</div>
+        <h3 class="part-title">交互与集成</h3>
+        <p class="part-note">从主动提示到多端、从后台到远程</p>
+      </div>
+      <ol class="ch-list" start="15">
+        <li><span class="num">15</span><a href="#"><span class="en">Proactive</span> — 主动提示而不打扰</a><span class="tag">nudges</span></li>
+        <li><span class="num">16</span><a href="#"><span class="en">Background tasks</span> 后台任务</a><span class="tag">async</span></li>
+        <li><span class="num">17</span><a href="#"><span class="en">Remote sessions</span> 与 Teleport</a><span class="tag">broker</span></li>
+        <li><span class="num">18</span><a href="#">IDE / Chrome / Computer Use — 多端集成</a><span class="tag">multi-host</span></li>
+        <li><span class="num">19</span><a href="#"><span class="en">Buddy</span> 宠物系统</a><span class="tag">companion</span></li>
+        <li><span class="num">20</span><a href="#">输入层 — 语音 / Vim / 键位</a><span class="tag">input stack</span></li>
+      </ol>
+    </div>
+
+    <div class="part">
+      <div class="part-head">
+        <div class="part-label">Part V</div>
+        <h3 class="part-title">工程与 SDK</h3>
+        <p class="part-note">从 Ink 到可观测，再到把 Claude Code 当库用</p>
+      </div>
+      <ol class="ch-list" start="21">
+        <li><span class="num">21</span><a href="#"><span class="en">Ink</span> 终端 UI 背后的工程</a><span class="tag">react in terminal</span></li>
+        <li><span class="num">22</span><a href="#">成本 / 可观测 / 调试</a><span class="tag">observability</span></li>
+        <li><span class="num">23</span><a href="#"><span class="en">Agent SDK</span> — 把 Claude Code 当库用</a><span class="tag">embed</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="toc-section">
+    <div class="section-head">
+      <span class="glyph">❦</span>
+      <h2>试读</h2>
+      <span class="line"></span>
+    </div>
+
+    <div class="sample">
+      <div class="sample-main">
+        <h3><span class="ch-num">Chapter III</span>Agent Loop：推理-工具循环主引擎</h3>
+
+        <p>你在终端敲一条"把 <code>src/utils/foo.ts</code> 里的 <code>memoize</code> 换成 <code>lodash/memoize</code>"，按下回车。之后发生的事是一条流水线：模型先 yield 一段文本，再 yield 一个 <code>tool_use</code>，工具执行完把 <code>tool_result</code> 喂回模型，再 yield 下一个 <code>tool_use</code>，直到 <code>end_turn</code>。</p>
+
+        <p>屏幕上看到的这条"tool_use → tool_result → assistant → tool_use → …"，在 Anthropic 官方文档里是 5 行伪码；在 Claude Code 里是一个 1729 行的 async generator 加上 1295 行的包装类，共同处理<em>伪码没告诉你的那些问题</em>：流式工具执行、模型 fallback、上下文超限、输出被截断、stop hook 反复拦截、用户提前打断、权限请求等待。</p>
+
+        <p>Claude Code 把一条 agent 会话拆成两层 —— 外层 <a href="#" class="cite">QueryEngine<span style="font-family:var(--mono);font-size:0.85em"> · src/QueryEngine.ts:184</span></a> 是 session 级对象，每 conversation 一个，持有跨 turn 不变的东西；内层 <code>query()</code> 是一个纯 async generator，只管消息进、消息出，不接 UI 状态、不管 session 存储。</p>
+
+        <figure class="codeblock">
+          <figcaption>src/QueryEngine.ts:184–207</figcaption>
+<pre><span class="cm">// One QueryEngine per conversation.</span>
+<span class="cm">// submitMessage() starts a new turn within the same conversation.</span>
+<span class="kw">export class</span> QueryEngine {
+  <span class="kw">private</span> config: QueryEngineConfig
+  <span class="kw">private</span> mutableMessages: Message[]
+  <span class="kw">private</span> abortController: AbortController
+  <span class="kw">private</span> permissionDenials: SDKPermissionDenial[]
+  <span class="kw">private</span> totalUsage: NonNullableUsage
+  <span class="kw">private</span> readFileState: FileStateCache
+  <span class="kw">private</span> discoveredSkillNames = <span class="kw">new</span> Set&lt;<span class="str">string</span>&gt;()
+  <span class="cm">// ...</span>
+}</pre>
+        </figure>
+
+        <p>分层的意义在 <code>query()</code> 的复用性：它既被 <code>QueryEngine.submitMessage</code> 调用（主线程），也被 sub-agent 调用（子 query 起一个嵌套循环，详见 ch04），也被 compact 子任务调用（<code>querySource='compact'</code>，详见 ch07）。分层因此不是可有可无。</p>
+
+        <blockquote class="pull">
+          query() 不该知道"美元"或"JSON schema 重试"这种应用层概念。它只负责把消息往外 yield，QueryEngine 在外面决定何时喊停。
+          <span class="attr">§ 3.4 错误预算的三条独立通道</span>
+        </blockquote>
+      </div>
+
+      <aside class="marginalia">
+        <div class="mitem">
+          <span class="mlabel">章号</span>
+          <span class="mval roman">III</span>
+        </div>
+        <div class="mitem">
+          <span class="mlabel">读完约</span>
+          <span class="mval">32 分钟</span>
+        </div>
+        <div class="mitem">
+          <span class="mlabel">源码引用</span>
+          <span class="mval">47 处</span>
+        </div>
+        <div class="mitem">
+          <span class="mlabel">相关章节</span>
+          <span class="mval">ch04 · ch07 · ch09</span>
+        </div>
+        <div class="mitem">
+          <span class="mlabel">关键文件</span>
+          <span class="mval" style="font-family:var(--mono);font-size:11px;line-height:1.7">
+            src/query.ts<br>
+            src/QueryEngine.ts<br>
+            src/services/tools/toolExecution.ts
+          </span>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <footer class="colophon">
+    <div class="mark">❦</div>
+    <div class="note">
+      set in young serif, literata, martian mono<br>
+      drafted by a team of agents · edited by hand
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>
