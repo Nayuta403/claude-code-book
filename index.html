@@ -636,6 +636,43 @@
     line-height: 1.8;
     color: var(--ink);
   }
+  /* Copy button (matches chapter pages) */
+  figure.codeblock { position: relative; }
+  figure.codeblock figcaption .lang { transition: opacity .2s var(--ease-out); }
+  figure.codeblock:hover figcaption .lang,
+  figure.codeblock:focus-within figcaption .lang { opacity: 0; }
+  .copy-btn {
+    position: absolute;
+    top: -2px;
+    right: 0;
+    padding: 4px 12px;
+    background: var(--paper);
+    border: 1px solid var(--mist);
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    color: var(--ash);
+    cursor: pointer;
+    opacity: 0;
+    transform: translateY(-2px);
+    transition: opacity .18s var(--ease-out), transform .18s, color .15s, border-color .15s, background .15s;
+    z-index: 2;
+  }
+  figure.codeblock:hover .copy-btn,
+  figure.codeblock:focus-within .copy-btn,
+  .copy-btn:focus-visible { opacity: 1; transform: translateY(0); }
+  .copy-btn:hover { border-color: var(--rose); color: var(--rose); }
+  .copy-btn.copied {
+    color: var(--rose);
+    border-color: var(--rose);
+    background: var(--rose-soft);
+  }
+  @media (hover: none) {
+    .copy-btn { opacity: 0.55; transform: none; }
+    figure.codeblock figcaption .lang { opacity: 0.55; }
+  }
+
   figure.codeblock pre .kw { color: var(--rose); font-weight: 500; }
   figure.codeblock pre .cm { color: var(--ash); font-style: italic; }
   figure.codeblock pre .str { color: oklch(45% 0.15 250); }
@@ -1019,5 +1056,6 @@
   </div>
 </footer>
 
+<script src="./assets/book.js" defer></script>
 </body>
 </html>

@@ -512,6 +512,44 @@ h1.chap-title .cn {
   font-feature-settings: "tnum";
 }
 
+/* Copy button on every codeblock — visible on hover, fallback dim on touch */
+.article .prose figure.codeblock { position: relative; }
+.article .prose figure.codeblock figcaption .lang { transition: opacity .2s var(--ease-out); }
+.article .prose figure.codeblock:hover figcaption .lang,
+.article .prose figure.codeblock:focus-within figcaption .lang { opacity: 0; }
+
+.article .prose .copy-btn {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  padding: 4px 12px;
+  background: var(--paper);
+  border: 1px solid var(--mist);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--ash);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity .18s var(--ease-out), transform .18s var(--ease-out), color .15s, border-color .15s, background .15s;
+  z-index: 2;
+}
+.article .prose figure.codeblock:hover .copy-btn,
+.article .prose figure.codeblock:focus-within .copy-btn,
+.article .prose .copy-btn:focus-visible { opacity: 1; transform: translateY(0); }
+.article .prose .copy-btn:hover { border-color: var(--rose); color: var(--rose); }
+.article .prose .copy-btn.copied {
+  color: var(--rose);
+  border-color: var(--rose);
+  background: var(--rose-soft);
+}
+@media (hover: none) {
+  .article .prose .copy-btn { opacity: 0.55; transform: none; }
+  .article .prose figure.codeblock figcaption .lang { opacity: 0.55; }
+}
+
 /* Syntax tokens (pre-rendered) */
 .article .prose .codeblock pre .hl-kw   { color: var(--rose); font-weight: 500; }
 .article .prose .codeblock pre .hl-str  { color: oklch(42% 0.12 145); }

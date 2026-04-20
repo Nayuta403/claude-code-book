@@ -757,6 +757,8 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
 
 {chap_nav}
 
+<script src="../assets/book.js" defer></script>
+
 <footer class="colophon">
   <div class="left">Claude <span class="dot">&amp;</span> Code</div>
   <div class="right">
