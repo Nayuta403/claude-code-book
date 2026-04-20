@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.17 Remote · Sessions 与 Teleport — Claude Code 源码解读</title>
+<meta name="description" content="《Claude Code 源码解读》第 17 章 —— Sessions 与 Teleport（broker）">
+<meta property="og:title" content="Ch.17 Remote · Sessions 与 Teleport — Claude Code 源码解读">
+<meta property="og:description" content="《Claude Code 源码解读》第 17 章 —— Sessions 与 Teleport（broker）">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://nayuta403.github.io/claude-code-book/ch17/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,300;1,400;1,500&family=Albert+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<link rel="stylesheet" href="../assets/book.css">
+</head>
+<body>
+
+<nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
+
+<header class="chap-head">
+  <div>
+    <div class="crumb">
+      <a href="../">目录</a>
+      <span class="sep">/</span>
+      <span class="part-tag p4">Part IV · 交互与集成</span>
+    </div>
+    <div class="chap-num">Chapter · 17 / 23</div>
+    <h1 class="chap-title">Remote<span class="cn">Sessions 与 Teleport</span></h1>
+  </div>
+  <aside class="chap-meta">
+    <div><div class="km">part</div><div class="vm">交互与集成（Interactions）</div></div>
+    <div><div class="km">topic</div><div class="vm m">broker</div></div>
+    <div><div class="km">reading</div><div class="vm">≈ 24 min</div></div>
+    <div><div class="km">source refs</div><div class="vm m">49</div></div>
+  </aside>
+</header>
+
+<article class="article">
+  <div class="prose">
+<h2>17.1 用户看到什么</h2>
+<p class="drop">Claude Code 里"跨机器"有四个入口，用户感知不同：</p>
+<ol>
+<li><code>claude --remote &quot;fix the auth bug&quot;</code>。本地 CLI 里按回车，终端里打一条 "Created remote session ... View: https://claude.ai/code/&lt;id&gt; ... Resume with: claude --teleport &lt;id&gt;"（<code class="ref">src/main.tsx:3444-3446</code>），然后如果 TUI 特性门是关的，claude 进程直接退出；如果打开的话则进入一个<strong>只做前端</strong>的本地 REPL，真正跑 agent 的是 Anthropic 云里的沙箱容器。你在本地按 Ctrl+C 发出去的是一个 interrupt 信号，本地不跑任何工具。本书把这条路径叫 <strong>CCR 云 session</strong>。</li>
+<li><strong>Remote Control</strong>（源码里多叫 Bridge）。三个入口指向同一条路径：<code>claude --remote-control</code>（长 flag）、<code>claude --rc</code>（别名，<code class="ref">src/main.tsx:3873-3874</code>）、<code>claude remote-control</code> 子命令（<code class="ref">src/main.tsx:4329</code>、<code class="ref">src/commands/bridge/index.ts:14</code>）。终端停留在一个 server 界面，显示一个 URL 和 QR 码。你可以继续在终端里敲字，也可以用 claude.ai/code 或手机 App 往同一个 session 下消息。此时<strong>agent 跑在你这台机器上</strong>，手机只是 UI。斜杠命令 <code>/remote-control</code> 也进同一条路径。</li>
+<li><code>claude --teleport &lt;id&gt;</code>（或 <code>/teleport</code>）。从云 session 拉取对话历史 + 切换到对应 git 分支，然后在本地开一个新的 CLI 进程继续。云端那个 session 没动。本章把它视为一个<strong>动作</strong>（见 §17.7），而不是第五种形态。</li>
+<li><code>createDirectConnectSession(...)</code>（SDK / headless runner 用，下文称 <strong>DirectConnect</strong>）。连到一个自建的 HTTP + WebSocket 服务器，协议和云 session 不一样但数据结构一样。</li>
+</ol>
+<p>官方 overview 表格把这几条概括为 "Continue a local session from my phone" / "Start a task locally, continue on mobile" 等用例（来源：<a href="https://code.claude.com/docs/en/overview" rel="noreferrer">https://code.claude.com/docs/en/overview</a>，访问于 2026-04-19）。</p>
+<p>仓库里还有一条路被恢复成了 shim：<code>claude ssh</code> / <code>useSSHSession</code>。接口齐全，实现留空（<code class="ref">src/ssh/createSSHSession.ts:1-6</code>、<code class="ref">src/ssh/SSHSessionManager.ts:1</code>）。本章会从 hook 端反推它的预期协议，但不把 shim 当真实实现讲。</p>
+<h2>17.2 为什么挑这个设计出来讲</h2>
+<p>本章 5 页篇幅留给一件事：</p>
+<blockquote><p><strong>permission 反向回路</strong>。工具在 A 机器执行，permission UI 在 B 机器弹出，用户在 B 按下 allow，决定如何回流到 A，让那条调用真的在 A 上跑起来。</p></blockquote>
+<p>这条回路是四种形态共享的一层，也是决定"permission 模型能不能跨机器保真"的关键。Claude Code 的做法是<strong>让远端 agent 继续走自己的 <code>can_use_tool</code> 回调</strong>，不把它改造成 RPC——代价与收益见 §17.11。permission 模型本身（ask / allow / deny 的语义、mode 状态机）不在本章，见 <a class="chref" href="../ch09/">ch.09</a>。</p>
+<p>其余形态差异只起辅助作用，作为 permission 回路的几种变体出现。control_request / control_response 这套控制面协议同源于 Agent SDK（见 <a class="chref" href="../ch23/">ch.23</a>）；本章描述的是它被 REPL 端复用的切面。</p>
+<h2>17.3 Remote session 的四种形态（先把概念对齐）</h2>
+<p>恢复后的仓库里，"远程"一词所指的几个路径必须先对齐名字再讨论。下表把代码位置、agent 位置、UI 位置三者拉清楚：</p>
+<div class="table-wrap"><table><thead><tr><th>名字（本书用法）</th><th>Agent 跑在哪</th><th>UI 在哪</th><th>主要代码</th></tr></thead><tbody><tr><td><strong>CCR 云 session</strong></td><td>Anthropic 云容器</td><td>本地 REPL 或 claude.ai/code</td><td><code>src/remote/</code>、<code class="ref">src/hooks/useRemoteSession.ts</code></td></tr>
+<tr><td><strong>Bridge（Remote Control）</strong></td><td>本地 CLI</td><td>claude.ai/code + 手机</td><td><code>src/bridge/</code>、<code class="ref">src/hooks/useReplBridge.tsx</code></td></tr>
+<tr><td><strong>DirectConnect</strong></td><td>自建 HTTP+WS server</td><td>本地 REPL</td><td><code>src/server/</code>、<code class="ref">src/hooks/useDirectConnect.ts</code></td></tr>
+<tr><td><strong>SSH session</strong>（shim）</td><td>远端 shell</td><td>本地 REPL</td><td><code>src/ssh/</code>、<code class="ref">src/hooks/useSSHSession.ts</code></td></tr></tbody></table></div>
+<p><strong>Teleport 是一个动作，不是一种形态。</strong> 官方文档写得很清楚："<code>--teleport</code> is distinct from <code>--resume</code>. <code>--resume</code> reopens a conversation from this machine's local history and doesn't list cloud sessions; <code>--teleport</code> pulls a cloud session and its branch."（来源：<a href="https://code.claude.com/docs/en/claude-code-on-the-web" rel="noreferrer">https://code.claude.com/docs/en/claude-code-on-the-web</a>，访问于 2026-04-19）。它是"从 CCR session 的 transcript 拉历史 → 本地新 CLI 进程做 resume"这一条动作，§17.7 单独处理。</p>
+<p>另一个容易混的点：官方文档明示 <code>--remote</code> 和 <code>--remote-control</code> 是两码事：</p>
+<blockquote><p><code>--remote</code> creates cloud sessions. <code>--remote-control</code> is unrelated: it exposes a local CLI session for monitoring from the web. —— <a href="https://code.claude.com/docs/en/claude-code-on-the-web" rel="noreferrer">https://code.claude.com/docs/en/claude-code-on-the-web</a></p></blockquote>
+<p>仓库里的证据：<code>--remote</code> 的 main.tsx 入口用的是 <code>createRemoteSessionConfig</code> + <code>useRemoteSession</code>（<code>src/main.tsx:3473, 3506</code>），走 <code>src/remote/</code>；<code>--remote-control</code> 走 <code>useReplBridge</code> → <code>initReplBridge</code>（<code class="ref">src/hooks/useReplBridge.tsx:149-150</code>），走 <code>src/bridge/</code>。两个完全不同的客户端代码路径，只在 <code class="ref">sdkMessageAdapter.ts</code> 这个翻译层共用。</p>
+<h2>17.4 关键数据结构</h2>
+<h3>17.4.1 <code>SessionsWebSocket</code> —— CCR session 的订阅端</h3>
+<figure class="codeblock"><figcaption><span class="file">src/remote/SessionsWebSocket.ts:40-44</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">type</span> <span class="hl-type">SessionsMessage</span> =
+  | <span class="hl-type">SDKMessage</span>
+  | <span class="hl-type">SDKControlRequest</span>
+  | <span class="hl-type">SDKControlResponse</span>
+  | <span class="hl-type">SDKControlCancelRequest</span></code></pre></figure>
+<p>连接地址是固定的：</p>
+<figure class="codeblock"><figcaption><span class="file">src/remote/SessionsWebSocket.ts:108-109</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> baseUrl = getOauthConfig().<span class="hl-type">BASE_API_URL</span>.replace(&#x27;https:<span class="hl-cm">//&#x27;, &#x27;wss://&#x27;)</span>
+<span class="hl-kw">const</span> url = <span class="hl-str">`${baseUrl}/v1/sessions/ws/${this.sessionId}/subscribe?organization_uuid=${this.orgUuid}`</span></code></pre></figure>
+<p>鉴权放在 header 里（<code class="ref">SessionsWebSocket.ts:115-118</code>），不在 URL。连接建立时服务端已经把 token 吃了，客户端认为 onopen 就是 connected，不再发 auth 帧。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/remote/SessionsWebSocket.ts:74-81</code> vs <code>:115-132, 175</code>）：class 顶部 doc comment 写的"Protocol ... step 2: Send auth message: { type: 'auth', credential: ... }"已经 stale——实现只走 HTTP header 鉴权，onopen 日志写的是 <code>authenticated via headers</code>。产品层看不到这种文档漂移，但它是一个真实样本：协议从两段式 handshake 降级为 header-only 之后，README 式的 class 注释忘了跟进。读源码时不要把 doc comment 当 ground truth，以 onopen 实际行为为准。</p></blockquote>
+<p>值得注意的一处<strong>类型检查刻意放宽</strong>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/remote/SessionsWebSocket.ts:46-55</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">function</span> isSessionsMessage(value: <span class="hl-kw">unknown</span>): value <span class="hl-kw">is</span> <span class="hl-type">SessionsMessage</span> {
+  <span class="hl-kw">if</span> (<span class="hl-kw">typeof</span> value !== &#x27;object&#x27; || value === <span class="hl-kw">null</span> || !(&#x27;<span class="hl-kw">type</span>&#x27; <span class="hl-kw">in</span> value)) {
+    <span class="hl-kw">return</span> <span class="hl-kw">false</span>
+  }
+  <span class="hl-cm">// Accept any message with a string `type` field. Downstream handlers</span>
+  <span class="hl-cm">// (sdkMessageAdapter, RemoteSessionManager) decide what to do with</span>
+  <span class="hl-cm">// unknown types. A hardcoded allowlist here would silently drop new</span>
+  <span class="hl-cm">// message types the backend starts sending before the client is updated.</span>
+  <span class="hl-kw">return</span> <span class="hl-kw">typeof</span> value.<span class="hl-kw">type</span> === &#x27;string&#x27;
+}</code></pre></figure>
+<p>这个选择本身就是一条"客户端/服务端分开迭代"的工程手法：前端放行未知 type，让下游 handler（<code class="ref">sdkMessageAdapter.ts</code>）自行决定渲染还是 ignore，不让 transport 层卡住新 feature 上线。</p>
+<h3>17.4.2 <code>RemoteSessionManager</code> —— 把 control_request 分流出来</h3>
+<figure class="codeblock"><figcaption><span class="file">src/remote/RemoteSessionManager.ts:95-103</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">class</span> <span class="hl-type">RemoteSessionManager</span> {
+  <span class="hl-kw">private</span> websocket: <span class="hl-type">SessionsWebSocket</span> | <span class="hl-kw">null</span> = <span class="hl-kw">null</span>
+  <span class="hl-kw">private</span> pendingPermissionRequests: <span class="hl-type">Map</span>&lt;string, <span class="hl-type">SDKControlPermissionRequest</span>&gt; =
+    <span class="hl-kw">new</span> <span class="hl-type">Map</span>()
+  ...
+}</code></pre></figure>
+<p><code>pendingPermissionRequests</code> 这张表就是本章核心：每当云端发来一个 <code>control_request.subtype === &#x27;can_use_tool&#x27;</code>，manager 把它存进去，等本地 UI 用对应 <code>request_id</code> 回来取走（<code>RemoteSessionManager.ts:189-214, 247-261</code>）。</p>
+<h3>17.4.3 <code>createSyntheticAssistantMessage</code> + <code>createToolStub</code></h3>
+<figure class="codeblock"><figcaption><span class="file">src/remote/remotePermissionBridge.ts:12-46</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> createSyntheticAssistantMessage(
+  request: <span class="hl-type">SDKControlPermissionRequest</span>,
+  requestId: string,
+): <span class="hl-type">AssistantMessage</span> {
+  <span class="hl-kw">return</span> {
+    <span class="hl-kw">type</span>: &#x27;assistant&#x27;,
+    uuid: randomUUID(),
+    message: {
+      id: <span class="hl-str">`remote-${requestId}`</span>,
+      <span class="hl-kw">type</span>: &#x27;message&#x27;,
+      role: &#x27;assistant&#x27;,
+      content: [
+        {
+          <span class="hl-kw">type</span>: &#x27;tool_use&#x27;,
+          id: request.tool_use_id,
+          name: request.tool_name,
+          input: request.input,
+        },
+      ],
+      <span class="hl-cm">// ...</span>
+    },
+    requestId: <span class="hl-kw">undefined</span>,
+    timestamp: <span class="hl-kw">new</span> <span class="hl-type">Date</span>().toISOString(),
+  }
+}</code></pre></figure>
+<p>REPL 的 <code>ToolUseConfirm</code> 结构要求一条 AssistantMessage 作为"上下文"。远端模式下本地没有真实的 assistantMessage（那条消息是在 CCR 容器里由模型生成的），但 UI 不关心，随便造一个能满足类型约束的就行。这是一个典型的"协议上的合成数据"用法——UI 复用度换来的代价是一行假的 uuid。</p>
+<p><code>createToolStub</code>（<code class="ref">remotePermissionBridge.ts:53-78</code>）解决另一个问题：远端挂了本地不认识的 MCP 工具时，用一个最小 Tool 对象让 UI 能渲染 confirm 框：</p>
+<figure class="codeblock"><figcaption><span class="file">src/remote/remotePermissionBridge.ts:53-78</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> createToolStub(toolName: string): <span class="hl-type">Tool</span> {
+  <span class="hl-kw">return</span> {
+    name: toolName,
+    inputSchema: {} <span class="hl-kw">as</span> <span class="hl-type">Tool</span>[&#x27;inputSchema&#x27;],
+    isEnabled: () =&gt; <span class="hl-kw">true</span>,
+    userFacingName: () =&gt; toolName,
+    renderToolUseMessage: (input: <span class="hl-type">Record</span>&lt;string, <span class="hl-kw">unknown</span>&gt;) =&gt; { <span class="hl-cm">/* 展示前 3 个 key */</span> },
+    call: <span class="hl-kw">async</span> () =&gt; ({ data: &#x27;&#x27; }),       <span class="hl-cm">// 本地永远不会被调用</span>
+    description: <span class="hl-kw">async</span> () =&gt; &#x27;&#x27;,
+    prompt: () =&gt; &#x27;&#x27;,
+    isReadOnly: () =&gt; <span class="hl-kw">false</span>,
+    isMcp: <span class="hl-kw">false</span>,
+    needsPermissions: () =&gt; <span class="hl-kw">true</span>,
+  } <span class="hl-kw">as</span> <span class="hl-kw">unknown</span> <span class="hl-kw">as</span> <span class="hl-type">Tool</span>
+}</code></pre></figure>
+<p>这个 stub 的 <code>call</code> 从不会触发（工具执行发生在远端容器），它只是为了通过本地类型系统。</p>
+<h3>17.4.4 <code>convertSDKMessage</code> —— SDK 形状到 REPL 形状的薄翻译</h3>
+<figure class="codeblock"><figcaption><span class="file">src/remote/sdkMessageAdapter.ts:168-214</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> convertSDKMessage(
+  msg: <span class="hl-type">SDKMessage</span>,
+  opts?: <span class="hl-type">ConvertOptions</span>,
+): <span class="hl-type">ConvertedMessage</span> {
+  <span class="hl-kw">switch</span> (msg.<span class="hl-kw">type</span>) {
+    <span class="hl-kw">case</span> &#x27;assistant&#x27;:
+      <span class="hl-kw">return</span> { <span class="hl-kw">type</span>: &#x27;message&#x27;, message: convertAssistantMessage(msg) }
+
+    <span class="hl-kw">case</span> &#x27;user&#x27;: {
+      <span class="hl-kw">const</span> content = msg.message?.content
+      <span class="hl-kw">const</span> isToolResult =
+        <span class="hl-type">Array</span>.isArray(content) &amp;&amp; content.some(b =&gt; b.<span class="hl-kw">type</span> === &#x27;tool_result&#x27;)
+      <span class="hl-kw">if</span> (opts?.convertToolResults &amp;&amp; isToolResult) {
+        <span class="hl-kw">return</span> { <span class="hl-kw">type</span>: &#x27;message&#x27;, message: createUserMessage({ ... }) }
+      }
+      <span class="hl-cm">// ...</span>
+    }
+
+    <span class="hl-kw">case</span> &#x27;stream_event&#x27;:
+      <span class="hl-kw">return</span> { <span class="hl-kw">type</span>: &#x27;stream_event&#x27;, event: convertStreamEvent(msg) }
+
+    <span class="hl-kw">case</span> &#x27;result&#x27;:
+      <span class="hl-kw">if</span> (msg.subtype !== &#x27;success&#x27;) {
+        <span class="hl-kw">return</span> { <span class="hl-kw">type</span>: &#x27;message&#x27;, message: convertResultMessage(msg) }
+      }
+      <span class="hl-kw">return</span> { <span class="hl-kw">type</span>: &#x27;ignored&#x27; }
+
+    <span class="hl-kw">case</span> &#x27;system&#x27;:
+      <span class="hl-kw">if</span> (msg.subtype === &#x27;init&#x27;) { <span class="hl-cm">/* ... */</span> }
+      <span class="hl-kw">if</span> (msg.subtype === &#x27;status&#x27;) { <span class="hl-cm">/* ... */</span> }
+      <span class="hl-kw">if</span> (msg.subtype === &#x27;compact_boundary&#x27;) { <span class="hl-cm">/* ... */</span> }
+      <span class="hl-kw">return</span> { <span class="hl-kw">type</span>: &#x27;ignored&#x27; }
+    ...
+  }
+}</code></pre></figure>
+<p>这个 switch 是 <code>useRemoteSession</code>、<code>useDirectConnect</code>、<code>useSSHSession</code> 三个 hook 的公共翻译器（<code class="ref">sdkMessageAdapter.ts:22-27</code> 注释直接点名）。这意味着无论消息来自 CCR、direct-connect server 还是 SSH 里的 stream-json，REPL 的 <code>Message[]</code> 侧<strong>看到的都是一样的形状</strong>。</p>
+<h3>17.4.5 <code>BoundedUUIDSet</code> —— echo 去重的环形 UUID 集</h3>
+<p>本地发 user message 给远端时，远端会把它回显到 WS 上（server 广播 + worker 写路径各回一次）。回显要过滤掉，否则用户会看到自己打的字两份。最朴素的"发的时候 add，收到 match 就 delete"写法有个坑：同一个 UUID 会被不同链路各回一次。</p>
+<figure class="codeblock"><figcaption><span class="file">src/bridge/bridgeMessaging.ts:429-461</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">class</span> <span class="hl-type">BoundedUUIDSet</span> {
+  <span class="hl-kw">private</span> <span class="hl-kw">readonly</span> capacity: number
+  <span class="hl-kw">private</span> <span class="hl-kw">readonly</span> ring: (string | <span class="hl-kw">undefined</span>)[]
+  <span class="hl-kw">private</span> <span class="hl-kw">readonly</span> <span class="hl-kw">set</span> = <span class="hl-kw">new</span> <span class="hl-type">Set</span>&lt;string&gt;()
+  <span class="hl-kw">private</span> writeIdx = <span class="hl-num">0</span>
+
+  add(uuid: string): <span class="hl-kw">void</span> {
+    <span class="hl-kw">if</span> (<span class="hl-kw">this</span>.<span class="hl-kw">set</span>.has(uuid)) <span class="hl-kw">return</span>
+    <span class="hl-kw">const</span> evicted = <span class="hl-kw">this</span>.ring[<span class="hl-kw">this</span>.writeIdx]
+    <span class="hl-kw">if</span> (evicted !== <span class="hl-kw">undefined</span>) <span class="hl-kw">this</span>.<span class="hl-kw">set</span>.<span class="hl-kw">delete</span>(evicted)
+    <span class="hl-kw">this</span>.ring[<span class="hl-kw">this</span>.writeIdx] = uuid
+    <span class="hl-kw">this</span>.<span class="hl-kw">set</span>.add(uuid)
+    <span class="hl-kw">this</span>.writeIdx = (<span class="hl-kw">this</span>.writeIdx + <span class="hl-num">1</span>) % <span class="hl-kw">this</span>.capacity
+  }
+
+  has(uuid: string): boolean { <span class="hl-kw">return</span> <span class="hl-kw">this</span>.<span class="hl-kw">set</span>.has(uuid) }
+  clear(): <span class="hl-kw">void</span> { ... }
+}</code></pre></figure>
+<p>一个定长环形 buffer + 一个 Set。<code>has</code> 不改状态，所以同一 UUID 的多次 echo（server 广播路径 + worker 写路径各一次）都会被匹配；淘汰只发生在 ring 写满回卷时。<code>useRemoteSession</code> 用的是 <code>new BoundedUUIDSet(50)</code>（<code class="ref">useRemoteSession.ts:137</code>），最近 50 条本地发出的 user message 内的回显会被过滤，更早的由用户自己辨识。</p>
+<h2>17.5 关键流程之一：Remote session 的主干</h2>
+<p>以 <code>claude --remote &quot;...&quot;</code> 启动的 CCR 场景为例。</p>
+<p><strong>create session：</strong><code class="ref">main.tsx:3430</code> 调用 <code>teleportToRemoteWithErrorHandling</code>，内部拨打 <code>POST /v1/sessions</code>，带上当前 git 仓库信息作为 <code>session_context.sources</code>（<code class="ref">src/utils/teleport.tsx:867-879</code>）。如果检测到本地 repo 没 GitHub 远端或 CCR 无权 clone，会切到 "git bundle" 模式——本地跑 <code>git bundle --all</code>，通过 Files API 上传，CCR 容器从 bundle clone（<code class="ref">teleport.tsx:838-856</code>）。</p>
+<p><strong>connect REPL：</strong></p>
+<figure class="codeblock"><figcaption><span class="file">src/main.tsx:3473</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> remoteSessionConfig = createRemoteSessionConfig(
+  createdSession.id, getAccessTokenForRemote, apiCreds.orgUUID, hasInitialPrompt
+);</code></pre></figure>
+<p><code>launchRepl</code> 把这个 config 交给 <code>useRemoteSession</code> hook。</p>
+<p><strong>订阅事件流：</strong><code>RemoteSessionManager.connect()</code> → <code>SessionsWebSocket.connect()</code>（<code class="ref">RemoteSessionManager.ts:108-141</code>）。事件进 <code>handleMessage</code>（<code class="ref">RemoteSessionManager.ts:146-184</code>）：</p>
+<ul>
+<li><code>control_request</code> → <code>handleControlRequest</code>（见 17.6 节）</li>
+<li><code>control_cancel_request</code> → 从 <code>pendingPermissionRequests</code> 删除 + UI 消队</li>
+<li><code>control_response</code> → 只记日志（客户端不处理 server 的 ack）</li>
+<li>其他（SDKMessage 各 type）→ <code>callbacks.onMessage</code></li>
+</ul>
+<p><strong>发用户消息：</strong>走 HTTP 而非 WS。<code>manager.sendMessage</code> → <code>sendEventToRemoteSession</code> → <code>POST /v1/sessions/{id}/events</code>（<code class="ref">src/utils/teleport/api.ts:361-417</code>）。请求体是一个 <code>events: [userEvent]</code> 数组，<code>userEvent.uuid</code> 由本地生成或由 caller 传入。</p>
+<p><strong>UUID 对齐：</strong>调用 <code>sendMessage</code> 时本地会先把 uuid <code>add</code> 进 <code>sentUUIDsRef</code>（<code class="ref">useRemoteSession.ts:493</code>），随后 <code>onMessage</code> 收到的任何 user 消息只要 uuid 命中就丢弃（<code class="ref">useRemoteSession.ts:182-191</code>）。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/hooks/useRemoteSession.ts:490-493</code>）：<code>sentUUIDsRef.current.add(opts.uuid)</code> <strong>必须在 <code>await manager.sendMessage(...)</code> 之前</strong>执行。WS echo 可以在 HTTP POST 的 promise resolve 之前就到达——这是一条 off-by-one 的 race condition，代码里用注释"Must record BEFORE the POST to close the race where the echo arrives before the POST promise resolves"锁死顺序。产品层只会看到"偶发的重复消息"，但根因就是这两行代码的先后。</p></blockquote>
+<p><strong>渲染：</strong><code>convertSDKMessage</code> → <code>{ type: &#x27;message&#x27; | &#x27;stream_event&#x27; | &#x27;ignored&#x27; }</code> → 针对 assistant 消息把里面的 tool_use 块 ID 加入 <code>inProgressToolUseIDs</code>（<code class="ref">useRemoteSession.ts:289-305</code>），让 UI 显示正确的 spinner 状态。注意这里和本地 session 的差别：本地是 <code class="ref">toolOrchestration.ts</code> 维护这组 ID，远端 session 因为没真的执行工具，要 hook 手动维护。</p>
+<h2>17.6 关键流程之二：permission 反向回路（本章核心）</h2>
+<h3>17.6.1 问题</h3>
+<p>场景：agent 在 A 机器执行工具（CCR 容器里）。工具有 permission 需求（<a class="chref" href="../ch09/">ch.09</a>）。用户在 B 机器看（本地 REPL）。B 按 allow，怎么让 A 上那条工具调用真的跑？</p>
+<p>直觉选项：</p>
+<ol>
+<li>RPC。A 暂停，远程调用 B 说"我要 Bash 'rm -rf foo' 行吗"，B 弹框、回复，A 继续。</li>
+<li>事件流 + 对齐 ID。A 发一条 <code>control_request</code>，B 把它 render 成本地熟悉的 confirm UI，B 按键后发一条 <code>control_response</code>，A 按 <code>request_id</code> 找到挂起的那次 <code>can_use_tool</code>。</li>
+</ol>
+<p>Claude Code 选的是 2。选择背后的理由是<strong>让 A 侧代码复用度最大化</strong>——无论是本地 session、CCR 容器、还是 Bridge（含 daemon 子场景），agent 侧都只需要一个 <code>canUseTool(tool, input) → Promise&lt;Decision&gt;</code> 回调。回调内部的差异（本地弹 Ink UI 还是发 control_request）被 transport 层吃掉。</p>
+<h3>17.6.2 远端 → 本地</h3>
+<p>远端 claude 进程发 control_request（格式见 <code class="ref">src/bridge/sessionRunner.ts:32-43</code>，这是 Bridge 场景下解析子进程 stdout 的类型定义，但两边 wire format 一致）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/bridge/sessionRunner.ts:32-43</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">PermissionRequest</span> = {
+  <span class="hl-kw">type</span>: &#x27;control_request&#x27;
+  request_id: string
+  request: {
+    subtype: &#x27;can_use_tool&#x27;
+    tool_name: string
+    input: <span class="hl-type">Record</span>&lt;string, <span class="hl-kw">unknown</span>&gt;
+    tool_use_id: string
+  }
+}</code></pre></figure>
+<p>本地 <code>SessionsWebSocket.handleMessage</code> 通过 <code>isSessionsMessage</code> 放行，传给 <code>RemoteSessionManager.handleMessage</code>（<code class="ref">SessionsWebSocket.ts:210-229</code>、<code class="ref">RemoteSessionManager.ts:152-183</code>）。然后：</p>
+<figure class="codeblock"><figcaption><span class="file">src/remote/RemoteSessionManager.ts:189-214</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">private</span> handleControlRequest(request: <span class="hl-type">SDKControlRequest</span>): <span class="hl-kw">void</span> {
+  <span class="hl-kw">const</span> { request_id, request: inner } = request
+  <span class="hl-kw">if</span> (inner.subtype === &#x27;can_use_tool&#x27;) {
+    <span class="hl-kw">this</span>.pendingPermissionRequests.<span class="hl-kw">set</span>(request_id, inner)
+    <span class="hl-kw">this</span>.callbacks.onPermissionRequest(inner, request_id)
+  } <span class="hl-kw">else</span> {
+    <span class="hl-cm">// 回一个 error response，否则 server 挂着等回复</span>
+    <span class="hl-kw">const</span> response: <span class="hl-type">SDKControlResponse</span> = {
+      <span class="hl-kw">type</span>: &#x27;control_response&#x27;,
+      response: {
+        subtype: &#x27;error&#x27;,
+        request_id,
+        error: <span class="hl-str">`Unsupported control request subtype: ${inner.subtype}`</span>,
+      },
+    }
+    <span class="hl-kw">this</span>.websocket?.sendControlResponse(response)
+  }
+}</code></pre></figure>
+<p>两件重要的事：</p>
+<ol>
+<li>把 request 存进 <code>pendingPermissionRequests</code>，用 <code>request_id</code> 做 key——这就是反向回路的"对齐 ID"。</li>
+<li>不认识的 subtype 必须明确回 error，否则 server 会一直挂着（和下文 Bridge 的 initialize-or-die 同源）。</li>
+</ol>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/remote/RemoteSessionManager.ts:198-213</code>）：<code>handleControlRequest</code> 对不认识的 <code>subtype</code> <strong>必须主动回 error</strong>，否则挂在 CCR 那侧等 response 的 <code>can_use_tool</code>（或未来任何 control_request 子协议）会超时——产品层看不到"协议超时"，只会看到"远端 agent 停住不动"。这是一条对所有 transport 都生效的契约：CCR、Bridge、DirectConnect 在收到未知 subtype 时都走"显式回 error"，SSH shim 没实现但在 hook 端预留了同一个回调签名。换句话说，<strong>control_request 协议是跨四种 transport 的共享语义层</strong>，谁接入谁就要承担"必须回话"的义务。</p></blockquote>
+<p><code>onPermissionRequest</code> 回调触发 hook 侧逻辑：</p>
+<figure class="codeblock"><figcaption><span class="file">src/hooks/useRemoteSession.ts:330-406</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">onPermissionRequest: (request, requestId) =&gt; {
+  <span class="hl-kw">const</span> tool =
+    findToolByName(toolsRef.current, request.tool_name) ??
+    createToolStub(request.tool_name)
+
+  <span class="hl-kw">const</span> syntheticMessage = createSyntheticAssistantMessage(request, requestId)
+
+  <span class="hl-kw">const</span> permissionResult: <span class="hl-type">PermissionAskDecision</span> = {
+    behavior: &#x27;ask&#x27;,
+    message: request.description ?? <span class="hl-str">`${request.tool_name} requires permission`</span>,
+    suggestions: request.permission_suggestions,
+    blockedPath: request.blocked_path,
+  }
+
+  <span class="hl-kw">const</span> toolUseConfirm: <span class="hl-type">ToolUseConfirm</span> = {
+    assistantMessage: syntheticMessage,
+    tool,
+    <span class="hl-cm">// ...</span>
+    toolUseID: request.tool_use_id,
+    permissionResult,
+    permissionPromptStartTimeMs: <span class="hl-type">Date</span>.now(),
+    onUserInteraction() {},               <span class="hl-cm">// 远端不跑分类器</span>
+    onAbort() { <span class="hl-cm">/* 发 deny: &#x27;User aborted&#x27; */</span> },
+    onAllow(updatedInput, _permissionUpdates, _feedback) {
+      manager.respondToPermissionRequest(requestId, {
+        behavior: &#x27;allow&#x27;, updatedInput
+      })
+      setToolUseConfirmQueue(queue =&gt;
+        queue.filter(item =&gt; item.toolUseID !== request.tool_use_id),
+      )
+      setIsLoading(<span class="hl-kw">true</span>)                   <span class="hl-cm">// 恢复 loading</span>
+    },
+    onReject(feedback?: string) { <span class="hl-cm">/* 发 deny: feedback */</span> },
+    <span class="hl-kw">async</span> recheckPermission() {},          <span class="hl-cm">// 远端也不用</span>
+  }
+
+  setToolUseConfirmQueue(queue =&gt; [...queue, toolUseConfirm])
+  setIsLoading(<span class="hl-kw">false</span>)                      <span class="hl-cm">// 暂停 loading</span>
+}</code></pre></figure>
+<p>三个要点：</p>
+<ul>
+<li><code>syntheticMessage</code> + <code>tool</code> 让 UI 组件和本地 session 用同一套渲染（见 17.4.3）</li>
+<li><code>onUserInteraction</code> 和 <code>recheckPermission</code> 是 no-op：前者是本地"输入中分类器"的钩子，远端模式分类发生在 CCR 容器；后者是本地 permission mode 变更时重新检查，远端的 permission 状态在容器上</li>
+<li><code>setIsLoading(false)</code> 等待时关 loading，<code>onAllow</code> 里再 true 回来</li>
+</ul>
+<h3>17.6.3 本地 → 远端</h3>
+<p><code>respondToPermissionRequest</code> 做的事很直白：</p>
+<figure class="codeblock"><figcaption><span class="file">src/remote/RemoteSessionManager.ts:247-282</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">respondToPermissionRequest(
+  requestId: string,
+  result: <span class="hl-type">RemotePermissionResponse</span>,
+): <span class="hl-kw">void</span> {
+  <span class="hl-kw">const</span> pendingRequest = <span class="hl-kw">this</span>.pendingPermissionRequests.<span class="hl-kw">get</span>(requestId)
+  <span class="hl-kw">if</span> (!pendingRequest) {
+    logError(<span class="hl-kw">new</span> <span class="hl-type">Error</span>(<span class="hl-str">`No pending permission request with ID: ${requestId}`</span>))
+    <span class="hl-kw">return</span>
+  }
+  <span class="hl-kw">this</span>.pendingPermissionRequests.<span class="hl-kw">delete</span>(requestId)
+
+  <span class="hl-kw">const</span> response: <span class="hl-type">SDKControlResponse</span> = {
+    <span class="hl-kw">type</span>: &#x27;control_response&#x27;,
+    response: {
+      subtype: &#x27;success&#x27;,
+      request_id: requestId,
+      response: {
+        behavior: result.behavior,
+        ...(result.behavior === &#x27;allow&#x27;
+          ? { updatedInput: result.updatedInput }
+          : { message: result.message }),
+      },
+    },
+  }
+  <span class="hl-kw">this</span>.websocket?.sendControlResponse(response)
+}</code></pre></figure>
+<p>响应走 WS 的 <code>send()</code>（<code class="ref">SessionsWebSocket.ts:328-336</code>），不走 HTTP。原因是响应要同步喂回挂起的 <code>can_use_tool</code>，HTTP 里再绕一次会拉长 tail latency。</p>
+<h3>17.6.4 Bridge 方向的对称</h3>
+<p>注意"Bridge"这个名字——它<strong>不是 MCP bridge</strong>，和 <a class="chref" href="../ch12/">ch.12</a> 里讲的 MCP server / MCP client 那个 RPC 面板没有继承关系。这里的 Bridge 是"把本地 CLI session 桥到远端 UI"的代号，在源码里是 <code>src/bridge/</code> 目录名。</p>
+<p>Bridge（本地跑 agent，远端 UI）做完全对称的事：本地 agent 的 <code>can_use_tool</code> 回调照常触发，回调里<strong>本地</strong>负责把请求发出去：</p>
+<figure class="codeblock"><figcaption><span class="file">src/bridge/bridgePermissionCallbacks.ts:10-27</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">type</span> <span class="hl-type">BridgePermissionCallbacks</span> = {
+  sendRequest(
+    requestId: string,
+    toolName: string,
+    input: <span class="hl-type">Record</span>&lt;string, <span class="hl-kw">unknown</span>&gt;,
+    toolUseId: string,
+    description: string,
+    permissionSuggestions?: <span class="hl-type">PermissionUpdate</span>[],
+    blockedPath?: string,
+  ): <span class="hl-kw">void</span>
+  sendResponse(requestId: string, response: <span class="hl-type">BridgePermissionResponse</span>): <span class="hl-kw">void</span>
+  cancelRequest(requestId: string): <span class="hl-kw">void</span>
+  onResponse(
+    requestId: string,
+    handler: (response: <span class="hl-type">BridgePermissionResponse</span>) =&gt; <span class="hl-kw">void</span>,
+  ): () =&gt; <span class="hl-kw">void</span>
+}</code></pre></figure>
+<p><code>sendRequest</code> 最终走 <code>BridgeApiClient.sendPermissionResponseEvent</code>（<code class="ref">src/bridge/types.ts:153-158</code>）的反向调用——客户端 POST 一条 event 到 session events API，服务器再推给所有订阅者（claude.ai/code 前端）；用户在浏览器点 allow，浏览器发 control_response 事件给 server，server 再通过 WS 回给<strong>本地</strong> Bridge 进程，进程上查表、唤醒挂起的 <code>can_use_tool</code>，agent 继续。</p>
+<p>两方向的回路结构一致：<strong>request_id 对齐，control_request/control_response 格式相同</strong>，只是推送方向相反。这让 Claude Code 的 permission 代码"两边都能当客户端"。<strong>弹窗弹在哪一侧取决于形态</strong>：CCR 里 agent 在云、弹窗在本地 REPL（或 claude.ai/code 前端，取决于哪端先订阅到事件）；Bridge 里 agent 在本地、弹窗在远端 UI（浏览器 / 手机 App）。同一份 <code>can_use_tool</code> 回调被两种形态共享，它不关心自己的 prompt 最终显示在哪块屏幕上，这也是 permission mode 能跨端（<a class="chref" href="../ch09/">ch.09</a>）保真的前提。</p>
+<h3>17.6.5 Cancel 路径</h3>
+<p>一个容易漏的 case：用户在 claude.ai/code 里关掉了 permission prompt 的浏览器标签页，或者 agent 因别的原因撤销了请求。服务端这时发 <code>control_cancel_request</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/remote/RemoteSessionManager.ts:160-172</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (message.<span class="hl-kw">type</span> === &#x27;control_cancel_request&#x27;) {
+  <span class="hl-kw">const</span> { request_id } = message
+  <span class="hl-kw">const</span> pendingRequest = <span class="hl-kw">this</span>.pendingPermissionRequests.<span class="hl-kw">get</span>(request_id)
+  <span class="hl-kw">this</span>.pendingPermissionRequests.<span class="hl-kw">delete</span>(request_id)
+  <span class="hl-kw">this</span>.callbacks.onPermissionCancelled?.(
+    request_id,
+    pendingRequest?.tool_use_id,
+  )
+  <span class="hl-kw">return</span>
+}</code></pre></figure>
+<p>hook 侧把对应 item 从 <code>toolUseConfirmQueue</code> 里剔除（<code class="ref">useRemoteSession.ts:407-416</code>）。这一层"取消"也走同一条反向回路，没有第二套协议。</p>
+<h3>17.6.6 设计取舍</h3>
+<p>这条回路的三个关键约束：</p>
+<ol>
+<li>消息格式两向一致（request + response 都是 <code>control_request</code> / <code>control_response</code>，只是谁发谁收不同）</li>
+<li>用 <code>request_id</code> 而不是队列位置或 tool_use_id 做对齐——tool_use_id 可能被重试、可能被同一 turn 内多次询问</li>
+<li><code>pendingPermissionRequests</code> Map 生命周期与单条 request 严格绑定：存储在 handle 开始、删除在 response 结束或 cancel 时——不是"会话级"的表，这避免了跨 turn 的脏数据</li>
+</ol>
+<p>换一种做法会怎么样？如果走 RPC——比如"agent 直接调用本地 HTTP 端口上的 prompt 服务"——会被一堆问题打穿：本地要开端口、断线后 RPC 挂起、移动端根本没端口、和 permission mode 的状态机耦合。事件流对齐 ID 的代价是：两侧都得维护 <code>pendingRequests</code> 表以及"request → response 绑定 + cancel 清理"的状态机（CCR 侧在 <code>RemoteSessionManager</code>，Bridge 侧在 <code>bridgeMessaging</code>），而且两份实现必须同步演化。Claude Code 选择承担这份维护成本，换来"同一段 agent 代码四种 transport 都能跑"。</p>
+<h2>17.7 Teleport 的确切语义</h2>
+<p>从仓库里看 teleport 的主入口：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/teleport.tsx:430-503（节选）</span>
+<span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span> teleportResumeCodeSession(
+  sessionId: string,
+  onProgress?: <span class="hl-type">TeleportProgressCallback</span>,
+): <span class="hl-type">Promise</span>&lt;<span class="hl-type">TeleportRemoteResponse</span>&gt; {
+  <span class="hl-kw">if</span> (!isPolicyAllowed(&#x27;allow_remote_sessions&#x27;)) {
+    <span class="hl-kw">throw</span> <span class="hl-kw">new</span> <span class="hl-type">Error</span>(&quot;<span class="hl-type">Remote</span> sessions are disabled by your organization&#x27;s policy.&quot;)
+  }
+  <span class="hl-cm">// ...</span>
+  <span class="hl-kw">const</span> sessionData = <span class="hl-kw">await</span> fetchSession(sessionId)
+  <span class="hl-kw">const</span> repoValidation = <span class="hl-kw">await</span> validateSessionRepository(sessionData)
+  <span class="hl-kw">switch</span> (repoValidation.status) {
+    <span class="hl-kw">case</span> &#x27;match&#x27;:
+    <span class="hl-kw">case</span> &#x27;no_repo_required&#x27;:
+      <span class="hl-kw">break</span>
+    <span class="hl-kw">case</span> &#x27;not_in_repo&#x27;:
+      <span class="hl-kw">throw</span> <span class="hl-kw">new</span> <span class="hl-type">TeleportOperationError</span>(<span class="hl-cm">/* ... */</span>)
+    <span class="hl-kw">case</span> &#x27;mismatch&#x27;:
+      <span class="hl-kw">throw</span> <span class="hl-kw">new</span> <span class="hl-type">TeleportOperationError</span>(<span class="hl-cm">/* ... */</span>)
+    <span class="hl-cm">// ...</span>
+  }
+  <span class="hl-kw">return</span> <span class="hl-kw">await</span> teleportFromSessionsAPI(sessionId, orgUUID, accessToken, onProgress, sessionData)
+}</code></pre></figure>
+<p>返回类型是：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/conversationRecovery.ts:134-137</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">TeleportRemoteResponse</span> = {
+  log: <span class="hl-type">Message</span>[]
+  branch?: string
+}</code></pre></figure>
+<p>即 teleport = "拿 transcript + 可选 branch 名"。</p>
+<p>main.tsx 里的处理（<code class="ref">main.tsx:3510-3585</code>）把这两件东西变成：</p>
+<ol>
+<li><code>checkOutTeleportedSessionBranch(branch)</code> 切到对应分支（<code class="ref">src/utils/teleport.tsx:315-343</code>）</li>
+<li><code>processMessagesForTeleportResume(log, branchError)</code> 把 transcript 当作 resume 的 <code>initialMessages</code>（<code class="ref">teleport.tsx:301-308</code>）</li>
+</ol>
+<p>然后本地是一个<strong>新的</strong> CLI 进程，从这些消息继续。云端的 CCR session <strong>没有被 archive</strong>。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/teleport.tsx:430-503</code> 不调用 <code class="ref">src/utils/teleport.tsx:1200-1223</code> 的 <code>archiveRemoteSession</code>）：teleport 完成后，云端 CCR session 仍然"alive"。<code>archiveRemoteSession</code> 这个函数确实存在，但它只被 <code class="ref">src/commands/ultraplan.tsx</code>（orphan cleanup）和 <code class="ref">src/bridge/bridgeMain.ts</code> / <code class="ref">replBridge.ts</code>（Bridge teardown）调用，teleport resume 链路里没有任何一环触发它。产品层看到的结果：<code>claude --teleport &lt;id&gt;</code> 之后，去 claude.ai/code 那个 session 还在原位；如果用户同时在手机和桌面各跑一份续写，理论上可以分叉。动词 "pulls"（而不是 "migrates"）就是 API 契约这一侧的体现。</p></blockquote>
+<p>此外，<strong>transcript 本身是 snapshot + live 的拼接</strong>：<code>teleportFromSessionsAPI</code> 先通过 <code>getTeleportEvents</code> / <code>getSessionLogsViaOAuth</code>（<code class="ref">teleport.tsx:573-588</code>）取一份历史快照，随后 CCR session 的 WS 订阅继续推 live 事件。CCR 的 transcript 不是纯流式（每条消息都要 replay 到位）、也不是纯 snapshot（不能只看快照就完事），而是这两者的接力。断线重连时依赖 snapshot 重对齐游标，而不是从 seq 0 重放。</p>
+<p>官方文档和这个描述完全一致：</p>
+<blockquote><p><code>--teleport</code> is distinct from <code>--resume</code>. <code>--resume</code> reopens a conversation from this machine's local history and doesn't list cloud sessions; <code>--teleport</code> pulls a cloud session and its branch. —— <a href="https://code.claude.com/docs/en/claude-code-on-the-web" rel="noreferrer">https://code.claude.com/docs/en/claude-code-on-the-web</a>（访问于 2026-04-19）</p></blockquote>
+<p>动词 "pulls" 在这里是关键：<strong>取回一份</strong>，不是搬迁，不是复制两边双向同步。云端还在那里，本地开了个 CLI 续写。</p>
+<p>teleport 还有几条前提条件值得一提（源码用 <code>validateGitState</code> 和 <code>validateSessionRepository</code> 各做一部分）：</p>
+<ul>
+<li>Clean git working tree（无 uncommitted changes，除非接受 stash 提示）</li>
+<li>当前目录是 session 绑定的 repo（不同 host / 不同 owner/name 会被拒）</li>
+<li>Branch 已经 push 到 remote（否则本地 <code>fetch</code> 失败）</li>
+<li>同一 claude.ai 账户</li>
+</ul>
+<p>官方文档的 requirements 表格与代码一一对应（来源：<a href="https://code.claude.com/docs/en/claude-code-on-the-web" rel="noreferrer">https://code.claude.com/docs/en/claude-code-on-the-web</a>）。</p>
+<p>把 Teleport 和 Bridge 放一起：</p>
+<div class="table-wrap"><table><thead><tr><th></th><th>同一 session 多端同步</th><th>新 session，把旧 transcript 拿过来</th></tr></thead><tbody><tr><td><strong>Agent 在云</strong></td><td><code>--remote</code> 跑 CCR + <code>useRemoteSession</code></td><td><code>claude --teleport &lt;id&gt;</code></td></tr>
+<tr><td><strong>Agent 在本地</strong></td><td><code>claude remote-control</code>（Bridge）</td><td>不适用</td></tr></tbody></table></div>
+<p>Bridge 是"同一 session 多设备"；Teleport 是"跨设备换新 session，喂同一段历史"。两者底层共享 <code>/v1/sessions</code> API 和 CCR session 基础设施（官方文档 troubleshooting 节明示："<code>--teleport</code> connects through the same Remote Control session infrastructure that cloud sessions use"），但用户语义是反向的。跨机 cost 归属在这两种场景下也不同（CCR 用量计到云端账号名下，Bridge 的 token 开销仍计到本地执行 agent 那台机器的账号，见 <a class="chref" href="../ch22/">ch.22</a>）。</p>
+<h2>17.8 关键流程之三：断线重连与 transport 抽象</h2>
+<h3>17.8.1 CCR 侧的简单策略</h3>
+<figure class="codeblock"><figcaption><span class="file">src/remote/SessionsWebSocket.ts:17-36</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">RECONNECT_DELAY_MS</span> = <span class="hl-num">2000</span>
+<span class="hl-kw">const</span> <span class="hl-type">MAX_RECONNECT_ATTEMPTS</span> = <span class="hl-num">5</span>
+<span class="hl-kw">const</span> <span class="hl-type">PING_INTERVAL_MS</span> = <span class="hl-num">30000</span>
+
+<span class="hl-kw">const</span> <span class="hl-type">MAX_SESSION_NOT_FOUND_RETRIES</span> = <span class="hl-num">3</span>
+
+<span class="hl-kw">const</span> <span class="hl-type">PERMANENT_CLOSE_CODES</span> = <span class="hl-kw">new</span> <span class="hl-type">Set</span>([
+  <span class="hl-num">4003</span>, <span class="hl-cm">// unauthorized</span>
+])</code></pre></figure>
+<p><code>handleClose</code> 三路决策（<code class="ref">SessionsWebSocket.ts:232-288</code>）：4003 永不重连；4001（session not found）允许 3 次重试——注释说这是为了兜住 compaction 期间 session 的短暂"失联"（<code class="ref">SessionsWebSocket.ts:22-26</code>）；其他前序是 connected 且重试没超限就 2s 定长重试。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/remote/SessionsWebSocket.ts:258-272</code> vs <code>:247-253</code>）：4001 和 4003 是一对刻意<strong>不对称</strong>的 close code。4003 = unauthorized = 永不重连；4001 = session not found = 视为 compaction 期间的瞬态失联，最多重试 3 次、每次退避时长按 <code>RECONNECT_DELAY_MS * retries</code> 递增。两个 code 在协议层都是"server 主动关连接"，但 client 对它们的态度完全不同。产品层只会看到"连上了"或"连不上"；这种"为什么 compaction 后能自动恢复、但被吊销授权后就永远红灯"的差别完全由这两个 close code 的语义定义。断线重连的<strong>保留时长</strong>由此决定：4001 最长 <code>2s + 4s + 6s = 12s</code> 的窗口，超过就彻底 onClose；其他正常断线 <code>RECONNECT_DELAY_MS=2000</code> × <code>MAX_RECONNECT_ATTEMPTS=5</code> = 约 10s 定长重试预算。</p></blockquote>
+<p>hook 层对重连的响应值得单独看：</p>
+<figure class="codeblock"><figcaption><span class="file">src/hooks/useRemoteSession.ts:421-431</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">onReconnecting: () =&gt; {
+  setConnStatus(&#x27;reconnecting&#x27;)
+  <span class="hl-cm">// WS gap = we may miss task_notification events. Clear rather than</span>
+  <span class="hl-cm">// drift high forever. Undercounts tasks that span the gap; accepted.</span>
+  runningTaskIdsRef.current.clear()
+  writeTaskCount()
+  setInProgressToolUseIDs?.(prev =&gt; (prev.size &gt; <span class="hl-num">0</span> ? <span class="hl-kw">new</span> <span class="hl-type">Set</span>() : prev))
+}</code></pre></figure>
+<p>这是一条典型的"失序事件流"写法——<strong>宁愿欠计数也不过计数</strong>。断线期间丢的 <code>task_notification</code> 事件无法补发，如果不清零，UI 上的"N tasks running"会永远停在断线前的高水位。接受"span gap 的 task 少计"比"永远错报"更好。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/hooks/useRemoteSession.ts:421-431</code>）：重连时 <code>inProgressToolUseIDs</code> 被整体清空。用户在 UI 上可能看到"某个工具原本在 spin，现在突然不转了"——<strong>这不是 bug，是代码层显式选择"宁欠不过"</strong>。消息补齐机制不存在：WS 里的事件是 fire-and-forget，断线窗口里的 <code>task_notification</code> / tool-use lifecycle 没有任何 replay，重连后 UI 状态就 reset。历史消息侧依赖 §17.7 讲的 snapshot + live 拼接；但<strong>运行时指示器</strong>（"N tasks running"、正在转的 spinner）是纯派生状态，重连即清零。这是设计选择：想得到完整回放就去 claude.ai/code 上重新 teleport。</p></blockquote>
+<h3>17.8.2 Response timeout 的放宽</h3>
+<figure class="codeblock"><figcaption><span class="file">src/hooks/useRemoteSession.ts:36-41</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">RESPONSE_TIMEOUT_MS</span> = <span class="hl-num">60000</span>
+<span class="hl-kw">const</span> <span class="hl-type">COMPACTION_TIMEOUT_MS</span> = <span class="hl-num">180000</span></code></pre></figure>
+<figure class="codeblock"><figcaption><span class="file">src/hooks/useRemoteSession.ts:538-561</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (!config?.viewerOnly) {
+  <span class="hl-kw">const</span> timeoutMs = isCompactingRef.current
+    ? <span class="hl-type">COMPACTION_TIMEOUT_MS</span>
+    : <span class="hl-type">RESPONSE_TIMEOUT_MS</span>
+  responseTimeoutRef.current = setTimeout(
+    (setMessages, manager) =&gt; {
+      logForDebugging(&#x27;[useRemoteSession] <span class="hl-type">Response</span> timeout - attempting reconnect&#x27;)
+      <span class="hl-kw">const</span> warningMessage = createSystemMessage(
+        &#x27;<span class="hl-type">Remote</span> session may be unresponsive. <span class="hl-type">Attempting</span> to reconnect…&#x27;,
+        &#x27;warning&#x27;,
+      )
+      setMessages(prev =&gt; [...prev, warningMessage])
+      manager.reconnect()
+    },
+    timeoutMs, setMessages, manager,
+  )
+}</code></pre></figure>
+<p>60s / 180s 两档。在 compaction 进行时 CLI worker 阻塞在一次 API call 上，正常消息流暂停，180s 窗口避免把 "busy" 误判为 "dead"。<code>isCompactingRef</code> 这个开关由 CCR 发来的 <code>system.subtype === &#x27;compact_boundary&#x27;</code> 消息翻转（见 <a class="chref" href="../ch07/">ch.07</a> 的 compaction 侧，以及 <code class="ref">sdkMessageAdapter.ts</code> 对 system 子类型的分支）。</p>
+<p>此外，<code>viewerOnly</code> 模式（<code>RemoteSessionConfig.viewerOnly</code>，主要用于 <code>claude assistant</code> 场景）会<strong>整个 skip 这套 timeout</strong>（<code class="ref">useRemoteSession.ts:538-561</code> 的 <code>if (!config?.viewerOnly)</code> 护栏）——观众端没有"发消息后等 reply"的语义，也不会因为 60s 无事件就主动重连，否则多人共享一个 CCR session 时会打架。同模式下还会跳过 <code>updateSessionTitle</code>（§17.4 末尾提过）和 interrupt 发送，把"只读观众"的语义落到协议层。</p>
+<h3>17.8.3 Bridge 的 transport 抽象</h3>
+<p>Bridge 因为要兼容 v1（Environments API + HybridTransport）和 v2（env-less + SSE），抽象了一层 transport 接口：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/bridge/replBridgeTransport.ts:23-70（节选）</span>
+<span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">ReplBridgeTransport</span> = {
+  write(message: <span class="hl-type">StdoutMessage</span>): <span class="hl-type">Promise</span>&lt;<span class="hl-kw">void</span>&gt;
+  writeBatch(messages: <span class="hl-type">StdoutMessage</span>[]): <span class="hl-type">Promise</span>&lt;<span class="hl-kw">void</span>&gt;
+  close(): <span class="hl-kw">void</span>
+  isConnectedStatus(): boolean
+  getStateLabel(): string
+  setOnData(callback: (data: string) =&gt; <span class="hl-kw">void</span>): <span class="hl-kw">void</span>
+  setOnClose(callback: (closeCode?: number) =&gt; <span class="hl-kw">void</span>): <span class="hl-kw">void</span>
+  setOnConnect(callback: () =&gt; <span class="hl-kw">void</span>): <span class="hl-kw">void</span>
+  connect(): <span class="hl-kw">void</span>
+  getLastSequenceNum(): number
+  <span class="hl-kw">readonly</span> droppedBatchCount: number
+  reportState(state: <span class="hl-type">SessionState</span>): <span class="hl-kw">void</span>
+  reportMetadata(metadata: <span class="hl-type">Record</span>&lt;string, <span class="hl-kw">unknown</span>&gt;): <span class="hl-kw">void</span>
+  reportDelivery(eventId: string, status: &#x27;processing&#x27; | &#x27;processed&#x27;): <span class="hl-kw">void</span>
+  flush(): <span class="hl-type">Promise</span>&lt;<span class="hl-kw">void</span>&gt;
+}</code></pre></figure>
+<p>v2 才有的 <code>getLastSequenceNum</code> 用来做<strong>跨 transport 的断点续</strong>：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/bridge/replBridgeTransport.ts:124-130（节选）</span>
+<span class="hl-cm">/**
+ * SSE sequence-number high-water mark from the previous transport.
+ * Passed to the new SSETransport so its first connect() sends
+ * from_sequence_num / Last-Event-ID and the server resumes from where
+ * the old stream left off. Without this, every transport swap asks the
+ * server to replay the entire session history from seq 0.
+ */</span>
+initialSequenceNum?: number</code></pre></figure>
+<p>流程：(1) 旧 transport 死；(2) 调 <code>getLastSequenceNum()</code> 拿到当前游标；(3) <code>createV2ReplTransport({ initialSequenceNum: cursor, ... })</code> 起新 transport；(4) 新流的 SSE <code>connect()</code> 带上 <code>Last-Event-ID</code>，server 从那个点续。</p>
+<p>v1 里 <code>getLastSequenceNum</code> 永远返回 0，原因是 Session-Ingress WS 的 replay 是走服务端 message cursor 而非 SSE 序号。</p>
+<p>这个抽象层还干了另一件事：把"env-based vs env-less"和"v1 transport vs v2 transport"<strong>解耦</strong>——<code class="ref">remoteBridgeCore.ts</code> 的头部注释特意澄清这两个维度是正交的（<code class="ref">src/bridge/remoteBridgeCore.ts:2-29</code>）。env-based 也能跑 CCR v2 transport，env-less 只能 v2。这意味着下线 Environments API 可以独立于下线 v1 transport，两条路径可以分别收敛。</p>
+<h2>17.9 Bridge：本地跑 agent、远端 UI 的另一面</h2>
+<h3>17.9.1 入口</h3>
+<p><code>/remote-control</code> 斜杠命令只做一件事：flip AppState：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/commands/bridge/bridge.tsx:38-110（节选）</span>
+setAppState(prev_0 =&gt; ({
+  ...prev_0,
+  replBridgeEnabled: <span class="hl-kw">true</span>,
+  replBridgeExplicit: <span class="hl-kw">true</span>,
+  replBridgeOutboundOnly: <span class="hl-kw">false</span>,
+  replBridgeInitialName: name,
+}));
+onDone(&quot;<span class="hl-type">Remote</span> <span class="hl-type">Control</span> connecting…&quot;, { display: &quot;system&quot; });</code></pre></figure>
+<p>真正的连接发生在 <code>useReplBridge</code>（<code class="ref">src/hooks/useReplBridge.tsx</code>），它 watch <code>replBridgeEnabled</code>。打开时动态 import <code>initReplBridge</code>，关闭时 teardown。<code>initReplBridge</code> 里做一堆 gating 检查（OAuth、policy、feature gate、min version，见 <code class="ref">src/bridge/initReplBridge.ts:131-200</code>），然后选择进入 env-based 或 env-less 实现。</p>
+<h3>17.9.2 env-less 的 5 步（值得看的简化版）</h3>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">// src/bridge/remoteBridgeCore.ts:14-29（注释照抄）
+1. POST /v1/code/sessions              (OAuth, no env_id)  → session.id
+2. POST /v1/code/sessions/{id}/bridge  (OAuth)             → {worker_jwt, expires_in, api_base_url, worker_epoch}
+3. createV2ReplTransport(worker_jwt, worker_epoch)         → SSE + CCRClient
+4. createTokenRefreshScheduler                             → proactive /bridge re-call
+5. 401 on SSE → rebuild transport with fresh /bridge credentials (same seq-num)</code></pre></figure>
+<p>v1（env-based）额外多了 Environments API 的 register / poll / ack / stop / heartbeat / deregister。那套是为多 worker 云调度而设计的，REPL 这种单进程场景下冗余。v2 的核心变化是"一次 OAuth 换 worker_jwt" 替代 "Environments API 分配 worker_jwt"——服务端 PR #293280 让 <code>/bridge</code> 这个 endpoint 每次调用都 bump worker epoch，自己就 IS 了 register。</p>
+<h3>17.9.3 server→client 控制协议</h3>
+<p>Bridge 连上之后，server 会主动发 <code>control_request</code>。<code>handleServerControlRequest</code>（<code class="ref">src/bridge/bridgeMessaging.ts:243-391</code>）列出了 6 种 subtype：</p>
+<ul>
+<li><code>initialize</code>：<strong>必须回 success</strong>，否则 server 10-14s 内杀 WS。回应里告诉 server 本地的 commands / models / account / pid（默认值）。</li>
+<li><code>set_model</code> / <code>set_max_thinking_tokens</code> / <code>set_permission_mode</code> / <code>interrupt</code>：调对应 callback，回 success。<code>set_permission_mode</code> 的 callback 返回 verdict（带 error 字符串），因为某些 mode 可能被组织 policy 禁用，这时要让 claude.ai 前端看到错误而不是"表面成功但什么都没发生"。</li>
+<li>未知 subtype：回 error。</li>
+</ul>
+<p>这就是"server 必回"的契约——没有响应就等同于 WS 死亡。</p>
+<h3>17.9.4 outbound-only 模式</h3>
+<p>一个很有意思的开关：如果只想让远端 UI 看到本地 session 的对话（mirror），但不想让远端控制本地（改 model、interrupt、set mode 等），用 outbound-only：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/bridge/bridgeMessaging.ts:260-283（节选）</span>
+<span class="hl-kw">if</span> (outboundOnly &amp;&amp; request.request.subtype !== &#x27;initialize&#x27;) {
+  response = {
+    <span class="hl-kw">type</span>: &#x27;control_response&#x27;,
+    response: {
+      subtype: &#x27;error&#x27;,
+      request_id: request.request_id,
+      error: <span class="hl-type">OUTBOUND_ONLY_ERROR</span>,
+    },
+  }
+  <span class="hl-cm">// ...</span>
+  <span class="hl-kw">return</span>
+}</code></pre></figure>
+<p>关键点：<strong>initialize 仍然回 success</strong>，否则 server 会杀掉连接，远端连 session 都看不到。其他 mutating 请求一律回 <code>OUTBOUND_ONLY_ERROR</code>，这样 claude.ai 前端能显示一个具体的错误而不是"我按了但没反应"。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/bridge/bridgeMessaging.ts:260-283</code> vs <code>:330-340</code>）：outbound-only 模式不是一刀切的"全拒"，它区分<strong>存活请求</strong>（initialize——回 success 让 server 知道客户端活着）和<strong>修改请求</strong>（set_model / set_permission_mode / interrupt——回 error 让 UI 看到"这端拒绝控制"）。更隐蔽的是 <code>set_permission_mode</code>：即便不在 outbound-only 模式，若运行上下文没注册 <code>onSetPermissionMode</code> 回调（例如 daemon context），代码也会返回 error verdict 而不是假装 success，注释明写"would lie to the client"。产品层的表现是 claude.ai 前端会看到具体 error message；如果这里偷懒回 success，用户就会以为 mode 改了但其实没生效——典型的"沉默成功"反模式。</p></blockquote>
+<p>这条"必回 initialize，别的都拒"的技巧：<strong>控制面协议的"存活请求"和"修改请求"要分开</strong>，否则限制权限等于断连接。</p>
+<h2>17.10 DirectConnect 与 SSH：两个简化版本</h2>
+<p>DirectConnect 的本质是"对接一个 stdout 里吐 stream-json 的 claude 进程"。<code>DirectConnectSessionManager.sendMessage</code> 的注释直接点破：</p>
+<figure class="codeblock"><figcaption><span class="file">src/server/directConnectManager.ts:130-142</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">sendMessage(content: <span class="hl-type">RemoteMessageContent</span>): boolean {
+  <span class="hl-cm">// ...</span>
+  <span class="hl-cm">// Must match SDKUserMessage format expected by `--input-format stream-json`</span>
+  <span class="hl-kw">const</span> message = jsonStringify({
+    <span class="hl-kw">type</span>: &#x27;user&#x27;,
+    message: { role: &#x27;user&#x27;, content: content },
+    parent_tool_use_id: <span class="hl-kw">null</span>,
+    session_id: &#x27;&#x27;,
+  })
+  <span class="hl-kw">this</span>.ws.send(message)
+  <span class="hl-kw">return</span> <span class="hl-kw">true</span>
+}</code></pre></figure>
+<p>也就是说协议就是 <code>claude -p --output-format stream-json --input-format stream-json</code> 的两端接上，中间套一个 WS。<code>handleMessage</code> 按 <code>\n</code> 切帧，每帧一条 JSON——因为 ndjson 是 stream-json 的默认输出格式。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/server/directConnectManager.ts:130-142</code>）：DirectConnect 走 WS 但 payload 形状与 <code>--input-format stream-json</code> / <code>--output-format stream-json</code> <strong>完全一致</strong>——注释原文 "Must match SDKUserMessage format expected by <code>--input-format stream-json</code>"。架构含义：DirectConnect server 本质上是"一个 subprocess 的 ndjson stdin/stdout 被 WS 代理了"。这意味着同一个 Agent SDK stream-json 契约（见 <a class="chref" href="../ch23/">ch.23</a>）在三个位置复用：本地子进程 stdio、CCR 云 session 的 WS 订阅、DirectConnect 的 WS 双向。谁能生产/消费这份 ndjson，谁就能接入。</p></blockquote>
+<p>SSH 从 hook 端推断（<code class="ref">src/hooks/useSSHSession.ts:184-198</code>）预期有 <code>session.proc.exitCode</code>、<code>session.getStderrTail()</code>、<code>session.proxy.stop()</code>。合理推测：SSH 子进程是远端跑的 claude，本地起一个 proxy 把 API 请求路由出去——也就是说<strong>SSH 模式更像"远端跑完整 claude 进程 + 本地做 API 反代与 REPL UI"，而不是把本地 session 序列化后经 SSH tunnel 传输</strong>。<code>session.proc</code> 和 <code>session.proxy</code> 并列出现是判断依据：proc 是远端 claude 子进程的 handle、proxy 是本地 API 反代的 handle，两件独立的事。<strong>该模块在仓库里为恢复期 shim，真实实现可能不同</strong>；但 hook 端的接口已经把语义钉死。它与 <code>useDirectConnect</code> / <code>useRemoteSession</code> 共享 <code>convertSDKMessage</code> 和 <code>createSyntheticAssistantMessage</code> / <code>createToolStub</code>——也就是说 SSH 路径上<strong>不重复</strong>写一套 permission 反向回路。</p>
+<p>四条路径共享一个 adapter 是 §17.6 这条设计的最大红利。</p>
+<h2>17.11 设计取舍总结</h2>
+<p><strong>取舍 1：control_request 事件流 vs RPC。</strong></p>
+<p>事件流赢在：</p>
+<ul>
+<li>不需要本地开端口</li>
+<li>断线重连时没有"挂起的 RPC"语义问题（下次连接时 server 会重新发 control_request 如果请求还 pending）</li>
+<li>移动端天然适配（只能走 outbound HTTPS）</li>
+</ul>
+<p>事件流输在：</p>
+<ul>
+<li>两边都得做 pendingRequests 表和 echo 去重</li>
+<li>延迟多一跳</li>
+</ul>
+<p>Claude Code 选事件流的工程理由是：它本来就 outbound HTTPS + WS，多出来的 Map 和 ring buffer 不是大开销。这个选择也直接决定了 <a class="chref" href="../ch23/">ch.23</a> 的 Agent SDK 控制面协议长什么样——两侧是同一套 control_request / control_response，REPL 不过是 SDK 的一种 front-end 消费方。</p>
+<p><strong>取舍 2：env-based 和 env-less 并存。</strong></p>
+<p>这是一个典型的"新老实现共存期"。两者走不同后端 endpoint，各自有 min version 要求（<code class="ref">src/bridge/bridgeEnabled.ts:160-173</code> + <code>src/bridge/envLessBridgeConfig.ts:checkEnvLessBridgeMinVersion</code>），<code class="ref">initReplBridge.ts</code> 里靠 GrowthBook gate 在运行时挑。代价：两套代码都要维护、两套 transport 都要跑 QA。收益：可以先让 v2 在 REPL 场景 rollout（简单场景），daemon / print 留 v1（多 worker 云调度场景）。什么时候合并是后端团队的决定。</p>
+<p><strong>取舍 3：SDK message adapter 单向翻译。</strong></p>
+<p><code>convertSDKMessage</code> 只做 "SDK → REPL" 的方向，反向没有（REPL 发给 server 的 user message 是直接构造 SDK 格式）。这是因为 REPL 内部 Message 类型耦合了大量 UI 状态（光标、FileHistorySnapshot、isMeta、toolUseResult 等），往回翻译意义不大。单向 adapter 的代码量比双向少一半。</p>
+<p><strong>取舍 4：UUID 去重用环形 buffer 而非 LRU。</strong></p>
+<p>LRU 的 delete-on-match 语义和"同一 UUID 可能回显多次"不兼容；O(capacity) 大小的环形 buffer 逻辑简单、成本定：一个 50 长度的 ring 加一个 50 元素的 Set 就是 hook 的全部 echo-dedup 成本。</p>
+<h2>17.12 可迁移的点</h2>
+<p>四条可以带走用：</p>
+<ol>
+<li><strong>跨机器 permission prompt 的事件流 + request_id 对齐</strong>。把"问用户"做成 <code>control_request</code>，UI 端造合成数据填本地类型系统的坑。远端 agent 继续用它自己的 <code>canUseTool(tool, input)</code> 回调，不知道 UI 跑在哪台机器上。</li>
+<li><strong>Tool stub 模式</strong>。远端工具目录不用同步到本地——用一个能通过本地类型系统的最小 Tool 对象，<code>call</code> 永不触发。让"UI 能显示，执行发生在远端"和"UI 能显示，执行发生在本地"用同一条代码路径。</li>
+<li><strong>Reconnect 时宁可欠计数也不过计数</strong>。断线期间丢的事件无法补，重置到零比停在旧高水位更不容易误导用户。</li>
+<li><strong>Transport swap 时带断点（<code>getLastSequenceNum</code> + <code>Last-Event-ID</code>）</strong>。换底层协议时把"从哪里续"作为 transport 接口的一等公民，能让协议迁移不等同于数据丢失。</li>
+</ol>
+<p>反面教材——<strong>协议契约里要分"存活请求"和"修改请求"</strong>。Bridge 的 <code>initialize</code> 即使在 outbound-only 模式下也必须回 success，因为它是"我还活着"的确认；其他 mutating 请求可以拒。把这两类混在一个开关下（"全都拒"）等同于断连接。</p>
+<h2>17.13 延伸阅读</h2>
+<ul>
+<li><strong>permission 模型本体</strong>：<a class="chref" href="../ch09/">ch.09</a>。本章的反向回路依赖 <a class="chref" href="../ch09/">ch.09</a> 定义的 ask / allow / deny 语义、permission mode 状态机、以及 PermissionUpdate 的 suggestion 结构。</li>
+<li><strong>Sub-agent 远端调度</strong>：<a class="chref" href="../ch04/">ch.04</a>。远端容器里 agent 派生 sub-agent 时，sub-agent 的 <code>can_use_tool</code> 同样沿这条 control_request 回路走，本章描述的是单 agent 场景，多 agent 时 request_id 仍唯一。</li>
+<li><strong>Cron / scheduled agent</strong>：<a class="chref" href="../ch13/">ch.13</a>。定时触发的 remote 执行 session 复用本章的 CCR 基础设施；Cron 远端 trigger 走的是同一套 <code>/v1/sessions</code> API。</li>
+<li><strong>MCP server / MCP client</strong>：<a class="chref" href="../ch12/">ch.12</a>。与本章 <code>createToolStub</code> 那段相关——远端 MCP 工具本地不认识是常态。再次强调：本章的 "Bridge" 不是 MCP bridge，两者毫无继承。</li>
+<li><strong>Agent SDK</strong>：<a class="chref" href="../ch23/">ch.23</a>。<code>sdkMessageAdapter</code> 在 SDK 对外层和 REPL 内部层之间斡旋；control_request / control_response 是 REPL 与 SDK 同源的控制面协议。</li>
+<li><strong>Hooks</strong>：<a class="chref" href="../ch14/">ch.14</a>。</li>
+<li><strong>Cost / observability</strong>：<a class="chref" href="../ch22/">ch.22</a>。跨机 cost 归属在 CCR / Bridge / DirectConnect 三种形态下走不同计费路径。</li>
+<li><strong>IDE / Chrome / Computer Use（本地多端）</strong>：<a class="chref" href="../ch18/">ch.18</a>。</li>
+<li><strong>Context / compaction</strong>：<a class="chref" href="../ch07/">ch.07</a>。<code>isCompactingRef</code> 与 180s timeout 放宽的语义来源。</li>
+</ul>
+  </div>
+</article>
+
+<nav class="chap-nav"><a class="nav-link prev" href="../ch16/"><span class="dir">← Ch.16 · prev</span><span class="t">Background<span class="cn">后台任务</span></span></a><a class="nav-home" href="../">§ 目录</a><a class="nav-link next" href="../ch18/"><span class="dir">Ch.18 · next →</span><span class="t">Multi-host<span class="cn">IDE / Chrome / Computer Use</span></span></a></nav>
+
+<footer class="colophon">
+  <div class="left">Claude <span class="dot">&amp;</span> Code</div>
+  <div class="right">
+    set in EB garamond · albert sans · jetbrains mono · LXGW wenkai<br>
+    《Claude Code 源码解读》 · ch.17
+  </div>
+</footer>
+
+</body>
+</html>

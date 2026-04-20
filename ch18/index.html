@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.18 Multi-host · IDE / Chrome / Computer Use — Claude Code 源码解读</title>
+<meta name="description" content="《Claude Code 源码解读》第 18 章 —— IDE / Chrome / Computer Use（integration）">
+<meta property="og:title" content="Ch.18 Multi-host · IDE / Chrome / Computer Use — Claude Code 源码解读">
+<meta property="og:description" content="《Claude Code 源码解读》第 18 章 —— IDE / Chrome / Computer Use（integration）">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://nayuta403.github.io/claude-code-book/ch18/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,300;1,400;1,500&family=Albert+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<link rel="stylesheet" href="../assets/book.css">
+</head>
+<body>
+
+<nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
+
+<header class="chap-head">
+  <div>
+    <div class="crumb">
+      <a href="../">目录</a>
+      <span class="sep">/</span>
+      <span class="part-tag p4">Part IV · 交互与集成</span>
+    </div>
+    <div class="chap-num">Chapter · 18 / 23</div>
+    <h1 class="chap-title">Multi-host<span class="cn">IDE / Chrome / Computer Use</span></h1>
+  </div>
+  <aside class="chap-meta">
+    <div><div class="km">part</div><div class="vm">交互与集成（Interactions）</div></div>
+    <div><div class="km">topic</div><div class="vm m">integration</div></div>
+    <div><div class="km">reading</div><div class="vm">≈ 21 min</div></div>
+    <div><div class="km">source refs</div><div class="vm m">30</div></div>
+  </aside>
+</header>
+
+<article class="article">
+  <div class="prose">
+<blockquote><p>本章隶属"协作与远程"部分。正文假设读者已经读过 <a class="chref" href="../ch08/">ch.08</a>（Tool 系统，特别是 §"关键流程 1"讲的四源合并）、<a class="chref" href="../ch09/">ch.09</a>（权限模型）、<a class="chref" href="../ch12/">ch.12</a>（MCP）。远端/teleport 语义见 <a class="chref" href="../ch17/">ch.17</a>，浏览器侧主动推送与 <a class="chref" href="../ch15/">ch.15</a> 的 Proactive 通知有概念交叉。</p></blockquote>
+<h2>18.1 用户看到的三个场景</h2>
+<p class="drop">Claude Code 除了"终端里打字"这一种形态，还把自己接进了三种截然不同的外部系统：</p>
+<ul>
+<li><strong>IDE</strong>：VS Code 或 JetBrains 里用户按 <code>/ide</code> 连接后，CLI 触发的文件修改会在 IDE 的 tab 里打开 inline diff，而不是在终端渲染文本 diff；用户选中的代码会自动成为 prompt 的上下文；@-mention 可以从 IDE 侧触发。</li>
+<li><strong>Chrome</strong>：用户装了 Claude for Chrome 扩展后，<code>claude --chrome</code> 启动的 session 里 Claude 可以打开网页、读 console、点按钮；反过来，用户在浏览器里对 Claude 说的话会被当成 prompt 塞进 CLI 的输入队列。</li>
+<li><strong>Computer Use</strong>：在 <code>/mcp</code> 里启用 <code>computer-use</code> server 后，macOS 上的 Claude 会获得 23 个 GUI 自动化工具（鼠标、键盘、截屏、剪贴板、应用管理），可以代替用户去操作任何本地 app。</li>
+</ul>
+<p>除此之外还有个兄弟命令 <code>/desktop</code>：它不是 integration，是把当前 CLI 会话通过 <code>claude://resume</code> deep link 丢给 Claude Desktop 原生应用续写。本章最后顺带过一下。</p>
+<p>注意：这三端和 <a class="chref" href="../ch17/">ch.17</a> 讲的 <strong>remote session</strong> 是正交概念——remote session 是"把 agent 环境搬到别处跑（teleport / bridge / SSH）"，终端仍然在用户手里；本章三端是"把外部系统接进同一个本地 agent 的工具表"，Agent Loop 始终在本机。两者都依赖 <code>MCPServerConnection</code> 抽象，但目的不同。</p>
+<h2>18.2 为什么挑这个设计出来讲</h2>
+<p>三端的物理 transport 彼此完全不同：</p>
+<ul>
+<li>IDE 是跨进程本地回环 Socket（WebSocket 或 SSE）</li>
+<li>Chrome 是 Chrome Native Messaging + Unix domain socket（Windows 下是 named pipe）</li>
+<li>Computer Use 是进程内直通，根本不走网络</li>
+</ul>
+<p>但它们在上层被压成同一个形状：<strong><code>MCPServerConnection</code></strong>。三端各自对应一个 <code>name</code> 固定的 MCP client（<code>ide</code> / <code>claude-in-chrome</code> / <code>computer-use</code>），所有状态同步走 MCP notification，所有反向控制走 MCP tool call（代码里叫 <code>callIdeRpc</code>，名字其实带误导——Chrome 也在用）。<code>MCPServerConnection</code> 的判别联合、连接三态、transport 抽象都在 <a class="chref" href="../ch12/">ch.12</a> §4–§5 讲过，本章只看它被"当内部 IPC 用"时多出来的形状。</p>
+<p>这章要讲的"值得借鉴的核心设计"就是这个：<strong>把 MCP 当内部多端 IPC 层使</strong>，而不是只当对外协议。transport 可以换到任何能跑 JSON-RPC 的通道上，代码层的 hook / RPC / 通知订阅不需要改。</p>
+<h2>18.3 总览：三端 transport 对照</h2>
+<div class="table-wrap"><table><thead><tr><th>维度</th><th>IDE</th><th>Chrome</th><th>Computer Use</th></tr></thead><tbody><tr><td>MCP server <code>name</code></td><td><code>ide</code></td><td><code>claude-in-chrome</code></td><td><code>computer-use</code></td></tr>
+<tr><td>MCP config <code>type</code></td><td><code>sse-ide</code> / <code>ws-ide</code></td><td><code>stdio</code></td><td><code>stdio</code></td></tr>
+<tr><td>物理传输</td><td>HTTP SSE 或 WebSocket 到 <code>127.0.0.1:&lt;random&gt;</code></td><td>Chrome Native Messaging → Unix socket / named pipe → 扩展</td><td>进程内 <code>InProcessTransport</code>（无 IPC）</td></tr>
+<tr><td>发现</td><td><code>~/.claude/ide/&lt;port&gt;.lock</code></td><td>Native host manifest + wrapper 脚本</td><td>启动时直接写入 <code>dynamicMcpConfig</code></td></tr>
+<tr><td>谁触发连接</td><td>扫 lockfile + auto-connect</td><td><code>--chrome</code> flag 或配置</td><td><code>/mcp</code> 里手动 enable</td></tr>
+<tr><td>暴露给模型的 tool</td><td>只 <code>mcp__ide__getDiagnostics</code> + <code>mcp__ide__executeCode</code></td><td>全部 17 个 browser tool</td><td>全部 23 个 CU tool</td></tr>
+<tr><td>私有 RPC（不给模型）</td><td><code>openDiff</code> / <code>close_tab</code> / <code>closeAllDiffTabs</code> 等</td><td><code>set_permission_mode</code></td><td>无</td></tr>
+<tr><td>反向 notification</td><td><code>selection_changed</code> / <code>at_mentioned</code> / <code>log_event</code></td><td><code>notifications/message</code>（浏览器 prompt）</td><td>无（单向）</td></tr></tbody></table></div>
+<p>前三行最能说明问题：同样叫 MCP server，但 config type 一个是 <code>sse-ide</code> / <code>ws-ide</code>，另两个用"伪 stdio"。MCP 连接层被设计成对这几种混搭都无感。</p>
+<h2>18.4 关键数据结构</h2>
+<h3>18.4.1 两种 IDE 专属的 MCP config</h3>
+<figure class="codeblock"><figcaption><span class="file">src/services/mcp/types.ts:68-87</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">McpSSEIDEServerConfigSchema</span> = lazySchema(() =&gt;
+  z.object({
+    <span class="hl-kw">type</span>: z.literal(&#x27;sse-ide&#x27;),
+    url: z.string(),
+    ideName: z.string(),
+    ideRunningInWindows: z.boolean().optional(),
+  }),
+)
+
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">McpWebSocketIDEServerConfigSchema</span> = lazySchema(() =&gt;
+  z.object({
+    <span class="hl-kw">type</span>: z.literal(&#x27;ws-ide&#x27;),
+    url: z.string(),
+    ideName: z.string(),
+    authToken: z.string().optional(),
+    ideRunningInWindows: z.boolean().optional(),
+  }),
+)</code></pre></figure>
+<p>这两种类型和 <code>stdio / sse / http / ws</code> 一起被丢进 <code>McpServerConfigSchema</code> 的 <code>z.union</code>（<code class="ref">src/services/mcp/types.ts:124-135</code>），所以 MCP 连接器 <code>reconnectMcpServerImpl</code>（<a class="chref" href="../ch12/">ch.12</a> §5 讲过的那条连接管线）对它们是无感的——走普通 SSE / WebSocket transport，只是 URL 固定在 <code>127.0.0.1</code>，并且携带 <code>authToken</code> 这种扩展字段。IDE server 暴露出来的 tool 之后还要进 <a class="chref" href="../ch08/">ch.08</a> §"关键流程 1" 讲的四源合并（built-in / MCP / skill / plugin），所以白名单过滤必须发生在 client.ts 内、合并之前——详见下文 §18.5.4。</p>
+<h3>18.4.2 IDE lockfile 结构</h3>
+<p>IDE 扩展启动时在 <code>~/.claude/ide/&lt;port&gt;.lock</code> 写一个 JSON：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/ide.ts:73-80</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">type</span> <span class="hl-type">LockfileJsonContent</span> = {
+  workspaceFolders?: string[]
+  pid?: number
+  ideName?: string
+  transport?: &#x27;ws&#x27; | &#x27;sse&#x27;
+  runningInWindows?: boolean
+  authToken?: string
+}</code></pre></figure>
+<p><code>transport</code> 决定 URL 形状（<code class="ref">src/utils/ide.ts:794-798</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/ide.ts:794-798</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (lockfileInfo.useWebSocket) {
+  url = <span class="hl-str">`ws://${host}:${lockfileInfo.port}`</span>
+} <span class="hl-kw">else</span> {
+  url = <span class="hl-str">`http://${host}:${lockfileInfo.port}/sse`</span>
+}</code></pre></figure>
+<p><code>authToken</code> 是 IDE 扩展随机生成的一次性令牌，CLI 连接时必须带回去。Anthropic 官方文档明确：lockfile 放在 <code>0700</code> 目录下 <code>0600</code> 文件，只有当前用户可读（来源：<a href="https://code.claude.com/docs/en/ide-integrations" rel="noreferrer">https://code.claude.com/docs/en/ide-integrations</a>，访问于 2026-04-19）。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/ide.ts:522-581</code>）：IDE 扩展崩掉或被强杀时<strong>不会主动清理自己的 lockfile</strong>。清理发生在 CLI 侧——<code>detectIDEs()</code>（<code class="ref">ide.ts:634</code>）入口先调 <code>cleanupStaleIdeLockfiles()</code>，按 <code>pid</code> 存活或端口响应判断是否 <code>unlink</code>。也就是说，一台机器如果所有 Claude Code 都不再启动，残留 lockfile 会一直躺在 <code>~/.claude/ide/</code> 里；下一次任何 CLI 启动（或用户按 <code>/ide</code>）才顺手清掉。产品层看不到这个 stale window，但调试时会发现"进程都没了端口还列着"。</p></blockquote>
+<h3>18.4.3 In-process MCP 的拦截点</h3>
+<p>Chrome 和 Computer Use 的 config 都是 <code>type: &#x27;stdio&#x27;</code>，但 MCP client 建连时有个拦截分支：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/services/mcp/client.ts:905-943（节选）</span>
+} <span class="hl-kw">else</span> <span class="hl-kw">if</span> (
+  (serverRef.<span class="hl-kw">type</span> === &#x27;stdio&#x27; || !serverRef.<span class="hl-kw">type</span>) &amp;&amp;
+  isClaudeInChromeMCPServer(name)
+) {
+  <span class="hl-kw">const</span> context = createChromeContext(serverRef.env)
+  inProcessServer = createClaudeForChromeMcpServer(context)
+  <span class="hl-kw">const</span> [clientTransport, serverTransport] = createLinkedTransportPair()
+  <span class="hl-kw">await</span> inProcessServer.connect(serverTransport)
+  transport = clientTransport
+} <span class="hl-kw">else</span> <span class="hl-kw">if</span> (
+  feature(&#x27;<span class="hl-type">CHICAGO_MCP</span>&#x27;) &amp;&amp;
+  (serverRef.<span class="hl-kw">type</span> === &#x27;stdio&#x27; || !serverRef.<span class="hl-kw">type</span>) &amp;&amp;
+  isComputerUseMCPServer!(name)
+) {
+  <span class="hl-kw">const</span> { createComputerUseMcpServerForCli } = <span class="hl-kw">await</span> <span class="hl-kw">import</span>(
+    &#x27;../../utils/computerUse/mcpServer.js&#x27;
+  )
+  inProcessServer = <span class="hl-kw">await</span> createComputerUseMcpServerForCli()
+  <span class="hl-kw">const</span> [clientTransport, serverTransport] = createLinkedTransportPair()
+  <span class="hl-kw">await</span> inProcessServer.connect(serverTransport)
+  transport = clientTransport
+}</code></pre></figure>
+<p>也就是说——config 上写的 <code>command: process.execPath, args: [&#x27;--claude-in-chrome-mcp&#x27;]</code> 是"欺骗性 stdio"。MCP client 看到这两个特殊 name，绕过子进程 spawn，直接用 <code>InProcessTransport</code> 建一对 client/server transport，在同一个 Node 进程里收发消息。</p>
+<p>为什么要走这条弯路？源码注释里写得很清楚（<code class="ref">src/utils/computerUse/setup.ts:17-21</code>）：</p>
+<blockquote><p>"The MCP layer isn't ceremony: the API backend detects <code>mcp__computer-use__*</code> tool names and emits a CU availability hint into the system prompt. Built-in tools with different names wouldn't trigger it."</p></blockquote>
+<p>要保留 <code>mcp__computer-use__*</code> / <code>mcp__claude-in-chrome__*</code> 的前缀让 Anthropic 服务端的 system prompt 生成逻辑识别这两个特殊能力，就必须把它们注册成 MCP server。但真开一个子进程要多载入 ~325 MB 的 Node runtime，不划算——所以做了"把 MCP server 对象直接塞在主进程里，用一对内存 transport 桥接"这种做法。</p>
+<h3>18.4.4 四条反向 notification 的 schema</h3>
+<p>三端各自订阅自己关心的 JSON-RPC notification：</p>
+<figure class="codeblock"><figcaption><span class="file">src/hooks/useIdeSelection.ts:32-53</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">SelectionChangedSchema</span> = lazySchema(() =&gt;
+  z.object({
+    method: z.literal(&#x27;selection_changed&#x27;),
+    params: z.object({
+      selection: z.object({
+        start: z.object({ line: z.number(), character: z.number() }),
+        end: z.object({ line: z.number(), character: z.number() }),
+      }).nullable().optional(),
+      text: z.string().optional(),
+      filePath: z.string().optional(),
+    }),
+  }),
+)</code></pre></figure>
+<figure class="codeblock"><figcaption><span class="file">src/hooks/useIdeAtMentioned.ts:18-27</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">AtMentionedSchema</span> = lazySchema(() =&gt;
+  z.object({
+    method: z.literal(&#x27;at_mentioned&#x27;),
+    params: z.object({
+      filePath: z.string(),
+      lineStart: z.number().optional(),
+      lineEnd: z.number().optional(),
+    }),
+  }),
+)</code></pre></figure>
+<figure class="codeblock"><figcaption><span class="file">src/hooks/useIdeLogging.ts:8-16</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">LogEventSchema</span> = lazySchema(() =&gt;
+  z.object({
+    method: z.literal(&#x27;log_event&#x27;),
+    params: z.object({
+      eventName: z.string(),
+      eventData: z.object({}).passthrough(),
+    }),
+  }),
+)</code></pre></figure>
+<figure class="codeblock"><figcaption><span class="file">src/hooks/usePromptsFromClaudeInChrome.tsx:14-25</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">ClaudeInChromePromptNotificationSchema</span> = lazySchema(() =&gt;
+  z.object({
+    method: z.literal(&#x27;notifications/message&#x27;),
+    params: z.object({
+      prompt: z.string(),
+      image: z.object({
+        <span class="hl-kw">type</span>: z.literal(&#x27;base64&#x27;),
+        media_type: z.<span class="hl-kw">enum</span>([&#x27;image/jpeg&#x27;, &#x27;image/png&#x27;, &#x27;image/gif&#x27;, &#x27;image/webp&#x27;]),
+        data: z.string(),
+      }).optional(),
+      tabId: z.number().optional(),
+    }),
+  }),
+)</code></pre></figure>
+<p>注册方式都一样——在 hook 里拿 <code>mcpClients</code> 列表找对应 name 的 <code>ConnectedMCPServer</code>，然后 <code>client.setNotificationHandler(schema, handler)</code>。这是 MCP SDK 自带的 API。四个 schema 对应的是"外部端主动告知 CLI 发生了什么"的四条管道。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/hooks/useIdeSelection.ts:90-109</code>）：<code>selection_changed</code> 通知在 CLI 侧<strong>没有 debounce 或 throttle</strong>——IDE 每发一条 notification，<code>selectionChangeHandler</code> 就同步跑一次 <code>onSelect(...)</code> 并 setState。这意味着选区同步的实时性完全依赖 IDE 扩展侧的节流策略；如果扩展对每次光标移动都广播，CLI 会实打实地每条都处理、每条都触发 React 重渲染。产品层看不到这个分工，但在"选区同步延迟"这类问题上，CLI 这边没有补救措施。</p></blockquote>
+<h2>18.5 关键流程一：IDE 的生命周期</h2>
+<h3>18.5.1 发现阶段</h3>
+<p><code>detectIDEs()</code>（<code class="ref">src/utils/ide.ts:664</code>）做三件事：清理过期 lockfile、按 mtime 排序读出所有候选、验证 workspaceFolders 包含当前 cwd。</p>
+<p>WSL 用户比较特殊：CLI 在 Linux 侧跑，IDE 在 Windows 侧跑，lockfile 得从 Windows 用户目录读。<code>getIdeLockfilesPaths</code>（<code class="ref">src/utils/ide.ts:462-516</code>）用 <code>powershell.exe</code> 查 <code>$USERPROFILE</code>，然后读 <code>/mnt/c/Users/*/\.claude/ide</code>。</p>
+<h3>18.5.2 连接阶段</h3>
+<p><code>useIDEIntegration</code>（<code class="ref">src/hooks/useIDEIntegration.tsx:15-69</code>）启动时触发 <code>initializeIdeIntegration</code>，拿到检测结果后：</p>
+<figure class="codeblock"><figcaption><span class="file">src/hooks/useIDEIntegration.tsx:44-51</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">setDynamicMcpConfig(prev =&gt; {
+  <span class="hl-kw">if</span> (prev?.ide) <span class="hl-kw">return</span> prev
+  <span class="hl-kw">return</span> {
+    ...prev,
+    ide: {
+      <span class="hl-kw">type</span>: ide.url.startsWith(&#x27;ws:&#x27;) ? &#x27;ws-ide&#x27; : &#x27;sse-ide&#x27;,
+      url: ide.url,
+      ideName: ide.name,
+      authToken: ide.authToken,
+      ideRunningInWindows: ide.ideRunningInWindows,
+      scope: &#x27;dynamic&#x27; <span class="hl-kw">as</span> <span class="hl-kw">const</span>,
+    },
+  }
+})</code></pre></figure>
+<p>写进去之后，走的是正常的 <code>reconnectMcpServerImpl</code> 路径，只不过 transport 选择时会匹配到 <code>sse-ide</code> / <code>ws-ide</code> 分支。连上之后 CLI 主动发一条通知告诉 IDE 自己的 pid：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/ide.ts:829-836</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span> maybeNotifyIDEConnected(client: <span class="hl-type">Client</span>) {
+  <span class="hl-kw">await</span> client.notification({
+    method: &#x27;ide_connected&#x27;,
+    params: { pid: process.pid },
+  })
+}</code></pre></figure>
+<p>这是唯一一条 CLI → IDE 的 notification；其他方向的通信全部是 IDE → CLI 的 notification 或 CLI → IDE 的反向 tool call。</p>
+<h3>18.5.3 状态同步与断线</h3>
+<p><code>useIdeConnectionStatus</code>（<code class="ref">src/hooks/useIdeConnectionStatus.ts</code>）把 <code>MCPServerConnection</code> 的三态（<code>pending / connected / failed</code>）映射成 <code>IdeStatus</code>。它没有自己的状态机，而是直接 memo 在 <code>mcp.clients</code> 上。</p>
+<p>断开是最能看出设计意图的一段。用户在 <code>/ide</code> 里选 "None" 时：</p>
+<figure class="codeblock"><figcaption><span class="file">src/commands/ide/ide.tsx:565-580</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (ideClient &amp;&amp; ideClient.<span class="hl-kw">type</span> === &#x27;connected&#x27; &amp;&amp; currentIDE) {
+  ideClient.client.onclose = () =&gt; {}           <span class="hl-cm">// 禁止 MCP 自动重连</span>
+  <span class="hl-kw">void</span> clearServerCache(&#x27;ide&#x27;, ideClient.config) <span class="hl-cm">// 清缓存</span>
+  setAppState(prev =&gt; ({
+    ...prev,
+    mcp: {
+      ...prev.mcp,
+      clients: prev.mcp.clients.filter(c =&gt; c.name !== &#x27;ide&#x27;),
+      tools: prev.mcp.tools.filter(t =&gt; !t.name?.startsWith(&#x27;mcp__ide__&#x27;)),
+      commands: prev.mcp.commands.filter(c =&gt; !c.name?.startsWith(&#x27;mcp__ide__&#x27;)),
+    },
+  }))
+}</code></pre></figure>
+<p>三处过滤都按 <code>mcp__ide__</code> 前缀。这意味着 IDE 的断连是"擦除所有 <code>ide*</code> 痕迹"，不是单个 client 对象的销毁——工具、slash command 都可能是 IDE 扩展注入的。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/commands/ide/ide.tsx:569</code>）：断开 IDE 时第一行是 <code>ideClient.client.onclose = () =&gt; {}</code>——显式把 MCP SDK 的 close handler 置空。这一句是在<strong>绕过 <a class="chref" href="../ch12/">ch.12</a> §5 讲的自动重连</strong>：SDK 默认遇到 close 事件会尝试重建 transport，用户在 <code>/ide</code> 选 None 后如果没这行，工具会"消失一秒又回来"。产品层没有任何提示这个 hack 存在，但没它整个断连流程不工作。</p></blockquote>
+<h3>18.5.4 反向 RPC：用 tool call 当 IPC</h3>
+<p><code>callIdeRpc</code> 表面上是 MCP 的 <code>callTool</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/services/mcp/client.ts:2116-2128</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span> callIdeRpc(
+  toolName: string,
+  args: <span class="hl-type">Record</span>&lt;string, <span class="hl-kw">unknown</span>&gt;,
+  client: <span class="hl-type">ConnectedMCPServer</span>,
+): <span class="hl-type">Promise</span>&lt;string | <span class="hl-type">ContentBlockParam</span>[] | <span class="hl-kw">undefined</span>&gt; {
+  <span class="hl-kw">const</span> result = <span class="hl-kw">await</span> callMCPTool({
+    client,
+    tool: toolName,
+    args,
+    signal: createAbortController().signal,
+  })
+  <span class="hl-kw">return</span> result.content
+}</code></pre></figure>
+<p>和模型调 tool 走的是同一条 wire。但模型看不到这些 tool——过滤发生在 client.ts 里：</p>
+<figure class="codeblock"><figcaption><span class="file">src/services/mcp/client.ts:568-572</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">ALLOWED_IDE_TOOLS</span> = [&#x27;mcp__ide__executeCode&#x27;, &#x27;mcp__ide__getDiagnostics&#x27;]
+<span class="hl-cm">// ...</span>
+!tool.name.startsWith(&#x27;mcp__ide__&#x27;) || <span class="hl-type">ALLOWED_IDE_TOOLS</span>.includes(tool.name)</code></pre></figure>
+<p>白名单就两个常量字符串——<code>mcp__ide__executeCode</code> 和 <code>mcp__ide__getDiagnostics</code>。IDE server 上那"一打工具"里，只有这两个会到达模型的 tool list。其他 <code>openDiff</code> / <code>close_tab</code> / <code>closeAllDiffTabs</code> / <code>saveFile</code> / <code>getOpenEditors</code> / <code>getCurrentSelection</code> / <code>getLatestSelection</code> / <code>getWorkspaceFolders</code> 等全都被命名空间门挡在模型视野外——只能被 CLI 内部 UI 代码通过 <code>callIdeRpc</code> 调。这个过滤发生在 MCP tool 并入 <a class="chref" href="../ch08/">ch.08</a> §"关键流程 1" 的四源合并之前，所以模型在 Agent Loop（见 <a class="chref" href="../ch03/">ch.03</a>）里从头到尾看不见它们。Anthropic 官方文档原话：</p>
+<blockquote><p>"The server hosts a dozen tools, but only two are visible to the model. The rest are internal RPC the CLI uses for its own UI — opening diffs, reading selections, saving files — and are filtered out before the tool list reaches Claude."</p>
+<p>—— 来源：<a href="https://code.claude.com/docs/en/ide-integrations" rel="noreferrer">https://code.claude.com/docs/en/ide-integrations</a>，访问于 2026-04-19</p></blockquote>
+<p><strong>这是本章第一个值得拎出来看的设计</strong>：MCP 的 tool 接口被"兼职"成了两种角色——暴露给模型的公共 tool，和只在宿主代码里调的私有 RPC。同一条 transport，同一条消息格式，用命名空间过滤区分。</p>
+<h3>18.5.5 代表性工具：<code>useDiffInIDE</code></h3>
+<p><code>useDiffInIDE</code>（<code class="ref">src/hooks/useDiffInIDE.ts</code>）是反向 RPC 最完整的例子。流程：</p>
+<ol>
+<li><code>hasAccessToIDEExtensionDiffFeature(mcpClients)</code>（<code class="ref">src/utils/ide.ts:838-845</code>）检查是否连着 IDE</li>
+<li>构造一个带 6 位随机 hash 的 tab 名：<code>✻ [Claude Code] foo.ts (a1b2c3) ⧉</code>（防多 diff 冲突）</li>
+<li>WSL + Windows IDE 的场景下用 <code>WindowsToWSLConverter</code> 把 <code>/mnt/c/Users/...</code> 转回 <code>C:\Users\...</code></li>
+<li><code>callIdeRpc(&#x27;openDiff&#x27;, { old_file_path, new_file_path, new_file_contents, tab_name }, ideClient)</code></li>
+<li>结果是 MCP tool response 的 content 数组，判别成三种终态：
+<ul>
+<li><code>FILE_SAVED</code> → 用户在 IDE 里保存了修改，取第二段 text 作为新内容，重新算 edits</li>
+<li><code>TAB_CLOSED</code> → 用户关了 tab 但没改，采纳 Claude 的原始 edits</li>
+<li><code>DIFF_REJECTED</code> → 用户拒绝</li>
+</ul></li>
+<li>无论哪种终态都 <code>callIdeRpc(&#x27;close_tab&#x27;, { tab_name }, ideClient)</code> 清理</li>
+</ol>
+<p>判别函数写得很直接：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/useDiffInIDE.ts:346-379（节选）</span>
+<span class="hl-kw">function</span> isSaveMessage(data: <span class="hl-kw">unknown</span>): data <span class="hl-kw">is</span> [{ text: &#x27;<span class="hl-type">FILE_SAVED</span>&#x27; }, { text: string }] {
+  <span class="hl-kw">return</span> (
+    <span class="hl-type">Array</span>.isArray(data) &amp;&amp;
+    data[<span class="hl-num">0</span>]?.<span class="hl-kw">type</span> === &#x27;text&#x27; &amp;&amp;
+    data[<span class="hl-num">0</span>].text === &#x27;<span class="hl-type">FILE_SAVED</span>&#x27; &amp;&amp;
+    <span class="hl-kw">typeof</span> data[<span class="hl-num">1</span>].text === &#x27;string&#x27;
+  )
+}</code></pre></figure>
+<p>把三态塞在 MCP tool response 的 content array 里——第一个 block 是状态字面量，第二个 block 是新文件内容（如果是 FILE_SAVED）。不是 JSON-RPC result，也不是 custom schema。这是"复用 MCP 现有载荷格式"的典型省心写法。</p>
+<h2>18.6 关键流程二：Chrome 的四段转发</h2>
+<p>Chrome 集成复杂在"扩展不能直连 CLI"。Chrome 的安全模型只允许扩展通过 Native Messaging 启动一个受信任的外部进程（manifest 注册的），CLI 本身不是那个进程——所以整条链路被拆成四段。</p>
+<h3>18.6.1 拓扑</h3>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">┌────────────────────────────────────────────────────────────┐
+│ Chrome browser                                             │
+│  └── claude-in-chrome extension                            │
+└─────────┬──────────────────────────────────────────────────┘
+          │ Native Messaging (stdin/stdout, 4B LE len + UTF-8 JSON)
+          ▼
+┌────────────────────────────────────────────────────────────┐
+│ wrapper script:  claude --chrome-native-host              │
+│  └── runChromeNativeHost()                                 │
+│       └── Unix socket server at /tmp/claude-mcp-browser-   │
+│           bridge-&lt;user&gt;/socket  (Windows: named pipe)      │
+└─────────┬──────────────────────────────────────────────────┘
+          │ Unix domain socket
+          ▼
+┌────────────────────────────────────────────────────────────┐
+│ Claude Code CLI 主进程                                      │
+│  └── MCP client (name=&#x27;claude-in-chrome&#x27;, type=&#x27;stdio&#x27;)    │
+│       └── in-process MCP server                            │
+│            (createClaudeForChromeMcpServer + InProcess-    │
+│             Transport)                                      │
+│            └── connects to socket  或 wss://bridge…        │
+└────────────────────────────────────────────────────────────┘</code></pre></figure>
+<h3>18.6.2 第一次启动：装 manifest</h3>
+<p><code>installChromeNativeHostManifest</code>（<code class="ref">src/utils/claudeInChrome/setup.ts:191-266</code>）为六种 Chromium 浏览器写 manifest。manifest 长这样：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> manifest = {
+  name: <span class="hl-type">NATIVE_HOST_IDENTIFIER</span>,      <span class="hl-cm">// &#x27;com.anthropic.claude_code_browser_extension&#x27;</span>
+  description: &#x27;<span class="hl-type">Claude</span> <span class="hl-type">Code</span> <span class="hl-type">Browser</span> <span class="hl-type">Extension</span> <span class="hl-type">Native</span> <span class="hl-type">Host</span>&#x27;,
+  path: manifestBinaryPath,          <span class="hl-cm">// 指向 wrapper 脚本</span>
+  <span class="hl-kw">type</span>: &#x27;stdio&#x27;,
+  allowed_origins: [
+    &#x27;chrome-extension:<span class="hl-cm">//fcoeoabgfenejglbffodgkkbkcdhcgfn/&#x27;,</span>
+    <span class="hl-cm">// ant 用户还有两个 dev/ant extension id</span>
+  ],
+}</code></pre></figure>
+<p>macOS / Linux 走文件；Windows 走注册表：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/claudeInChrome/setup.ts:271-299（节选）</span>
+<span class="hl-kw">for</span> (<span class="hl-kw">const</span> { browser, key } <span class="hl-kw">of</span> registryKeys) {
+  <span class="hl-kw">const</span> fullKey = <span class="hl-str">`${key}\\${NATIVE_HOST_IDENTIFIER}`</span>
+  <span class="hl-kw">void</span> execFileNoThrowWithCwd(&#x27;reg&#x27;, [
+    &#x27;add&#x27;, fullKey, &#x27;/ve&#x27;, &#x27;/t&#x27;, &#x27;<span class="hl-type">REG_SZ</span>&#x27;, &#x27;/d&#x27;, manifestPath, &#x27;/f&#x27;,
+  ])
+}</code></pre></figure>
+<p>为什么要 wrapper 脚本？因为 manifest 的 <code>path</code> 字段不支持参数，不能直接写 <code>claude --chrome-native-host</code>，必须放一个 shell/bat 脚本 exec 过去（<code class="ref">src/utils/claudeInChrome/setup.ts:301-346</code>）。</p>
+<h3>18.6.3 运行时：Native Messaging 协议</h3>
+<p>Chrome 启动 wrapper 后，wrapper 调 <code>runChromeNativeHost()</code>。它遵循 Chrome 规定的 Native Messaging 格式——每条消息 4 字节 little-endian 长度前缀 + UTF-8 JSON body，上限 1 MB：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/claudeInChrome/chromeNativeHost.ts:50-57</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> sendChromeMessage(message: string): <span class="hl-kw">void</span> {
+  <span class="hl-kw">const</span> jsonBytes = <span class="hl-type">Buffer</span>.<span class="hl-kw">from</span>(message, &#x27;utf-<span class="hl-num">8</span>&#x27;)
+  <span class="hl-kw">const</span> lengthBuffer = <span class="hl-type">Buffer</span>.alloc(<span class="hl-num">4</span>)
+  lengthBuffer.writeUInt32LE(jsonBytes.length, <span class="hl-num">0</span>)
+  process.stdout.write(lengthBuffer)
+  process.stdout.write(jsonBytes)
+}</code></pre></figure>
+<p>Native Host 同时起一个 Unix socket server（或 Windows named pipe）等 CLI 主进程连进来。它两边转发：扩展发的消息转给任何连着 socket 的 MCP client；MCP client 发的消息包装成 Chrome Native Messaging 格式推回扩展。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/claudeInChrome/chromeNativeHost.ts:296-335</code>）：Native Host 对多个连进来的 CLI 做的是<strong>广播</strong>，不是路由。<code>mcpClients</code> 是一个 <code>Map&lt;clientId, McpClient&gt;</code>，每条扩展侧回来的 tool response 和 notification 都 <code>for (const [id, client] of this.mcpClients) client.socket.write(...)</code>——即：同一台机器同时起两个 Claude Code CLI 并各自连上同一个扩展，<strong>用户在浏览器里打的 prompt 会被同时塞进两个 session 的输入队列</strong>。产品层不会告诉你这件事，多 CLI 用户最容易在这里踩坑。注释原话是 "Forwarding notification to N MCP clients"。</p></blockquote>
+<h3>18.6.4 CLI 侧：in-process MCP 直连 socket</h3>
+<p>CLI 主进程并不 spawn 一个子进程去连 socket。走的是前面讲过的 "in-process MCP server" 路线（<code class="ref">src/services/mcp/client.ts:909-924</code>）——<code>createClaudeForChromeMcpServer(context)</code> 在进程内实例化一个 MCP server 对象，这个 server 对象内部才去拨打 <code>/tmp/claude-mcp-browser-bridge-&lt;user&gt;/socket</code>。</p>
+<p>ant 用户还有第二条物理路径：通过 <code>getChromeBridgeUrl()</code> 拿到 <code>wss://bridge.claudeusercontent.com</code> 后，扩展和 CLI 都连这个 WebSocket 桥，不再用本机 socket。<code class="ref">src/utils/claudeInChrome/mcpServer.ts:51-72</code> 的条件决定哪条：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">function</span> getChromeBridgeUrl(): string | <span class="hl-kw">undefined</span> {
+  <span class="hl-kw">const</span> bridgeEnabled =
+    process.env.<span class="hl-type">USER_TYPE</span> === &#x27;ant&#x27; ||
+    getFeatureValue_CACHED_MAY_BE_STALE(&#x27;tengu_copper_bridge&#x27;, <span class="hl-kw">false</span>)
+  <span class="hl-kw">if</span> (!bridgeEnabled) <span class="hl-kw">return</span> <span class="hl-kw">undefined</span>
+  <span class="hl-cm">// ... dev/staging/prod URL selection</span>
+  <span class="hl-kw">return</span> &#x27;wss:<span class="hl-cm">//bridge.claudeusercontent.com&#x27;</span>
+}</code></pre></figure>
+<p><strong>同一个上层 MCP 抽象，底下可以是本机 socket 也可以是 wss 云桥</strong>——这个替换是透明的，<code>callIdeRpc</code> 和 notification handler 一行都不改。<code>getChromeBridgeUrl</code> 还认两个 dev 钩子：<code>LOCAL_BRIDGE</code> 指向 <code>ws://localhost:8765</code>，<code>USE_STAGING_OAUTH</code> 指向 <code>bridge-staging.claudeusercontent.com</code>（<code class="ref">mcpServer.ts:60-69</code>），工程调试时会用到。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/claudeInChrome/mcpServer.ts:51-72</code> + <code class="ref">setup.ts:199-213</code>）：<code>wss://bridge.claudeusercontent.com</code> <strong>只对 Anthropic 员工账号生效</strong>——两处 gate：<code>getChromeBridgeUrl</code> 仅当 <code>process.env.USER_TYPE === &#x27;ant&#x27;</code> 或 <code>tengu_copper_bridge</code> feature flag 打开时才返回 bridge URL（否则走本机 socket）；<code>installChromeNativeHostManifest</code> 写的 <code>allowed_origins</code> 默认只放 PROD 扩展 id <code>fcoeoabgfenejglbffodgkkbkcdhcgfn</code>，仅当 <code>USER_TYPE === &#x27;ant&#x27;</code> 时额外注册 DEV / ANT 两个 extension id。换句话说，第三方用户即便拿到 dev 扩展包也连不上 Native Host——Native Messaging 的 <code>allowed_origins</code> 是硬门。这也是为什么同一份代码在 Anthropic 内部跑的是云桥架构，外部跑的是本机 socket 架构。</p></blockquote>
+<h3>18.6.5 代表性 notification：把浏览器的 prompt 当用户输入</h3>
+<p>Chrome 扩展最特别的反向通道是 <code>notifications/message</code>：用户在网页里对 Claude 说的话会变成 CLI 的用户 prompt。</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/usePromptsFromClaudeInChrome.tsx (源自 sourcemap 嵌入的 TS 原文，非编译后 JS 行号)</span>
+mcpClient.client.setNotificationHandler(
+  <span class="hl-type">ClaudeInChromePromptNotificationSchema</span>(),
+  notification =&gt; {
+    <span class="hl-kw">const</span> { tabId, prompt, image } = notification.params
+    <span class="hl-kw">if</span> (<span class="hl-kw">typeof</span> tabId !== &#x27;number&#x27; || !isTrackedClaudeInChromeTabId(tabId)) {
+      <span class="hl-kw">return</span>
+    }
+    <span class="hl-kw">if</span> (image) {
+      <span class="hl-kw">const</span> contentBlocks: <span class="hl-type">ContentBlockParam</span>[] = [
+        { <span class="hl-kw">type</span>: &#x27;text&#x27;, text: prompt },
+        { <span class="hl-kw">type</span>: &#x27;image&#x27;, source: { <span class="hl-kw">type</span>: image.<span class="hl-kw">type</span>, media_type: image.media_type, data: image.data } },
+      ]
+      enqueuePendingNotification({ value: contentBlocks, mode: &#x27;prompt&#x27; })
+    } <span class="hl-kw">else</span> {
+      enqueuePendingNotification({ value: prompt, mode: &#x27;prompt&#x27; })
+    }
+  },
+)</code></pre></figure>
+<p><code>isTrackedClaudeInChromeTabId</code> 是个用户级的白名单（<code class="ref">src/utils/claudeInChrome/common.ts:415-427</code>）——扩展广播 notification 时带上 tabId，CLI 只收自己主动追踪过的 tab。这是防止"用户在别的窗口里和 Claude 聊天被塞进当前 CLI session"。方向上和 <a class="chref" href="../ch15/">ch.15</a> 讲的 Proactive 通知对称：<a class="chref" href="../ch15/">ch.15</a> 是 CLI 向用户发通知，这里是浏览器向 CLI 注入 prompt——两者都是"非请求态的异步插入"，都必须有 tab/session 维度的过滤门，否则 Agent Loop 会收到不属于自己的 input。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/claudeInChrome/common.ts:415-422</code>）：tracked tab Set 上限 <code>MAX_TRACKED_TABS = 200</code>，到 200 就 <code>clear()</code> 再加新的。用户如果在浏览器里开过超过 200 个被追踪的 tab，之前追踪过但没最近交互的 tab 收到的 prompt notification 会被静默丢掉，直到用户重新交互让它再被 <code>trackClaudeInChromeTabId</code> 添加回来。产品层既不报错也不提示，silent truncation。</p></blockquote>
+<h3>18.6.6 权限模式同步</h3>
+<p>Chrome 扩展自己也有权限模式（扩展里设置的 <code>ask</code> / <code>skip_all_permission_checks</code>）。CLI 一侧改 toolPermissionMode 时，要反向推给扩展：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/usePromptsFromClaudeInChrome.tsx (源自 sourcemap 嵌入的 TS 原文)</span>
+<span class="hl-kw">const</span> chromeMode =
+  toolPermissionMode === &#x27;bypassPermissions&#x27;
+    ? &#x27;skip_all_permission_checks&#x27;
+    : &#x27;ask&#x27;
+<span class="hl-kw">void</span> callIdeRpc(&#x27;set_permission_mode&#x27;, { mode: chromeMode }, chromeClient)</code></pre></figure>
+<p>又是一次 <code>callIdeRpc</code>——注意 hook 的名字叫 <code>callIdeRpc</code>，但这里调的是 Chrome。这个 API 其实是"通用的 MCP tool-as-RPC 调用"，只是最早为 IDE 写的。没改名是因为没必要；只要 <code>name</code> 指定的 client 对路就行。</p>
+<h2>18.7 关键流程三：Computer Use 的多层权限门</h2>
+<p>Computer Use 最激进——它要操作的是用户的整台机器。所以它的 transport 最简单（进程内），但权限层是整本书最深的。</p>
+<h3>18.7.1 四层门</h3>
+<ol>
+<li><strong>Tool 层</strong>：所有 <code>mcp__computer-use__*</code> 工具被塞进 <code>allowedTools</code>，绕过 <a class="chref" href="../ch09/">ch.09</a> §9.4 讲的 per-tool 权限对话框（<code class="ref">src/utils/computerUse/setup.ts:27-30</code>）</li>
+<li><strong>会话层</strong>：所有工具的实际执行都要先经过 <code>request_access</code>；<code>request_access</code> 在 CLI 里渲染 <code>ComputerUseApproval</code> 对话框，用户勾选要授权的 app</li>
+<li><strong>OS 层</strong>：macOS TCC 的 Accessibility + Screen Recording，两个都必须授予，否则整个系统不工作</li>
+<li><strong>机器层</strong>：整台机器同时只允许一个 CU session——靠 <code>~/.claude/computer-use.lock</code>（<code>src/utils/computerUse/computerUseLock.ts:10,44-45</code>），超时 / 崩溃靠 signal 0 PID probe 复活释放（<code class="ref">computerUseLock.ts:58-71</code>）</li>
+</ol>
+<p>然后还有一堆<strong>运行时保护</strong>：CGEventTap 级别拦截 Esc、终端窗口被排除在截屏外、其他 app 在 CU 期间自动隐藏等。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/computerUse/executor.ts:399-418</code>）：Computer Use 截屏并<strong>不做后处理 sanitize</strong>（没有打码、没有 OCR 过滤、没有字符串黑名单）。"敏感内容不出现"靠的是<strong>截屏前的 allowlist 约束</strong>：Swift 侧调的是 <code>cu.screenshot.captureExcluding(withoutTerminal(opts.allowedBundleIds), ...)</code>——利用 macOS <code>SCContentFilter</code> 在合成帧之前就把终端窗口和任何不在 <code>allowedBundleIds</code> 里的 app 排除。返回的 JPEG 里压根没有那些像素，因此无需事后 sanitize。<strong>代价</strong>：allowlist 是按 bundleId 的，同一个 app 内部的多个文档（比如 Finder 同时开了公司和私人目录）没法再细分；一旦 Finder 被授权，整个 Finder 的内容都会被截到。</p></blockquote>
+<h3>18.7.2 <code>request_access</code> 和 Approval 对话框</h3>
+<p>模型要调任何 CU 工具之前，必须先调 <code>request_access</code>，这会触发：</p>
+<figure class="codeblock"><figcaption><span class="file">src/components/permissions/ComputerUseApproval/ComputerUseApproval.tsx:30-46</span><span class="lang">tsx</span></figcaption><pre><code class="language-tsx"><span class="hl-kw">export</span> <span class="hl-kw">function</span> <span class="hl-type">ComputerUseApproval</span>({ request, onDone }) {
+  <span class="hl-kw">return</span> request.tccState
+    ? &lt;<span class="hl-type">ComputerUseTccPanel</span> tccState={request.tccState} onDone={...} /&gt;
+    : &lt;<span class="hl-type">ComputerUseAppListPanel</span> request={request} onDone={onDone} /&gt;
+}</code></pre></figure>
+<p>两种面板：</p>
+<ul>
+<li><strong>TCC panel</strong>：Accessibility 或 Screen Recording 没授权时，列出缺失项、给一键跳转 System Settings 的选项</li>
+<li><strong>App list panel</strong>：apps 按 bundleId 勾选，叠加 flags（<code>clipboardRead</code> / <code>clipboardWrite</code> / <code>systemKeyCombos</code>）</li>
+</ul>
+<p>哨兵分类会在 app list 里额外醒目提示（<code class="ref">ComputerUseApproval.tsx:203-207</code>）：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">SENTINEL_WARNING</span>: <span class="hl-type">Record</span>&lt;<span class="hl-type">NonNullable</span>&lt;<span class="hl-type">ReturnType</span>&lt;<span class="hl-kw">typeof</span> getSentinelCategory&gt;&gt;, string&gt; = {
+  shell: &#x27;equivalent to shell access&#x27;,
+  filesystem: &#x27;can read/write <span class="hl-kw">any</span> file&#x27;,
+  system_settings: &#x27;can change system settings&#x27;,
+}</code></pre></figure>
+<p>官方文档逐条对应：</p>
+<blockquote><ul>
+<li>Terminal、iTerm、VS Code、Warp, 其它 terminal/IDE → "Equivalent to shell access"</li>
+<li>Finder → "Can read or write any file"</li>
+<li>System Settings → "Can change system settings"</li>
+</ul>
+<p>—— 来源：<a href="https://code.claude.com/docs/en/computer-use" rel="noreferrer">https://code.claude.com/docs/en/computer-use</a>，访问于 2026-04-19</p></blockquote>
+<h3>18.7.3 响应写回</h3>
+<p>用户点 "Allow for this session" 后：</p>
+<figure class="codeblock"><figcaption><span class="file">src/components/permissions/ComputerUseApproval/ComputerUseApproval.tsx:282-302</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">function</span> respond(allow) {
+  <span class="hl-kw">if</span> (!allow) { onDone(<span class="hl-type">DENY_ALL_RESPONSE</span>); <span class="hl-kw">return</span> }
+  <span class="hl-kw">const</span> now = <span class="hl-type">Date</span>.now()
+  <span class="hl-kw">const</span> granted = request.apps.flatMap(a =&gt;
+    a.resolved &amp;&amp; checked.has(a.resolved.bundleId)
+      ? [{ bundleId: a.resolved.bundleId, displayName: a.resolved.displayName, grantedAt: now }]
+      : [])
+  <span class="hl-kw">const</span> denied = request.apps
+    .filter(a =&gt; !a.resolved || !checked.has(a.resolved.bundleId))
+    .map(a =&gt; ({ bundleId: a.resolved?.bundleId ?? a.requestedName,
+                 reason: a.resolved ? &#x27;user_denied&#x27; : &#x27;not_installed&#x27; }))
+  <span class="hl-kw">const</span> flags = { ...<span class="hl-type">DEFAULT_GRANT_FLAGS</span>,
+                  ...<span class="hl-type">Object</span>.fromEntries(requestedFlagKeys.map(k =&gt; [k, <span class="hl-kw">true</span>])) }
+  onDone({ granted, denied, flags })
+}</code></pre></figure>
+<p>这份 <code>CuPermissionResponse</code> 沿 <code>ComputerUseSessionContext.onPermissionRequest</code> 回到 <code>@ant/computer-use-mcp</code> 包内部，被存进会话上下文，之后每个原子操作工具（<code>left_click</code> / <code>type</code> / <code>screenshot</code> 等）都会在分发前查这份 allowlist。</p>
+<h3>18.7.4 全局 Esc：系统级中断</h3>
+<p>CGEventTap 拦截 Esc 键做中断：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/computerUse/escHotkey.ts:25-54（节选）</span>
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> registerEscHotkey(onEscape: () =&gt; <span class="hl-kw">void</span>): boolean {
+  <span class="hl-kw">if</span> (registered) <span class="hl-kw">return</span> <span class="hl-kw">true</span>
+  <span class="hl-kw">const</span> cu = requireComputerUseSwift()
+  <span class="hl-kw">if</span> (!cu.hotkey.registerEscape(onEscape)) {
+    logForDebugging(&#x27;[cu-esc] registerEscape returned <span class="hl-kw">false</span>&#x27;, { level: &#x27;warn&#x27; })
+    <span class="hl-kw">return</span> <span class="hl-kw">false</span>
+  }
+  retainPump()
+  registered = <span class="hl-kw">true</span>
+  <span class="hl-kw">return</span> <span class="hl-kw">true</span>
+}
+
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> notifyExpectedEscape(): <span class="hl-kw">void</span> {
+  <span class="hl-kw">if</span> (!registered) <span class="hl-kw">return</span>
+  requireComputerUseSwift().hotkey.notifyExpectedEscape()
+}</code></pre></figure>
+<p>两个关键点：</p>
+<ol>
+<li><strong>Esc 被系统级消费</strong>。即使模型被注入 prompt 说"按 Esc 关掉这个对话框"，按下去的键也会被 tap 吃掉，不会到达 AppKit。这是防注入的硬门。</li>
+<li><strong><code>notifyExpectedEscape()</code> 留了一个 100ms 的洞</strong>。模型真要输入 Esc 时（比如 vim）会先调这个 notify，Swift 侧开一个 100ms 的窗口让自己合成的 CGEvent 能通过。</li>
+</ol>
+<h3>18.7.5 与 <a class="chref" href="../ch09/">ch.09</a> 的关系</h3>
+<p><a class="chref" href="../ch09/">ch.09</a> 的权限模型（§9.4 的八段决策管线）是 per-tool 对话框（<code>Bash</code> / <code>Write</code> / <code>Edit</code> 等）。Computer Use 的所有工具全部进 <code>allowedTools</code>，等于在 <a class="chref" href="../ch09/">ch.09</a> §9.6 的那条 "allowlist 快速通道"里把整个命名空间都开绿灯——因为给"鼠标点一下"来个对话框显然荒唐。取而代之的是：</p>
+<ul>
+<li>会话级的 app allowlist</li>
+<li>OS 级的 TCC</li>
+<li>机器级的文件锁</li>
+<li>系统级的 Esc 中断</li>
+</ul>
+<p>这不是权限系统的降级，是<strong>给不同成本的动作配不同粒度的审批</strong>。per-tool 对话框适合文件写入、shell 命令这种单次高影响操作；per-session allowlist 适合物理动作这种连续低影响操作。</p>
+<h2>18.8 设计取舍</h2>
+<h3>18.8.1 为什么 Chrome 和 CU 是"伪 stdio"而不是真子进程？</h3>
+<p>三条理由：</p>
+<ol>
+<li><strong>进程成本</strong>：每个 stdio MCP 子进程都要载入 ~325 MB 的 Node runtime（参考 <code class="ref">src/services/mcp/client.ts:909</code> 的注释）</li>
+<li><strong>状态共享</strong>：CU 的权限对话框要用 <code>setToolJSX</code> 往主进程的 Ink 渲染树里塞 React 组件；<code>ComputerUseSessionContext</code> 要访问 <code>AppState</code>。跨进程就得做 IPC 序列化。</li>
+<li><strong>tool 命名前缀</strong>：API backend 靠 <code>mcp__computer-use__*</code> / <code>mcp__claude-in-chrome__*</code> 触发 system prompt 的特殊指令。不是 MCP server 就拿不到这个前缀。</li>
+</ol>
+<p>综合起来：<strong>保留 MCP 的 server/tool 形状是为了模型侧的识别；物理上用 InProcessTransport 是为了进程和 AppState 的高效复用</strong>。这个选择很精明。</p>
+<h3>18.8.2 为什么 IDE 必须走真 socket？</h3>
+<p>IDE 扩展是另一个完全独立的进程（VS Code 自身）。跨进程必须跨边界。lockfile + 127.0.0.1 + random auth token 的方案优点：</p>
+<ul>
+<li>不需要服务发现基础设施（没有 mDNS、没有 consul）</li>
+<li>不需要协调启动顺序（IDE 先起、CLI 后起、CLI 扫 lockfile 就行）</li>
+<li>认证简单（一次性 random token，lockfile 用文件权限防本机其他用户偷读）</li>
+<li>跨 Linux / macOS / Windows / WSL 都能用</li>
+</ul>
+<p>代价是多一次 socket 往返。但 IDE 的 RPC 频率不高（selection change、diff 打开关闭），延迟无感。</p>
+<h3>18.8.3 tool-as-RPC：一个接口两种用法</h3>
+<p>MCP 的 <code>callTool</code> 本意是"模型向 server 发起工具调用"。Claude Code 把它"兼职"成宿主代码之间的 IPC：<code>callIdeRpc(&#x27;openDiff&#x27;, ...)</code> 在 wire 层和模型调 tool 长得一模一样。</p>
+<p><strong>收益</strong>：</p>
+<ul>
+<li>不需要为 IDE integration 单独设计一套 RPC schema</li>
+<li>MCP SDK 的错误处理、超时、断连重试、序列化都免费用</li>
+<li>新增一个"私有 RPC method" 只要在 IDE 扩展侧加 handler，CLI 侧加 <code>callIdeRpc(...)</code> 调用点</li>
+</ul>
+<p><strong>代价</strong>：</p>
+<ul>
+<li>必须做一次 tool list 过滤（<code>ALLOWED_IDE_TOOLS</code>）防止模型看到私有 RPC</li>
+<li>命名上容易误导——<code>callIdeRpc</code> 其实是通用的，被 Chrome 也用</li>
+</ul>
+<p>在宿主和 server 都由同一方控制的场景下，这个取舍明显划算。</p>
+<h3>18.8.4 为什么状态同步要用 notification 而不是 polling？</h3>
+<p>IDE 的 selection 在用户点击时才变；网页的 prompt 在用户回车时才发。如果用 polling，频率低了响应慢、频率高了耗资源。MCP 的 notification 基于 JSON-RPC 2.0 的 <code>notification</code>（无 id、无 response），天然适合这种"来了就推一下"的场景。</p>
+<p>代码上每个 hook 都重复一套 <code>find client → setNotificationHandler → 处理 params → 写 state</code> 的模板，看起来啰嗦。但四条消息的 schema 差别大（selection 有坐标、log 有 event 名、prompt 有 image），做成一个抽象反而会过度设计。</p>
+<h2>18.9 附：Desktop handoff</h2>
+<p><code>/desktop</code> 的定位和前三端不同——不是 integration，是 session 迁移。</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/desktopDeepLink.ts:35-41</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">function</span> buildDesktopDeepLink(sessionId: string): string {
+  <span class="hl-kw">const</span> protocol = isDevMode() ? &#x27;claude-dev&#x27; : &#x27;claude&#x27;
+  <span class="hl-kw">const</span> url = <span class="hl-kw">new</span> <span class="hl-type">URL</span>(<span class="hl-str">`${protocol}://resume`</span>)
+  url.searchParams.<span class="hl-kw">set</span>(&#x27;session&#x27;, sessionId)
+  url.searchParams.<span class="hl-kw">set</span>(&#x27;cwd&#x27;, getCwd())
+  <span class="hl-kw">return</span> url.toString()
+}</code></pre></figure>
+<p>步骤（<code class="ref">src/components/DesktopHandoff.tsx:67-99</code>）：</p>
+<ol>
+<li>检测 <code>/Applications/Claude.app</code>（macOS）或注册表（Windows）</li>
+<li>版本 ≥ <code>1.1.2396</code></li>
+<li><code>flushSessionStorage()</code> 把 transcript 刷盘</li>
+<li>用 <code>open</code> / <code>xdg-open</code> / <code>cmd /c start</code> 打开 <code>claude://resume?session=&lt;id&gt;&amp;cwd=&lt;cwd&gt;</code></li>
+<li><code>gracefulShutdown(0, &#x27;other&#x27;)</code> 关闭 CLI</li>
+</ol>
+<p>优雅之处在步骤 3：因为 Desktop 重新加载 session 要读磁盘上的 transcript，所以 handoff 之前必须确保 CLI 的所有内存状态都已落盘。这是"session 作为可序列化数据"前提下的一个干净操作。</p>
+<p>Desktop 和 CLI 共享 session storage（都在 <code>~/.claude/</code> 下），所以 resume 其实只是 Desktop 读同一份文件，不是进程间迁移。协议极简。</p>
+<h2>18.10 可迁移的点</h2>
+<p>把本章压成五条可以带走用的东西：</p>
+<ol>
+<li><strong>MCP 可以当内部 IPC 层</strong>。只要能套进 <code>tools + notifications + tool-as-RPC</code> 三件套，任何多进程/多端的系统都能用 MCP 形状收口。transport 可换（SSE / WebSocket / 进程内 / Chrome Native Messaging），上层代码不改。</li>
+<li><strong>公共 tool 和私有 RPC 分命名空间过滤</strong>。<code>mcp__ide__*</code> 里只有 2 个给模型，其他全部是 CLI 内部 UI 用的 <code>callIdeRpc</code>。<code>ALLOWED_*</code> 白名单是个一行过滤，把"工具宿主"和"工具消费者"分开——同一条 transport 上两套语义。</li>
+<li><strong>lockfile + mtime 排序是受控环境下最轻量的服务发现</strong>。不需要 mDNS、不需要 service mesh、不需要协调启动顺序。IDE 扩展和 CLI 谁先起都行。<code>~/.claude/ide/&lt;port&gt;.lock</code> 的 JSON 文件 + 文件权限做认证，就够了。</li>
+<li><strong>"伪 stdio + in-process MCP"保留协议前缀换掉物理进程</strong>。如果你已经有一套靠 tool 命名前缀来触发上层行为（如 system prompt 生成、tool list 分类）的系统，但又不想为每个集成点起独立进程，可以用这个技巧：config 里写 <code>stdio</code>，MCP client 按 <code>name</code> 拦截走进程内 server。</li>
+<li><strong>不同成本的动作配不同粒度的审批</strong>。per-tool 对话框（<a class="chref" href="../ch09/">ch.09</a>）适合偶尔的高影响单次动作；per-session allowlist 适合连续低影响的物理动作；OS TCC 是所有本地动作的公共底线；机器锁防止多个 agent 打架；全局 hotkey 是最后的人工中断。这五层叠起来才是完整的"物理操作"权限模型。</li>
+</ol>
+<h2>18.11 本章边界</h2>
+<ul>
+<li>MCP 协议本身的消息格式、<code>reconnectMcpServerImpl</code> 连接生命周期、OAuth 等详见 <strong><a class="chref" href="../ch12/">ch.12</a></strong></li>
+<li>Tool 接口、四源合并与 tool call 在 Agent Loop 的集成详见 <strong><a class="chref" href="../ch08/">ch.08</a></strong></li>
+<li>per-tool 权限对话框、<code>allowedTools</code> allowlist 语义详见 <strong><a class="chref" href="../ch09/">ch.09</a></strong>（Computer Use 走的是 §9.6 的 allowlist 快速通道）</li>
+<li>Remote session / teleport / bridge messaging 与本章三端的区别详见 <strong><a class="chref" href="../ch17/">ch.17</a></strong></li>
+<li>浏览器向 CLI 反向注入 prompt 与 <a class="chref" href="../ch15/">ch.15</a> Proactive 通知的方向对称性详见 <strong><a class="chref" href="../ch15/">ch.15</a></strong></li>
+<li>Ink UI、Dialog 组件、Select 组件详见 <strong><a class="chref" href="../ch21/">ch.21</a></strong></li>
+</ul>
+<h2>附录 · 还原仓库的注意事项</h2>
+<p>本仓库的 <code>shims/ant-computer-use-mcp</code> / <code>shims/ant-claude-for-chrome-mcp</code> / <code>shims/ant-computer-use-swift</code> / <code>shims/ant-computer-use-input</code> 是还原期的兼容 stub。具体表现：</p>
+<ul>
+<li><code class="ref">shims/ant-computer-use-mcp/index.ts:156-194</code> 的 <code>bindSessionContext</code> 只实现了 <code>request_access</code> / <code>list_granted_applications</code>，其他 CU 工具全部返回 "not available in this restored workspace"</li>
+<li><code class="ref">shims/ant-claude-for-chrome-mcp/index.ts:89-113</code> 的 <code>createClaudeForChromeMcpServer</code> 是空 stub</li>
+<li><code class="ref">shims/ant-computer-use-swift/index.ts</code> 返回 1×1 黑 JPEG，TCC 检查永远 false</li>
+<li><code class="ref">shims/ant-computer-use-input/index.ts</code> 鼠标键盘全部 no-op</li>
+</ul>
+<p>所以本章讲 CU / Chrome 的<strong>接入契约</strong>（MCP server 形状、hostAdapter 接口、tool 声明）都是真实的——这些都在宿主仓库里。讲<strong>具体动作语义</strong>（<code>left_click</code> 按下去发生什么、<code>screenshot</code> 返回的 JPEG 怎么编码）不是——那些在私有包里。正文凡是涉及具体动作语义的地方只讲到"工具被声明、权限被检查、结果被格式化回 MCP content block"为止。</p>
+  </div>
+</article>
+
+<nav class="chap-nav"><a class="nav-link prev" href="../ch17/"><span class="dir">← Ch.17 · prev</span><span class="t">Remote<span class="cn">Sessions 与 Teleport</span></span></a><a class="nav-home" href="../">§ 目录</a><a class="nav-link next" href="../ch19/"><span class="dir">Ch.19 · next →</span><span class="t">Buddy<span class="cn">宠物系统</span></span></a></nav>
+
+<footer class="colophon">
+  <div class="left">Claude <span class="dot">&amp;</span> Code</div>
+  <div class="right">
+    set in EB garamond · albert sans · jetbrains mono · LXGW wenkai<br>
+    《Claude Code 源码解读》 · ch.18
+  </div>
+</footer>
+
+</body>
+</html>

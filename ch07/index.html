@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.07 Context · 上下文管理与记忆 — Claude Code 源码解读</title>
+<meta name="description" content="《Claude Code 源码解读》第 7 章 —— 上下文管理与记忆（compaction）">
+<meta property="og:title" content="Ch.07 Context · 上下文管理与记忆 — Claude Code 源码解读">
+<meta property="og:description" content="《Claude Code 源码解读》第 7 章 —— 上下文管理与记忆（compaction）">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://nayuta403.github.io/claude-code-book/ch07/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,300;1,400;1,500&family=Albert+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<link rel="stylesheet" href="../assets/book.css">
+</head>
+<body>
+
+<nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
+
+<header class="chap-head">
+  <div>
+    <div class="crumb">
+      <a href="../">目录</a>
+      <span class="sep">/</span>
+      <span class="part-tag p2">Part II · 核心引擎</span>
+    </div>
+    <div class="chap-num">Chapter · 07 / 23</div>
+    <h1 class="chap-title">Context<span class="cn">上下文管理与记忆</span></h1>
+  </div>
+  <aside class="chap-meta">
+    <div><div class="km">part</div><div class="vm">核心引擎（Core Engine）</div></div>
+    <div><div class="km">topic</div><div class="vm m">compaction</div></div>
+    <div><div class="km">reading</div><div class="vm">≈ 22 min</div></div>
+    <div><div class="km">source refs</div><div class="vm m">61</div></div>
+  </aside>
+</header>
+
+<article class="article">
+  <div class="prose">
+<h2>7.1 本章要讲的核心设计</h2>
+<p class="drop">Claude Code 的记忆系统真正值得拆开讲的是一个点：<strong>memdir —— 把"跨会话记忆"从对话缓冲里搬到普通的文件系统，用 <code class="ref">MEMORY.md</code> 当索引、用 YAML frontmatter 做类型约束，让模型自己维护它。</strong></p>
+<p>围绕这个核心，有三层周边设计：</p>
+<ul>
+<li><strong>CLAUDE.md</strong> —— 用户写、每次 session 启动全量加载、不做截断。</li>
+<li><strong>Compact</strong> —— context 快满时把历史压成一段摘要、保留 boundary marker 作时间分割线。</li>
+<li><strong>Token 估算</strong> —— API 真值 + 本地 rough 估算，让 compact / <code>/context</code> 的数字和实际 API 请求对得上。</li>
+</ul>
+<p>本章把这四块按"用户实际看到什么 → 怎么实现 → 设计取舍"的顺序讲一遍。读完你应该能回答：Claude Code 的三层记忆边界是什么？memdir 为什么用文件系统？compact 怎么保证不把关键信息丢光？<code class="ref">src/query/tokenBudget.ts</code> 和 context 预算的关系到底是什么？</p>
+<h2>7.2 三层记忆的边界</h2>
+<p>官方文档把记忆系统分两层（CLAUDE.md + auto memory，来源：<a href="https://code.claude.com/docs/en/memory" rel="noreferrer">https://code.claude.com/docs/en/memory</a>，访问于 2026-04-19）。从工程实现看应该分<strong>三层</strong>，把会话内 <code>messages[]</code> 也算上：</p>
+<div class="table-wrap"><table><thead><tr><th>层</th><th>谁写</th><th>何时加载</th><th>何时清</th><th>文件位置</th></tr></thead><tbody><tr><td>会话 <code>messages[]</code>（详见 <a class="chref" href="../ch03/">ch.03</a>）</td><td>Agent Loop</td><td>不加载，本来就在</td><td><code>/compact</code> 把它压成 summary</td><td>内存 + <code>~/.claude/projects/&lt;p&gt;/sessions/</code></td></tr>
+<tr><td><code class="ref">CLAUDE.md</code> 系</td><td>用户</td><td>每次 session 启动 + compact 后重读</td><td>不清</td><td>项目 / 用户 / 管理员</td></tr>
+<tr><td><code>memdir</code>（auto memory）</td><td>模型自己</td><td>启动时注入 <code class="ref">MEMORY.md</code> 索引；运行时 <code>findRelevantMemories</code> 选 top-5</td><td>不清</td><td><code>~/.claude/projects/&lt;p&gt;/memory/</code></td></tr></tbody></table></div>
+<p><strong>注意</strong>：仓库里的 <code class="ref">src/history.ts</code> 管的不是对话历史，是<strong>斜杠输入框</strong>的 Up-arrow / ctrl+r 历史（详见第 20 章输入层）。它和 context 管理基本没关系，本章不展开。如果你在 <code class="ref">src/history.ts:19</code> 看到 <code>MAX_HISTORY_ITEMS = 100</code>，这是输入框的条目数上限；文件落在 <code>getClaudeConfigHomeDir()</code> 下的 <code>history.jsonl</code>，和会话落在 <code>~/.claude/projects/&lt;p&gt;/sessions/</code> 的 jsonl <strong>是两套文件</strong>。</p>
+<h3>7.2.1 会话内 messages</h3>
+<p><code>Message[]</code> 由 Agent Loop 持有，结构和 API 的消息协议几乎对齐（user / assistant / system / attachment / hookResult / systemCompactBoundary）。本章只关心两个事实：</p>
+<ol>
+<li>它是 compact 的<strong>输入</strong>。</li>
+<li>compact 后 <code>messages[]</code> 被替换成 <code>[boundaryMarker, ...summary, ...preservedTail, ...attachments, ...hookResults]</code>。</li>
+</ol>
+<p>Agent Loop 怎么在每一轮检查 token 预算、什么时候调 <code>autoCompactIfNeeded</code>（详见第 3 章 Agent Loop）。</p>
+<h3>7.2.2 CLAUDE.md：最简单的那一层</h3>
+<p>加载优先级写在 <code class="ref">src/utils/claudemd.ts:3-9</code> 的文件头注释里：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/claudemd.ts:3-9</span><span class="lang">text</span></figcaption><pre><code class="language-text"> * 1. Managed memory (eg. /etc/claude-code/CLAUDE.md)
+ * 2. User memory (~/.claude/CLAUDE.md)
+ * 3. Project memory (CLAUDE.md, .claude/CLAUDE.md, .claude/rules/*.md)
+ * 4. Local memory (CLAUDE.local.md)</code></pre></figure>
+<p>实现在 <code>getMemoryFiles</code> (<code class="ref">src/utils/claudemd.ts:790-1075</code>)。核心动作：</p>
+<ol>
+<li>先取 Managed（policy 级，组织统一强制的）。</li>
+<li>取 User（<code>~/.claude/CLAUDE.md</code>）。</li>
+<li>从 CWD 向上走到 fs 根，收集每一层目录（<code class="ref">src/utils/claudemd.ts:854-857</code>）。</li>
+<li><strong>反转列表</strong>（<code class="ref">src/utils/claudemd.ts:878</code>），从根向 CWD 方向处理 —— 越靠近 CWD 的越晚加入，下游拼接时离对话越近。</li>
+<li>每层检查 <code class="ref">CLAUDE.md</code> / <code class="ref">.claude/CLAUDE.md</code> / <code>.claude/rules/*.md</code> / <code class="ref">CLAUDE.local.md</code>。</li>
+<li>最后追加 <code>memdir</code> 的 <code class="ref">MEMORY.md</code> 和 team memory 的 <code class="ref">MEMORY.md</code> 作为同一批文件的两个成员（<code class="ref">src/utils/claudemd.ts:980-1007</code>）。</li>
+</ol>
+<p>拼接后的样子（<code class="ref">src/utils/claudemd.ts:1153-1195</code> <code>getClaudeMds</code>）：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">Codebase and user instructions are shown below. Be sure to adhere
+to these instructions. IMPORTANT: ...
+
+Contents of /etc/claude-code/CLAUDE.md (user&#x27;s private global instructions...):
+
+&lt;content&gt;
+
+Contents of ~/.claude/CLAUDE.md (...):
+
+&lt;content&gt;
+
+...</code></pre></figure>
+<p>拼好的字符串走进 <code>getUserContext</code> (<code class="ref">src/context.ts:155-189</code>)，作为对话的 <strong>user message</strong> 注入。不是 system prompt。官方文档在这点上写得很清楚：</p>
+<blockquote><p>CLAUDE.md content is delivered as a user message after the system prompt, not as part of the system prompt itself. （来源：<a href="https://code.claude.com/docs/en/memory" rel="noreferrer">https://code.claude.com/docs/en/memory</a>，访问于 2026-04-19）</p></blockquote>
+<p>这个设计选择的后果是：CLAUDE.md 的指令和 system prompt 不等价，模型会读但不强制遵守。官方也承认这点："no guarantee of strict compliance"。</p>
+<p><strong>CLAUDE.md 的特殊待遇</strong>：它不截断。官方文档：</p>
+<blockquote><p>This limit applies only to <code class="ref">MEMORY.md</code>. CLAUDE.md files are loaded in full regardless of length.</p></blockquote>
+<p><code class="ref">src/utils/claudemd.ts:92</code> 只定义了一个 <code>MAX_MEMORY_CHARACTER_COUNT = 40000</code> 作为<strong>警告阈值</strong>，不是截断点 —— <code>getLargeMemoryFiles</code> 用它筛出"过大"的文件提示用户，但不动内容。</p>
+<h3>7.2.3 memdir：核心</h3>
+<p>下一节整节讲这个。</p>
+<h2>7.3 memdir：文件系统作为 memory</h2>
+<h3>7.3.1 用户看到什么</h3>
+<p>第一次用 Claude Code 工作一段时间后，<code>~/.claude/projects/&lt;sanitized-repo&gt;/memory/</code> 下会出现一个目录：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">memory/
+├── MEMORY.md                  # 索引，每次 session 都加载
+├── user_role.md               # frontmatter 标明 type: user
+├── feedback_testing.md        # type: feedback
+├── project_q2_freeze.md       # type: project
+├── reference_linear.md        # type: reference
+└── logs/                      # KAIROS 模式下的 append-only 日志</code></pre></figure>
+<p><code class="ref">MEMORY.md</code> 长这样：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">markdown</span></figcaption><pre><code class="language-markdown">- [User role](user_role.md) — data scientist focused on observability/logging
+- [No DB mocks in tests](feedback_testing.md) — tests must hit real DB (prior incident)
+- [Q2 merge freeze](project_q2_freeze.md) — 2026-03-05 mobile release cut
+- [Linear INGEST](reference_linear.md) — pipeline bugs tracked here</code></pre></figure>
+<p>每条一行，指向一个话题文件，附带 one-line hook（做决策用）。话题文件本身带 frontmatter：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">markdown</span></figcaption><pre><code class="language-markdown">---
+name: No DB mocks in tests
+description: Integration tests must hit a real database, not mocks
+type: feedback
+---
+
+Integration tests must hit a real database, not mocks.
+
+**Why:** prior incident where mock/prod divergence masked a broken migration.
+**How to apply:** when writing new DB-touching tests, never introduce a mock layer.</code></pre></figure>
+<p>运行 <code>/memory</code> 斜杠命令会弹一个列表，让你选任一 memory 文件用 <code>$EDITOR</code> 打开（<code class="ref">src/commands/memory/memory.tsx:21-63</code>）。</p>
+<h3>7.3.2 为什么挑这个设计出来讲</h3>
+<p>大多数 agent 的"跨会话记忆"是个向量库、一张 KV 表，或者直接写进 system prompt 加固。这三种办法的共同问题：<strong>用户看不见、改不了、diff 不出来</strong>。</p>
+<p>memdir 的选择有三个可迁移的点：</p>
+<ol>
+<li><strong>普通的 markdown 文件。</strong> 用户可以 <code>cat</code> / <code>grep</code> / <code>vim</code> / <code>git diff</code>。模型也可以用它已经熟练的 <code>Write</code> / <code>FileRead</code> / <code>Grep</code> 工具直接操作 —— 不需要一套专用的"memory API"。</li>
+<li><strong>索引文件 + 话题文件的分离。</strong> 每次 session 启动只把索引（≤ 200 行 / 25 KB）注入 context，详细信息按需读取。这把"维护 memory"和"消耗 context"解耦了。</li>
+<li><strong>frontmatter 做闭集类型约束。</strong> 不是开放标签，而是 <code>user / feedback / project / reference</code> 四个枚举值，外加一份"什么不存"的反面列表。这比"随便分类"能约束得住模型得多。</li>
+</ol>
+<p>下面按这三个点展开。</p>
+<h3>7.3.3 关键数据结构</h3>
+<p><strong>memdir 根路径</strong>（<code class="ref">src/memdir/paths.ts:223-235</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/memdir/paths.ts:223-235</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> getAutoMemPath = memoize(
+  (): string =&gt; {
+    <span class="hl-kw">const</span> <span class="hl-kw">override</span> = getAutoMemPathOverride() ?? getAutoMemPathSetting()
+    <span class="hl-kw">if</span> (<span class="hl-kw">override</span>) {
+      <span class="hl-kw">return</span> <span class="hl-kw">override</span>
+    }
+    <span class="hl-kw">const</span> projectsDir = join(getMemoryBaseDir(), &#x27;projects&#x27;)
+    <span class="hl-kw">return</span> (
+      join(projectsDir, sanitizePath(getAutoMemBase()), <span class="hl-type">AUTO_MEM_DIRNAME</span>) + sep
+    ).normalize(&#x27;<span class="hl-type">NFC</span>&#x27;)
+  },
+  () =&gt; getProjectRoot(),
+)</code></pre></figure>
+<p><code>getAutoMemBase</code> 用 <code>findCanonicalGitRoot</code>（<code class="ref">src/memdir/paths.ts:203-205</code>），因此<strong>一个 git 仓库的所有 worktree 共享一份 memory</strong> —— 切分支切 worktree 时记忆不会失联。</p>
+<p><strong>索引截断</strong>（<code class="ref">src/memdir/memdir.ts:34-38</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/memdir/memdir.ts:34-38</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">ENTRYPOINT_NAME</span> = &#x27;<span class="hl-type">MEMORY</span>.md&#x27;
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">MAX_ENTRYPOINT_LINES</span> = <span class="hl-num">200</span>
+<span class="hl-cm">// ~125 chars/line at 200 lines. At p97 today; catches long-line indexes that</span>
+<span class="hl-cm">// slip past the line cap (p100 observed: 197KB under 200 lines).</span>
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">MAX_ENTRYPOINT_BYTES</span> = <span class="hl-num">25_000</span></code></pre></figure>
+<p>两条截断规则：先按 200 行截，再按 25 KB 截（切在最后一个 <code>\n</code>）。第二条是防"单行索引太长"的病理情况 —— 有用户把一整页 markdown 塞进 200 行内但 byte 数爆了（注释里记录了 p100 观测到 197 KB）。截断后末尾追加 WARNING（<code class="ref">src/memdir/memdir.ts:95-98</code>）告诉模型哪根 cap 触发了、让它缩索引。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/memdir/memdir.ts:87-98</code>）：两道 cap 谁触发 WARNING 里会<strong>点名</strong>（"197 KB (limit: 25 KB) — index entries are too long" 还是 "234 lines (limit: 200)"），不是一条通用的"已截断"。这是 prompt 工程上一个很细的闭环：模型读到自己写的索引被截、<strong>被告诉具体原因</strong>，下一轮才会对症缩行或并条。通用 WARNING 只会让它缩一半凑合。</p></blockquote>
+<p><strong>类型枚举</strong>（<code class="ref">src/memdir/memoryTypes.ts:14-19</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/memdir/memoryTypes.ts:14-19</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">MEMORY_TYPES</span> = [
+  &#x27;user&#x27;,
+  &#x27;feedback&#x27;,
+  &#x27;project&#x27;,
+  &#x27;reference&#x27;,
+] <span class="hl-kw">as</span> <span class="hl-kw">const</span>
+
+<span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">MemoryType</span> = (<span class="hl-kw">typeof</span> <span class="hl-type">MEMORY_TYPES</span>)[number]</code></pre></figure>
+<p>四种的语义边界写在 <code>TYPES_SECTION_INDIVIDUAL</code> 里（<code class="ref">src/memdir/memoryTypes.ts:113-178</code>），每种都有 <code>&lt;description&gt;</code> / <code>&lt;when_to_save&gt;</code> / <code>&lt;how_to_use&gt;</code> 三段，外加 <code>&lt;examples&gt;</code>。简化成一张表：</p>
+<div class="table-wrap"><table><thead><tr><th>type</th><th>存什么</th><th>不存什么</th></tr></thead><tbody><tr><td>user</td><td>用户角色、目标、知识背景、偏好</td><td>当前任务细节</td></tr>
+<tr><td>feedback</td><td>工作方式纠正 / 确认（附 <strong>Why:</strong> / <strong>How to apply:</strong>）</td><td>一次性的修复步骤</td></tr>
+<tr><td>project</td><td>决策背景、正在发生的事、deadline（日期转绝对）</td><td>git blame 能查的</td></tr>
+<tr><td>reference</td><td>外部系统指针（Linear / Slack / Grafana URL）</td><td>本仓库的文件路径</td></tr></tbody></table></div>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/memdir/memoryTypes.ts:28-31</code> <code>parseMemoryType</code>）：这个"闭集"<strong>只是 prompt 层的约定</strong>，运行时没有写入校验。写话题文件的是 <code>Write</code> 工具，不走任何 memory 专用 API；<code>parseMemoryType</code> 在 <strong>读取</strong>（<code class="ref">memoryScan.ts:61</code>）时对未知或缺省的 <code>type</code> 字段返回 <code>undefined</code> 并<strong>静默继续</strong>，manifest 里 <code>[type]</code> 前缀就不带标签。换句话说，模型随手写个 <code>type: workflow</code> 的 frontmatter 不会报错，只会在下次被 selector 看到时"没分类"。闭集靠 prompt 自律 + selector 对带标签的更敏感来维持，不是靠强校验。与 skills 的 frontmatter 约定同构（详见第 10 章 Skills）。</p></blockquote>
+<h3>7.3.4 反面列表</h3>
+<p><code>WHAT_NOT_TO_SAVE_SECTION</code>（<code class="ref">src/memdir/memoryTypes.ts:183-195</code>）是这个设计里最容易被忽略、但最关键的部分：</p>
+<figure class="codeblock"><figcaption><span class="file">src/memdir/memoryTypes.ts:183-195</span><span class="lang">text</span></figcaption><pre><code class="language-text">- Code patterns, conventions, architecture, file paths, or project structure
+  — these can be derived by reading the current project state.
+- Git history, recent changes, or who-changed-what
+  — `git log` / `git blame` are authoritative.
+- Debugging solutions or fix recipes — the fix is in the code.
+- Anything already documented in CLAUDE.md files.
+- Ephemeral task details: in-progress work, temporary state, current conversation context.
+
+These exclusions apply even when the user explicitly asks you to save. If they
+ask you to save a PR list or activity summary, ask what was *surprising* or
+*non-obvious* about it — that is the part worth keeping.</code></pre></figure>
+<p>这是对 memdir 的<strong>信息论约束</strong>：凡是能从当前项目状态（代码、git、CLAUDE.md）重新得到的，就不要存。存进 memory 的应该是<strong>派生不出来的事实</strong> —— 用户偏好、决策背景、外部指针。</p>
+<p>最后一句（"even when the user explicitly asks you to save"）关掉了模型最容易犯的错：用户随口说"记一下今天的 PR 列表"，如果照做，下周 memory 就变成活动日志垃圾堆。反面列表强制模型把"存"这个动作升格为"在反面列表允许范围内"的问题。</p>
+<h3>7.3.5 写入约定</h3>
+<p>模型写 memory 的规矩是"两步写"（<code class="ref">src/memdir/memdir.ts:223-234</code>）：</p>
+<ol>
+<li>新建话题文件（带 frontmatter），内容写进去。</li>
+<li>去 <code class="ref">MEMORY.md</code> 加一行 <code>- [Title](file.md) — one-line hook</code>。</li>
+</ol>
+<p><code class="ref">MEMORY.md</code> 本身<strong>没有 frontmatter</strong>，它是纯索引，每行 ≤ ~150 字符（<code class="ref">src/memdir/memdir.ts:227</code> 明确提示）。</p>
+<p>这个两步写有个容易忽略的工程细节（<code class="ref">src/memdir/memdir.ts:116-119</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/memdir/memdir.ts:116-119</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">DIR_EXISTS_GUIDANCE</span> =
+  &#x27;<span class="hl-type">This</span> directory already exists — write to it directly <span class="hl-kw">with</span> the <span class="hl-type">Write</span> tool &#x27; +
+  &#x27;(<span class="hl-kw">do</span> not run mkdir or check <span class="hl-kw">for</span> its existence).&#x27;</code></pre></figure>
+<p>注释解释：</p>
+<blockquote><p>Shipped because Claude was burning turns on <code>ls</code>/<code>mkdir -p</code> before writing. Harness guarantees the directory exists via ensureMemoryDirExists().</p></blockquote>
+<p>Harness 先 <code>ensureMemoryDirExists</code>（<code class="ref">src/memdir/memdir.ts:129-147</code> 递归 mkdir，静默吞 EEXIST），在 prompt 里明确告诉模型"目录已存在，直接 Write"。这种"把副作用前置到 harness、用 prompt 断言既成事实"的做法在本仓库里出现很多次 —— 主动消除模型的防御性动作。</p>
+<h3>7.3.6 读取：启动 + 运行时</h3>
+<p><strong>启动注入</strong>走 <code>getUserContext</code>（<code class="ref">src/context.ts:155-189</code>）：把 memdir 的 <code class="ref">MEMORY.md</code> 和 CLAUDE.md 系一起拼成 user context。模型一进会话就看到"现在我记得这些东西"的索引。</p>
+<p><strong>运行时召回</strong>由 <code>findRelevantMemories</code>（<code class="ref">src/memdir/findRelevantMemories.ts</code>）做：</p>
+<figure class="codeblock"><figcaption><span class="file">src/memdir/findRelevantMemories.ts:39-75</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span> findRelevantMemories(
+  query: string,
+  memoryDir: string,
+  signal: <span class="hl-type">AbortSignal</span>,
+  recentTools: <span class="hl-kw">readonly</span> string[] = [],
+  alreadySurfaced: <span class="hl-type">ReadonlySet</span>&lt;string&gt; = <span class="hl-kw">new</span> <span class="hl-type">Set</span>(),
+): <span class="hl-type">Promise</span>&lt;<span class="hl-type">RelevantMemory</span>[]&gt; {
+  <span class="hl-kw">const</span> memories = (<span class="hl-kw">await</span> scanMemoryFiles(memoryDir, signal)).filter(
+    m =&gt; !alreadySurfaced.has(m.filePath),
+  )
+  <span class="hl-kw">if</span> (memories.length === <span class="hl-num">0</span>) <span class="hl-kw">return</span> []
+
+  <span class="hl-kw">const</span> selectedFilenames = <span class="hl-kw">await</span> selectRelevantMemories(
+    query, memories, signal, recentTools,
+  )
+  <span class="hl-cm">// ...</span>
+}</code></pre></figure>
+<p>流水线：</p>
+<ol>
+<li><code>scanMemoryFiles</code> 读目录下所有 <code>.md</code>（排除 <code class="ref">MEMORY.md</code>），只读前 30 行解析 frontmatter，按 mtime 排序取前 200（<code class="ref">src/memdir/memoryScan.ts:21-22</code>）。</li>
+<li>格式化成 manifest 列表（<code class="ref">src/memdir/memoryScan.ts:84-94</code>）： ```
+<ul>
+<li>[feedback] feedback_testing.md (2026-02-14T10:20:00Z): Integration tests must hit real DB</li>
+</ul>
+<p>```</p></li>
+<li>用 Sonnet 跑一个 sideQuery，system prompt 是 <code>SELECT_MEMORIES_SYSTEM_PROMPT</code>（<code class="ref">src/memdir/findRelevantMemories.ts:18-24</code>），JSON schema 限定返回 <code>{selected_memories: string[]}</code>，<code>max_tokens: 256</code>。</li>
+<li>过一遍 <code>validFilenames</code> 过滤幻觉。</li>
+</ol>
+<p>两个 prompt 工程细节值得留意：</p>
+<ul>
+<li><code>recentTools</code> 参数（<code class="ref">src/memdir/findRelevantMemories.ts:88-96</code>）：模型正在用 <code>mcp__X__spawn</code> 时，把该工具的 reference 文档塞进 context 是噪声 —— 对话里已经有实际用法了。selector 会在 prompt 里收到 "Recently used tools: ..." 提示，避开 keyword 重合的 false positive。</li>
+<li><code>alreadySurfaced</code> 参数：之前 turn 已经 surface 过的不再选，省 5 slot 给新候选。</li>
+</ul>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/memdir/findRelevantMemories.ts:98-122</code>）：selector 走 <code>sideQuery</code> 用 <code>getDefaultSonnetModel()</code>，<code>max_tokens: 256</code>，<code>output_format</code> 强制 JSON schema <code>{selected_memories: string[]}</code>。这三个参数各有讲究：用 Sonnet 不用主模型（不污染主会话 prompt cache、独立计费）；256 tokens 是"5 个文件名 + 少量 JSON 括号"的紧上限，不给 selector 留写解释的空间（返回里只能有名字）；JSON schema 保证下游不需要 parse 自然语言。返回后还要过一道 <code>validFilenames.has(f)</code> 筛幻觉（<code>:130</code>）—— Sonnet 偶尔会返回根本不在 manifest 里的文件名。</p></blockquote>
+<h3>7.3.7 老化提示</h3>
+<p>记忆会过期。<code class="ref">src/memdir/memoryAge.ts:33-42</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/memdir/memoryAge.ts:33-42</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> memoryFreshnessText(mtimeMs: number): string {
+  <span class="hl-kw">const</span> d = memoryAgeDays(mtimeMs)
+  <span class="hl-kw">if</span> (d &lt;= <span class="hl-num">1</span>) <span class="hl-kw">return</span> &#x27;&#x27;
+  <span class="hl-kw">return</span> (
+    <span class="hl-str">`This memory is ${d} days old. `</span> +
+    <span class="hl-str">`Memories are point-in-time observations, not live state — `</span> +
+    <span class="hl-str">`claims about code behavior or file:line citations may be outdated. `</span> +
+    <span class="hl-str">`Verify against current code before asserting as fact.`</span>
+  )
+}</code></pre></figure>
+<p><code>memoryFreshnessNote</code>（<code class="ref">src/memdir/memoryAge.ts:49-53</code>）把这段包在 <code>&lt;system-reminder&gt;</code> 标签里。注释交代了动机：</p>
+<blockquote><p>user reports of stale code-state memories (file:line citations to code that has since changed) being asserted as fact — the citation makes the stale claim sound more authoritative, not less.</p></blockquote>
+<p>具体的 file:line 反而让陈旧断言听起来更权威。对策：老一点的记忆自带"这是快照、不是实时状态"的 disclaimer，配合 <code>TRUSTING_RECALL_SECTION</code>（<code class="ref">src/memdir/memoryTypes.ts:240-256</code>）的"before acting, verify"规则。</p>
+<h3>7.3.8 安全边界</h3>
+<p>记忆目录是<strong>可写</strong>的，可写目录要防越界：</p>
+<p><code class="ref">src/memdir/paths.ts:109-150</code> <code>validateMemoryPath</code> 拒绝：</p>
+<ul>
+<li>非绝对路径（<code>../foo</code> 会被 CWD 错误解释）</li>
+<li>长度 &lt; 3（<code>/a</code> 这种近根）</li>
+<li>Windows drive root（<code>C:\</code>）</li>
+<li>UNC 路径（<code>\\server\share</code>）</li>
+<li>null byte（syscall 截断）</li>
+</ul>
+<p>裸 <code>~</code> / <code>~/</code> / <code>~/.</code>/<code>~/..</code> 也拒绝 —— 否则 <code>isAutoMemPath</code> 会匹配整个 <code>$HOME</code>。</p>
+<p><code class="ref">src/memdir/teamMemPaths.ts:109-171</code> <code>realpathDeepestExisting</code> + <code>isRealPathWithinTeamDir</code> 用 realpath 防 symlink 逃逸 —— 有人往 <code>memory/</code> 里塞一个 symlink 指向 <code>~/.ssh/authorized_keys</code>，字符串层 containment check 通过、真实路径检查拒绝。代码里明确写这是 PSR M22186 的处置（<code class="ref">src/memdir/teamMemPaths.ts:103-107</code>）。</p>
+<p>另一处（<code class="ref">src/memdir/paths.ts:176-186</code> <code>getAutoMemPathSetting</code>）：<code>autoMemoryDirectory</code> 设置<strong>不接受 <code>projectSettings</code></strong>，只接受 policy / local / user settings：</p>
+<blockquote><p>a malicious repo could otherwise set <code>autoMemoryDirectory: &quot;~/.ssh&quot;</code> and gain silent write access to sensitive directories via the filesystem.ts write carve-out</p></blockquote>
+<p>这个威胁模型很具体：<code>memory/</code> 目录在文件系统层有写权限特例，如果允许仓库内 <code class="ref">.claude/settings.json</code> 改它的路径，克隆恶意仓库就能写任意位置。排除 <code>projectSettings</code> 是跟 <code>hasSkipDangerousModePermissionPrompt</code> 同类的安全模式。</p>
+<h3>7.3.9 和 CLAUDE.md 的分工</h3>
+<p>官方文档：</p>
+<blockquote><p>Use CLAUDE.md files when you want to guide Claude's behavior. Auto memory lets Claude learn from your corrections without manual effort.</p></blockquote>
+<p>代码里对应的差别：</p>
+<div class="table-wrap"><table><thead><tr><th></th><th>CLAUDE.md</th><th>memdir</th></tr></thead><tbody><tr><td>谁写</td><td>用户</td><td>模型</td></tr>
+<tr><td>是否 type-constrained</td><td>否</td><td>是（4 类闭集）</td></tr>
+<tr><td>是否截断</td><td>否</td><td>索引 200 行 / 25 KB，话题文件按需</td></tr>
+<tr><td>每轮是否筛选</td><td>否（全量注入）</td><td>是（Sonnet 选 top-5）</td></tr>
+<tr><td>Git 可不可 commit</td><td>可以（项目级）</td><td>机器本地（<code>~/.claude/projects/</code>）</td></tr>
+<tr><td>compact 后行为</td><td>重新从磁盘读（<code>getUserContext.cache.clear</code>）</td><td>索引重读，话题文件保持未加载</td></tr></tbody></table></div>
+<p>用一句话概括：<strong>CLAUDE.md 是"用户约定"，memdir 是"模型笔记"</strong>。两层都过 <code>getMemoryFiles</code> 同一条管道（<code class="ref">src/utils/claudemd.ts:980-1007</code>），在最终拼接层才通过 <code>description</code> 和 type 区分语义。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code>src/tools/AgentTool/agentMemory.ts:52-65, 109-114</code>）：<strong>sub-agent 不默认共享主 agent 的 memdir</strong>。当一个 agent 定义里显式声明 <code>memory: &#x27;user&#x27; | &#x27;project&#x27; | &#x27;local&#x27;</code>（<code class="ref">src/tools/AgentTool/loadAgentsDir.ts:92</code>）时，它会拿到<strong>自己独立的 agent-memory 目录</strong>（<code>&lt;memoryBase&gt;/agent-memory/&lt;agentType&gt;/</code> 或 <code>.claude/agent-memory/&lt;agentType&gt;/</code>），里面有自己的 <code class="ref">MEMORY.md</code> + 话题文件。<strong>没声明 <code>memory:</code> 字段的 sub-agent 则完全不挂载任何 memdir</strong>（连主的都不共享，避免污染主 agent 笔记）。CLAUDE.md 的加载逻辑走的是另一条路（文件系统向上搜），sub-agent 仍能看到项目的 CLAUDE.md —— 所以 CLAUDE.md 共享，memdir 隔离。详见第 4 章 sub-agent 执行边界。</p></blockquote>
+<h2>7.4 Compact：上下文快满时的拯救</h2>
+<h3>7.4.1 为什么必须主动 compact</h3>
+<p>官方文档：</p>
+<blockquote><p>Newer Claude models (starting with Claude Sonnet 3.7) return a validation error when prompt and output tokens exceed the context window, rather than silently truncating. （来源：<a href="https://platform.claude.com/docs/en/build-with-claude/context-windows" rel="noreferrer">https://platform.claude.com/docs/en/build-with-claude/context-windows</a>，访问于 2026-04-19）</p></blockquote>
+<p>硬上限撞墙即报错（prompt_too_long）。所以 Claude Code 必须在撞墙前主动清出空间。加上另一条：</p>
+<blockquote><p>As token count grows, accuracy and recall degrade, a phenomenon known as <em>context rot</em>.</p></blockquote>
+<p>就算没撞墙，context 过满模型也会变蠢。所以还有一个"提前 compact"的动机。</p>
+<h3>7.4.2 阈值</h3>
+<p>所有阈值都从"有效 context window"（context window - 输出预留）倒推：</p>
+<figure class="codeblock"><figcaption><span class="file">src/services/compact/autoCompact.ts:30-49</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">MAX_OUTPUT_TOKENS_FOR_SUMMARY</span> = <span class="hl-num">20_000</span>
+<span class="hl-cm">// Based on p99.99 of compact summary output being 17,387 tokens.</span>
+
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> getEffectiveContextWindowSize(model: string): number {
+  <span class="hl-kw">const</span> reservedTokensForSummary = <span class="hl-type">Math</span>.min(
+    getMaxOutputTokensForModel(model),
+    <span class="hl-type">MAX_OUTPUT_TOKENS_FOR_SUMMARY</span>,
+  )
+  <span class="hl-kw">let</span> contextWindow = getContextWindowForModel(model, getSdkBetas())
+  <span class="hl-cm">// ... env override</span>
+  <span class="hl-kw">return</span> contextWindow - reservedTokensForSummary
+}</code></pre></figure>
+<p>然后层层 buffer：</p>
+<figure class="codeblock"><figcaption><span class="file">src/services/compact/autoCompact.ts:62-65</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">AUTOCOMPACT_BUFFER_TOKENS</span> = <span class="hl-num">13_000</span>
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">WARNING_THRESHOLD_BUFFER_TOKENS</span> = <span class="hl-num">20_000</span>
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">ERROR_THRESHOLD_BUFFER_TOKENS</span> = <span class="hl-num">20_000</span>
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">MANUAL_COMPACT_BUFFER_TOKENS</span> = <span class="hl-num">3_000</span></code></pre></figure>
+<p>翻译成人话（200k context 模型）：</p>
+<div class="table-wrap"><table><thead><tr><th>阈值</th><th>计算</th><th>≈ 值</th><th>触发</th></tr></thead><tbody><tr><td>autoCompactThreshold</td><td>eff - 13K</td><td>~167K</td><td>自动 compact</td></tr>
+<tr><td>warningThreshold</td><td>autoCompactThreshold - 20K</td><td>~147K</td><td>UI 黄条提示</td></tr>
+<tr><td>errorThreshold</td><td>autoCompactThreshold - 20K（同上 = error 出现点）</td><td>~147K</td><td>UI 红条</td></tr>
+<tr><td>blockingLimit</td><td>eff - 3K</td><td>~177K</td><td>不让再发请求</td></tr></tbody></table></div>
+<p>阈值设计的两个点：</p>
+<ul>
+<li><strong>summary 本身要占 17-20K</strong>（经验值 p99.99 = 17387 tokens）。所以 effective window 先减 20K，相当于"留一个压缩请求的位置"。</li>
+<li><strong>autocompact 和 blocking 之间留 3 KB 余量</strong>。这 3 KB 是为手动 <code>/compact</code> 保留的最后一次机会 —— auto compact 已经试过失败时，用户还能手动触发。</li>
+</ul>
+<p><code>shouldAutoCompact</code> 里真正触发的断言（<code class="ref">src/services/compact/autoCompact.ts:225-238</code>）是 <code>tokenCountWithEstimation(messages) - snipTokensFreed &gt;= getAutoCompactThreshold(model)</code>。<code>snipTokensFreed</code> 是上一次 snip 已经省出来、但最近一条 assistant 的 <code>usage</code> 还没反映的量 —— 不减会导致连续误触发。</p>
+<h3>7.4.3 熔断器</h3>
+<figure class="codeblock"><figcaption><span class="file">src/services/compact/autoCompact.ts:70</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES</span> = <span class="hl-num">3</span></code></pre></figure>
+<p>注释：</p>
+<blockquote><p>BQ 2026-03-10: 1,279 sessions had 50+ consecutive failures (up to 3,272) in a single session, wasting ~250K API calls/day globally.</p></blockquote>
+<p>autocompact 可能 irrecoverable —— 上下文已经超过模型能摘要的规模，summary 请求本身就 prompt_too_long，每轮都重试的话就是死循环。熔断器：连续 3 次失败后放弃，本 session 剩下的轮次不再试。用户看到的表现是 UI 警告停止刷新、<code>/compact</code> 手动命令仍然可用。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/services/compact/autoCompact.ts:171-183</code>）：<code>shouldAutoCompact</code> 还有一组<strong>递归抑制</strong>，和熔断器正交。当 <code>querySource</code> 是 <code>&#x27;session_memory&#x27;</code> 或 <code>&#x27;compact&#x27;</code> 时直接返回 <code>false</code> —— 这是为 fork agent 本身兜底的：compact 派出的 summary agent 如果自己的 context 涨了（比如拿到的 messages 堆已经巨大），它不能自己再触发一次 autocompact，否则两个 fork 互相生成会死锁。同样 <code>&#x27;marble_origami&#x27;</code>（ant-only ctx-agent）也被显式拒掉，因为它的 <code>runPostCompactCleanup</code> 会调 <code>resetContextCollapse()</code> 清主线程 committed log。这些 querySource gate 在代码里看着像"拍脑袋加的防御"，其实每一条都对应一次真实出过问题的 recursion。</p></blockquote>
+<h3>7.4.4 主流程</h3>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">autoCompactIfNeeded (autoCompact.ts:241)
+  ├─ 熔断检查
+  ├─ shouldAutoCompact → tokenCountWithEstimation vs threshold
+  ├─ trySessionMemoryCompaction  # 实验性轻量路径
+  └─ compactConversation (compact.ts:387)
+       ├─ preCompactTokenCount = tokenCountWithEstimation(messages)
+       ├─ executePreCompactHooks
+       ├─ streamCompactSummary   # 派 fork agent 生成摘要
+       │    └─ 命中 prompt_too_long → truncateHeadForPTLRetry（最多 3 次）
+       ├─ 清 context.readFileState
+       ├─ 重建 attachments（fileState / plan / skills / deferred tools / agent listing / MCP instructions）
+       ├─ createCompactBoundaryMessage  # 分割线
+       ├─ reAppendSessionMetadata
+       ├─ executePostCompactHooks
+       └─ return { boundaryMarker, summaryMessages, attachments, hookResults, messagesToKeep }</code></pre></figure>
+<p>几个细节值得拎出来：</p>
+<p><strong>Summary 派 fork agent 生成</strong>（<code class="ref">src/services/compact/compact.ts:451</code>）。fork agent 用独立的 prompt 跑，不污染主会话状态。注意 fork 时用 <code>cacheSafeParams</code>（<code class="ref">src/services/compact/compact.ts:435-438</code>）—— feature flag <code>tengu_compact_cache_prefix</code> 控制是否让 fork agent 复用主会话的 prompt cache 前缀。2026 年 1 月的实验数据：关掉这个 flag 的路径 98% cache miss，占 fleet cache_creation 的 0.76%（每天约 380 亿 tokens）。这条评论（<code class="ref">src/services/compact/compact.ts:431-434</code>）是典型的"数据驱动的默认值选择"。</p>
+<p><strong>PTL 重试</strong>（<code class="ref">src/services/compact/compact.ts:243-291</code> <code>truncateHeadForPTLRetry</code>）：summary 请求本身 prompt_too_long 时，按 API round 分组丢最旧的组，直到够塞下。API 给出 <code>getPromptTooLongTokenGap(ptlResponse)</code> 指示差多少，就按这个差额累积丢。Vertex/Bedrock 的错误格式解析不了时回退到"丢 20%"。注意丢完后要补一条合成 user message（<code class="ref">src/services/compact/compact.ts:284-288</code>）—— API 要求第一条必须是 role=user，直接丢掉 group 0 会留下 assistant-first 序列。</p>
+<p><strong>messagesToKeep</strong>（<code class="ref">src/services/compact/compact.ts:349-367</code> <code>annotateBoundaryWithPreservedSegment</code>）：compact 可以保留尾巴最近 N 条消息。boundaryMarker 的 <code>preservedSegment</code> 字段记录 <code>{headUuid, anchorUuid, tailUuid}</code>，用来在 session 回放时把被保留段接回 boundary 后面。这比"全部压成摘要"更耐用：最近的工具调用、正在进行的编辑上下文不会丢。</p>
+<h3>7.4.5 pre vs post compact token count：一个命名坑</h3>
+<figure class="codeblock"><figcaption><span class="file">src/services/compact/compact.ts:625-642</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> compactionCallTotalTokens = tokenCountFromLastAPIResponse([summaryResponse])
+<span class="hl-cm">// 注意：这是 compact API 调用本身的 total usage，不是压缩后 context 的大小！</span>
+
+<span class="hl-kw">const</span> truePostCompactTokenCount = roughTokenCountEstimationForMessages([
+  boundaryMarker, ...summaryMessages, ...postCompactFileAttachments, ...hookMessages
+])</code></pre></figure>
+<p>历史上这俩都叫过 <code>postCompactTokenCount</code>，后来为了 event field 兼容保留了老名字，实际含义必须看变量名：</p>
+<ul>
+<li><code>compactionCallTotalTokens</code>：调 compact API 这次请求+响应的 token 总数。输入是 pre-compact 全量，输出是摘要文本。<strong>这是成本</strong>。</li>
+<li><code>truePostCompactTokenCount</code>：压缩后 context 实际大小 = boundary + summary + 重建的 attachments + hook 消息。<strong>这是下轮 shouldAutoCompact 会看到的数</strong>。</li>
+</ul>
+<p><code>tengu_compact</code> 事件里还有个 <code>willRetriggerNextTurn</code>（<code class="ref">src/services/compact/compact.ts:656-658</code>）基于后者判断：如果 compact 完还在阈值之上，下轮会立即再 compact 一次。这是健康度指标。</p>
+<h3>7.4.6 compact 后 CLAUDE.md 和 memory 的重载</h3>
+<p><code class="ref">src/commands/compact/compact.ts:63</code>:</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts">getUserContext.cache.clear?.()</code></pre></figure>
+<p><code>getUserContext</code> 是 memoized 的（<code class="ref">src/context.ts:155</code> <code>memoize</code>），清缓存后下次读会重新走 <code>getMemoryFiles</code> → 重新读磁盘上的 CLAUDE.md 和 <code class="ref">MEMORY.md</code>。官方文档对应的描述：</p>
+<blockquote><p>Project-root CLAUDE.md survives compaction: after <code>/compact</code>, Claude re-reads it from disk and re-injects it into the session. （来源：<a href="https://code.claude.com/docs/en/memory" rel="noreferrer">https://code.claude.com/docs/en/memory</a>，访问于 2026-04-19）</p></blockquote>
+<p>子目录里的嵌套 CLAUDE.md 不自动重读 —— 它们靠"Claude 读那目录下的文件时"按需加载，compact 清了这个状态，下次读才触发。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code>src/commands/compact/compact.ts:63, 117, 203</code>）：<code>getUserContext.cache.clear?.()</code> 在 <strong>三条</strong> compact 路径上都调一次（session memory / 传统 / reactive），而且用的是 <strong><code>?.()</code> 带可选链</strong> —— 说明 cache 可能未挂（shim 或某种 memoize 实现）。<strong>被清的不是 MEMORY.md 文件本身，是 <code>getUserContext</code> 这个函数的 memoize 结果</strong>：CLAUDE.md、<code class="ref">MEMORY.md</code> 索引、以及拼接后的整段 user context 全部<strong>下次调用再重读</strong>。因此 <code>/compact</code> 之后 CLAUDE.md 的 <strong>任何文件系统变更</strong>（你在另一个窗口改了 <code>~/.claude/CLAUDE.md</code>）会立刻生效 —— 这是一个没写在官方文档里的副作用。话题文件本来就不在 <code>getUserContext</code> 缓存里（按需召回），所以不受影响。</p></blockquote>
+<h3>7.4.7 microcompact：只清 tool result，保留缓存</h3>
+<p>完整 compact 成本很高（要跑一次 summary API 调用）。<code class="ref">src/services/compact/microCompact.ts</code> 提供一条轻量路径：<strong>只删老的 tool result</strong>，不改对话结构。</p>
+<p><code>COMPACTABLE_TOOLS</code>（<code class="ref">src/services/compact/microCompact.ts:41-50</code>）限定在 FileRead / Shell / Grep / Glob / WebSearch / WebFetch / FileEdit / FileWrite —— 这些工具的结果可以重新执行得到，删了不会丢信息（模型可以重读）。</p>
+<p>两条触发路径：</p>
+<ol>
+<li><strong>Time-based</strong>（<code>evaluateTimeBasedTrigger</code>）：距上一次 assistant 消息超过阈值（几分钟），prompt cache 已经冷了，反正要重写整个前缀，那就顺便把老 tool result 清了 —— 减小重写量。</li>
+<li><strong>Cached microcompact</strong>（ant-only，<code>cachedMicrocompactPath</code>）：用 cache editing API 从 prompt 中删 tool result，<strong>不改本地 messages</strong>。服务器端的缓存前缀保持不变，只是告诉它"这几个 tool_use_id 对应的 result 在下次请求里不要算"。</li>
+</ol>
+<p>第二种更有意思：它把 compact 的副作用放到了 API 层而不是客户端。trade-off 是依赖服务端的 cache editing 支持（beta feature）。</p>
+<h2>7.5 <code>/context</code>：把上面一切可视化</h2>
+<p><code>/context</code> 要解决的问题是："我这个 session 的 context 到底被什么东西占了？"</p>
+<p><code class="ref">src/commands/context/context.tsx:13-28</code> 注释解释了实现的核心不对称：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// Apply the same context transforms query.ts does before the API call, so</span>
+<span class="hl-cm">// /context shows what the model actually sees rather than the REPL&#x27;s raw</span>
+<span class="hl-cm">// history. Without projectView the token count overcounts by however much</span>
+<span class="hl-cm">// was collapsed — user sees &quot;180k, 3 spans collapsed&quot; when the API sees 120k.</span></code></pre></figure>
+<p>UI 侧的 REPL 保留了<strong>所有</strong>历史消息（包括被 compact boundary 越过的老消息，scrollback 用）；API 侧只发送 boundary 之后的。<code>/context</code> 要显示的是后者，不是前者。所以它复用了和 <code class="ref">query.ts</code> 真正发 API 前一样的预处理管道：</p>
+<figure class="codeblock"><figcaption><span class="file">src/commands/context/context.tsx:18-29</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">function</span> toApiView(messages: <span class="hl-type">Message</span>[]): <span class="hl-type">Message</span>[] {
+  <span class="hl-kw">let</span> view = getMessagesAfterCompactBoundary(messages)
+  <span class="hl-kw">if</span> (feature(&#x27;<span class="hl-type">CONTEXT_COLLAPSE</span>&#x27;)) {
+    <span class="hl-kw">const</span> { projectView } = require(&#x27;../../services/contextCollapse/operations.js&#x27;)
+    view = projectView(view)
+  }
+  <span class="hl-kw">return</span> view
+}</code></pre></figure>
+<p>然后：</p>
+<figure class="codeblock"><figcaption><span class="file">src/commands/context/context.tsx:42-57</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> { messages: compactedMessages } = <span class="hl-kw">await</span> microcompactMessages(apiView)
+<span class="hl-cm">// ...</span>
+<span class="hl-kw">const</span> data = <span class="hl-kw">await</span> analyzeContextUsage(compactedMessages, mainLoopModel, ...)</code></pre></figure>
+<p><code>analyzeContextUsage</code>（<code class="ref">src/utils/analyzeContext.ts:918</code>）把结果按类别拆开：System prompt / Messages / Memory files / MCP tools / Agents / Skills / Free space / Autocompact buffer。非交互版（<code class="ref">src/commands/context/context-noninteractive.ts:90-324</code>）把它渲染成 markdown 表输出给 SDK 用。</p>
+<p>这条设计的可迁移点：<strong>任何展示"实际会被发送的请求体大小"的 UI，都应该复用发送路径的预处理，而不是自己估。</strong> 否则 UI 和实际永远会飘。</p>
+<h2>7.6 Token 估算的两层</h2>
+<h3>7.6.1 真值 + 增量</h3>
+<p>上下文大小的规范函数是 <code>tokenCountWithEstimation</code>（<code class="ref">src/utils/tokens.ts:226-261</code>）。算法：</p>
+<ol>
+<li>从后往前找到<strong>最近一条带 API <code>usage</code> 的 assistant 消息</strong>。</li>
+<li>从 <code>usage</code> 里取 <code>input + cache_creation + cache_read + output</code> 作为基线（那次 API 请求时的真值）。</li>
+<li>之后新增的消息用 rough 估算加上去。</li>
+</ol>
+<p>对应的真值计算：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/tokens.ts:46-53</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> getTokenCountFromUsage(usage: <span class="hl-type">Usage</span>): number {
+  <span class="hl-kw">return</span> (
+    usage.input_tokens +
+    (usage.cache_creation_input_tokens ?? <span class="hl-num">0</span>) +
+    (usage.cache_read_input_tokens ?? <span class="hl-num">0</span>) +
+    usage.output_tokens
+  )
+}</code></pre></figure>
+<p><strong>Parallel tool calls 的边界情况</strong>（<code class="ref">src/utils/tokens.ts:213-252</code>）：模型一次响应里发多个 tool_use 时，streaming code 会把每个 block 拆成独立的 assistant 记录（共享同一个 <code>message.id</code> 和 <code>usage</code>），各自夹着 tool_result。如果只停在"最后一条 assistant"，会漏掉中间交错的 tool_result 估算。实现的应对：找到带 usage 的那条后，往前走所有 <code>message.id</code> 相同的兄弟记录，把范围扩到同一次 API 响应的<strong>第一条</strong>。</p>
+<h3>7.6.2 rough 估算</h3>
+<figure class="codeblock"><figcaption><span class="file">src/services/tokenEstimation.ts:203-208</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> roughTokenCountEstimation(
+  content: string,
+  bytesPerToken: number = <span class="hl-num">4</span>,
+): number {
+  <span class="hl-kw">return</span> <span class="hl-type">Math</span>.round(content.length / bytesPerToken)
+}</code></pre></figure>
+<p>字符数除以 4。这是业内默认 heuristic。两个例外：</p>
+<p><strong>JSON 更密</strong>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/services/tokenEstimation.ts:215-223</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> bytesPerTokenForFileType(fileExtension: string): number {
+  <span class="hl-kw">switch</span> (fileExtension) {
+    <span class="hl-kw">case</span> &#x27;json&#x27;:
+    <span class="hl-kw">case</span> &#x27;jsonl&#x27;:
+    <span class="hl-kw">case</span> &#x27;jsonc&#x27;:
+      <span class="hl-kw">return</span> <span class="hl-num">2</span>
+    <span class="hl-kw">default</span>:
+      <span class="hl-kw">return</span> <span class="hl-num">4</span>
+  }
+}</code></pre></figure>
+<p>dense JSON 里 <code>{</code> <code>}</code> <code>:</code> <code>,</code> <code>&quot;</code> 每个基本都是独立 token，实际 ratio ≈ 2。</p>
+<p><strong>图像/文档固定 2000</strong>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/services/tokenEstimation.ts:400-412</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (block.<span class="hl-kw">type</span> === &#x27;image&#x27; || block.<span class="hl-kw">type</span> === &#x27;document&#x27;) {
+  <span class="hl-cm">// Images are resized to max 2000x2000 (5333 tokens). Use a conservative</span>
+  <span class="hl-cm">// estimate that matches microCompact&#x27;s IMAGE_MAX_TOKEN_SIZE to avoid</span>
+  <span class="hl-cm">// underestimating and triggering auto-compact too late.</span>
+  <span class="hl-cm">//</span>
+  <span class="hl-cm">// document: base64 PDF in source.data. Must NOT reach the</span>
+  <span class="hl-cm">// jsonStringify catch-all — a 1MB PDF is ~1.33M base64 chars →</span>
+  <span class="hl-cm">// ~325k estimated tokens, vs the ~2000 the API actually charges.</span>
+  <span class="hl-kw">return</span> <span class="hl-num">2000</span>
+}</code></pre></figure>
+<p>这个固定值是个 load-bearing 的魔法数字。PDF 走 base64，如果落到默认 <code>content.length / 4</code> 路径，1 MB PDF 会被估成 325k tokens（真实值 ~2000），任何带 PDF attachment 的 session 都会立即触发 autocompact。</p>
+<h3>7.6.3 Haiku fallback</h3>
+<p><code>countMessagesTokensWithAPI</code>（<code class="ref">src/services/tokenEstimation.ts:140-201</code>）调 Anthropic <code>countTokens</code> beta 端点拿真值。Bedrock 某些情况不支持、Vertex 某些 beta 被屏蔽，这些场景下走 Haiku fallback（<code class="ref">src/services/tokenEstimation.ts:251-325</code>）：发一个 <code>max_tokens: 1</code> 的真实请求给 Haiku，从响应 <code>usage.input_tokens + cache_*</code> 读实际 token 数。</p>
+<p>这条路径<strong>花钱</strong>（Haiku 最便宜，但仍是一次真实 API 调用），只在 API countTokens 不可用时用。</p>
+<h3>7.6.4 <code class="ref">src/query/tokenBudget.ts</code> 不是 context 预算</h3>
+<p>很容易望文生义的地方：这个文件不是 context window 预算。它是<strong>用户显式设的任务 budget</strong> 的 continuation tracker：</p>
+<figure class="codeblock"><figcaption><span class="file">src/query/tokenBudget.ts:3-20</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">COMPLETION_THRESHOLD</span> = <span class="hl-num">0.9</span>
+<span class="hl-kw">const</span> <span class="hl-type">DIMINISHING_THRESHOLD</span> = <span class="hl-num">500</span>
+
+<span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">BudgetTracker</span> = {
+  continuationCount: number
+  lastDeltaTokens: number
+  lastGlobalTurnTokens: number
+  startedAt: number
+}</code></pre></figure>
+<p>用户在输入里写 <code>+500k</code> 或 <code>use 2M tokens</code>（<code class="ref">src/utils/tokenBudget.ts:1-29</code> 的正则解析），Claude Code 会进入一个循环模式：模型回复完一轮后，如果消耗 &lt; budget * 0.9 且最近两轮消耗都 ≥ 500 tokens，就塞一句 continuation：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">Stopped at 45% of token target (900,000 / 2,000,000). Keep working — do not summarize.</code></pre></figure>
+<p>然后继续跑下一轮。这是"让 agent 多干一些"的机制，不是"防止 context 爆"的机制。<code>checkTokenBudget</code> 的 <code>globalTurnTokens</code> 参数由 Agent Loop 喂（详见 <a class="chref" href="../ch03/">ch.03</a>），和 <code>tokenCountWithEstimation</code> 是两个不相干的数。</p>
+<h2>7.7 设计取舍 &amp; 可迁移的点</h2>
+<h3>7.7.1 为什么 memory 用文件而不是向量库</h3>
+<p>Trade-off 很清楚：</p>
+<div class="table-wrap"><table><thead><tr><th></th><th>文件 + 索引</th><th>向量库</th></tr></thead><tbody><tr><td>用户能读能改</td><td>是</td><td>否（opaque embedding）</td></tr>
+<tr><td>Git 可 diff</td><td>是</td><td>否</td></tr>
+<tr><td>召回准确度</td><td>依赖 Sonnet 选 top-5</td><td>更高</td></tr>
+<tr><td>增量存储成本</td><td>每 memory ~几百字节</td><td>索引 + embedding ~几 KB</td></tr>
+<tr><td>模型操作难度</td><td>复用现有 Write / Read 工具</td><td>需要专用 memory API</td></tr></tbody></table></div>
+<p>Claude Code 选了前者。关键理由：<strong>memory 系统的 success metric 是"模型能正确维护"</strong>，而不是"召回召回率高"。召回错了下次会改；维护不动直接废掉。模型熟练的是文件 I/O 不是 vector query，所以前者更稳。</p>
+<p>这个 trade-off 不是普适的 —— 如果你的 agent 面对的是海量非结构化文本（法律文档、代码库全文），vector store 仍是对的。但对"agent 自己工作时生成的笔记"，文件路径赢。</p>
+<h3>7.7.2 为什么 <code class="ref">MEMORY.md</code> 和话题文件分离</h3>
+<p>"索引常驻 + 详细按需"是这个设计最值得借鉴的一点。它把两个相反的需求解耦：</p>
+<ul>
+<li>模型每次启动都需要知道"我记得什么"。这是全量 scan。</li>
+<li>模型大多数时候不需要读详细内容。只有特定查询相关时才要。</li>
+</ul>
+<p>把索引单独放一个文件、截断到 200 行，既保证每次 session 都有 orientation，又避免把几十个话题文件的内容全灌进 context。一个 memory 系统长到几百条，index 仍然是 200 行可控的，详细内容按需 read。</p>
+<p>配合 <code>findRelevantMemories</code> 的 Sonnet selector，形成一个两阶段召回：索引给粗粒度线索 + 按 query 精选 top-5。</p>
+<h3>7.7.3 为什么 frontmatter 用闭集 <code>type</code> 而不是开放 tag</h3>
+<p>开放 tag 的问题：模型会逐渐发明新 tag（<code>workflow</code>、<code>tip</code>、<code>note</code>、<code>important</code>），语义漂移。存 memory 和读 memory 的模型对同一个 tag 可能理解不同。</p>
+<p>闭集有两个好处：</p>
+<ol>
+<li><strong>语义稳定</strong>。4 个值都在 prompt 里写了明确的 <code>&lt;when_to_save&gt;</code> / <code>&lt;how_to_use&gt;</code>，没有歧义空间。</li>
+<li><strong>反面列表有抓手</strong>。<code>WHAT_NOT_TO_SAVE_SECTION</code> 能写"这不属于以上四种任何一种，所以不存" —— 强反面约束。</li>
+</ol>
+<p>代价：有些东西放不进任何一类就只能丢掉。这是设计者认可的代价 —— memory 要的是少而准，不是全。</p>
+<p>顺便一提：memdir 的 frontmatter 契约（<code>name / description / type</code> + 反面列表）和 <strong>skills</strong> 的 frontmatter 同构（详见第 10 章 Skills）。这不是巧合 —— 同一套"文件 + frontmatter + MEMORY.md / SKILLS.md 索引 + 模型自己维护"的模板在仓库里复用了至少两次。</p>
+<h3>7.7.4 可迁移到自己项目的东西</h3>
+<p>如果你在做一个类似的 agent 系统，下面这些几乎可以直接搬：</p>
+<ol>
+<li><strong>文件式 memory + 索引。</strong> 目录 + MEMORY.md（≤ 200 行 / 25 KB）+ 话题文件 + frontmatter。</li>
+<li><strong>闭集类型 + 反面列表。</strong> 不要开放 tag。把"什么不存"写进 prompt，而且加一句"用户明确要求也不存这些"。</li>
+<li><strong>索引截断时附 WARNING 说明哪根 cap 触发。</strong> 模型看到 WARNING 会主动缩短。</li>
+<li><strong>dir exists 断言前置。</strong> <code>ensureMemoryDirExists</code> + prompt 断言"目录已存在，直接 Write" —— 省掉模型 ls/mkdir 的回合。</li>
+<li><strong>老化 disclaimer 用 <code>&lt;system-reminder&gt;</code> 标签。</strong> 超过 N 天的记忆自带"这是快照"提示。</li>
+<li><strong>召回用独立的小模型 selector。</strong> 不要把全量 memory manifest 塞进主会话；用 Sonnet / Haiku 跑一次独立的 selection 调用，max_tokens 256 够。</li>
+<li><strong>compact 要有熔断器。</strong> autocompact 失败 3 次就停，不要对着 prompt_too_long 死磕。</li>
+<li><strong>"我看到的 context 大小" 必须复用"要发给 API 的预处理管道"。</strong> 否则 UI 和实际永远飘。</li>
+</ol>
+<h2>7.8 本章边界</h2>
+<ul>
+<li>Agent Loop 每轮怎么调用 <code>checkTokenBudget</code> / <code>autoCompactIfNeeded</code>：详见第 3 章。</li>
+<li>Sub-agent 是否共享 memdir / CLAUDE.md（结论：CLAUDE.md 共享、memdir 按 <code>memory:</code> 字段隔离）：详见第 4 章。</li>
+<li>Skills 的 frontmatter 和 SKILLS.md 索引机制：详见第 10 章（和 memdir 同构）。</li>
+<li>斜杠输入框的 Up-arrow / ctrl+r 历史（<code class="ref">src/history.ts</code>）：详见第 20 章输入层。</li>
+<li>Plan mode 的持久化：详见第 5 章。</li>
+<li>Background task 状态持久化：详见第 16 章。</li>
+</ul>
+  </div>
+</article>
+
+<nav class="chap-nav"><a class="nav-link prev" href="../ch06/"><span class="dir">← Ch.06 · prev</span><span class="t">Worktree<span class="cn">隔离模式</span></span></a><a class="nav-home" href="../">§ 目录</a><a class="nav-link next" href="../ch08/"><span class="dir">Ch.08 · next →</span><span class="t">Tools<span class="cn">Tool 接口与 ToolSearch</span></span></a></nav>
+
+<footer class="colophon">
+  <div class="left">Claude <span class="dot">&amp;</span> Code</div>
+  <div class="right">
+    set in EB garamond · albert sans · jetbrains mono · LXGW wenkai<br>
+    《Claude Code 源码解读》 · ch.07
+  </div>
+</footer>
+
+</body>
+</html>

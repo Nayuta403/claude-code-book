@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.11 Plugins · 插件系统 — Claude Code 源码解读</title>
+<meta name="description" content="《Claude Code 源码解读》第 11 章 —— 插件系统（out-of-tree）">
+<meta property="og:title" content="Ch.11 Plugins · 插件系统 — Claude Code 源码解读">
+<meta property="og:description" content="《Claude Code 源码解读》第 11 章 —— 插件系统（out-of-tree）">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://nayuta403.github.io/claude-code-book/ch11/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,300;1,400;1,500&family=Albert+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<link rel="stylesheet" href="../assets/book.css">
+</head>
+<body>
+
+<nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
+
+<header class="chap-head">
+  <div>
+    <div class="crumb">
+      <a href="../">目录</a>
+      <span class="sep">/</span>
+      <span class="part-tag p3">Part III · 扩展机制</span>
+    </div>
+    <div class="chap-num">Chapter · 11 / 23</div>
+    <h1 class="chap-title">Plugins<span class="cn">插件系统</span></h1>
+  </div>
+  <aside class="chap-meta">
+    <div><div class="km">part</div><div class="vm">扩展机制（Extensions）</div></div>
+    <div><div class="km">topic</div><div class="vm m">out-of-tree</div></div>
+    <div><div class="km">reading</div><div class="vm">≈ 18 min</div></div>
+    <div><div class="km">source refs</div><div class="vm m">36</div></div>
+  </aside>
+</header>
+
+<article class="article">
+  <div class="prose">
+<h2>11.1 用户看到什么</h2>
+<p class="drop">最短的使用路径只有三行：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">/plugin marketplace add anthropics/claude-code
+/plugin install commit-commands@anthropics-claude-code
+/reload-plugins</code></pre></figure>
+<p>下一条消息里就能用 <code>/commit-commands:commit</code>。没有重启，没有配置文件手改。不打开 UI 也行：<code>claude plugin install commit-commands@anthropics-claude-code --scope project</code> 写到 <code class="ref">.claude/settings.json</code> 的 <code>enabledPlugins</code>，项目其他协作者 clone 之后一样自动拿到。</p>
+<p><code>/plugin</code> TUI 四个 tab 里的分工直白：Discover 浏览所有已注册 marketplace 里的 plugin；Installed 管已装；Marketplaces 增删改；Errors 看失败原因。入口在 <code class="ref">src/commands/plugin/index.tsx:2-9</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/commands/plugin/index.tsx:2-9</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> plugin = {
+  <span class="hl-kw">type</span>: &#x27;local-jsx&#x27;,
+  name: &#x27;plugin&#x27;,
+  aliases: [&#x27;plugins&#x27;, &#x27;marketplace&#x27;],
+  description: &#x27;<span class="hl-type">Manage</span> <span class="hl-type">Claude</span> <span class="hl-type">Code</span> plugins&#x27;,
+  immediate: <span class="hl-kw">true</span>,
+  load: () =&gt; <span class="hl-kw">import</span>(&#x27;./plugin.js&#x27;),
+} <span class="hl-kw">satisfies</span> <span class="hl-type">Command</span></code></pre></figure>
+<p>官方 marketplace <code>claude-plugins-official</code> 启动即装，无需手动 add。来源是 <code>anthropics/claude-plugins-official</code> GitHub 仓库（<code class="ref">src/utils/plugins/officialMarketplace.ts:15-25</code>），文档 catalog 在 claude.com/plugins（来源：<a href="https://code.claude.com/docs/en/discover-plugins" rel="noreferrer">https://code.claude.com/docs/en/discover-plugins</a>，访问于 2026-04-19）。</p>
+<h2>11.2 为什么挑这个设计出来讲</h2>
+<p>Plugin 不是一个功能，是一个<strong>打包器</strong>。本仓库源码里能被 plugin 贡献的子系统<strong>十种</strong>（以 <code>PluginManifestSchema</code> 实际合并的 partial shape 为准，见 <code class="ref">src/utils/plugins/schemas.ts:884-898</code>）：commands（详见 <a class="chref" href="../ch01/">ch.01</a> §1.2）、skills（详见 <a class="chref" href="../ch10/">ch.10</a> §10.3）、agents（详见 <a class="chref" href="../ch04/">ch.04</a> §4.3）、hooks（详见 <a class="chref" href="../ch14/">ch.14</a> §3）、MCP servers（详见 <a class="chref" href="../ch12/">ch.12</a> §2）、LSP servers、output styles、<strong>channels</strong>（MCP 通道集成）、plugin-scoped settings.json（仅 <code>agent</code> 白名单，scope 级联见 <a class="chref" href="../ch09/">ch.09</a> §9.3）、userConfig。每一种都<strong>先能独立存在</strong>（skills 在 <code>~/.claude/skills/</code>、hooks 直接写 settings.json、MCP server 写 <code>~/.claude/.mcp.json</code>），plugin 只是在这些机制之上再加一层统一的：</p>
+<ul>
+<li>声明式 manifest（<code class="ref">.claude-plugin/plugin.json</code>）</li>
+<li>可被版本化的分发（marketplace）</li>
+<li>统一的 enable / disable / uninstall 开关</li>
+<li>统一的热重载入口（<code>/reload-plugins</code>）</li>
+</ul>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/plugins/schemas.ts:884-898</code>）：官方 docs（<a href="https://code.claude.com/docs/en/plugins-reference" rel="noreferrer">https://code.claude.com/docs/en/plugins-reference</a>，访问于 2026-04-19）另外列举了 <code>monitors</code> 和 <code>bin/</code> 两种贡献点（前者"Plugin monitors require Claude Code v2.1.105 or later"，后者"Executables added to the Bash tool's PATH"）。但<strong>本仓库的 <code>PluginManifestSchema</code> 里没有对应的 <code>PluginManifest*Schema</code> partial</strong>——<code class="ref">schemas.ts:884-898</code> 合并的 partial 只有 metadata / hooks / commands / agents / skills / outputStyles / channels / mcpServers / lspServers / settings / userConfig 十一个。配合 <code class="ref">schemas.ts:875-883</code> 的"顶层 unknown key silently stripped"策略，这意味着：<strong>用户按 docs 在 <code class="ref">plugin.json</code> 里写 <code>monitors</code> / <code>bin</code> 字段，当前版本 zod 静默剥离，无任何错误提示、无效果、无日志</strong>——这是"顶层宽容"策略的具体代价。本章后续不把 monitors / bin 算作贡献点，只按本仓库实际实现的十项讨论。</p></blockquote>
+<p>真正值得讲的是第三和第四点。一个现代 IDE 的 plugin 系统通常要求重启进程，或者只热更其中一部分子系统。Claude Code 的热重载在一条 <code>/reload-plugins</code> 里同时换掉了命令、agent、hook、MCP 连接、LSP 配置、plugin 提供的 settings 叠加层——实现做法是把三层（intent / materialized / active）拆清楚，每层给一把 cache invalidation 钥匙。这章主要讲这个。</p>
+<p>Commands / Skills / Agents / MCP / Hooks 本身不在本章（分别详见 <a class="chref" href="../ch01/">ch.01</a> / <a class="chref" href="../ch10/">ch.10</a> / <a class="chref" href="../ch04/">ch.04</a> / <a class="chref" href="../ch12/">ch.12</a> / <a class="chref" href="../ch14/">ch.14</a>）。本章只讲 plugin 怎么<strong>包住</strong>它们。</p>
+<h2>11.3 Plugin 的形态</h2>
+<p>一个 plugin 就是一个目录。npm / git / github / 本地路径只是"把这个目录弄到本地"的多种方式，不是 plugin 的本质。目录根下长这样（允许部分缺失，字段对应 <code>PluginManifestSchema</code> 合并的 partial shape）：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">my-plugin/
+├── .claude-plugin/
+│   └── plugin.json           # 可选的 manifest；声明 channels / userConfig / dependencies
+├── skills/&lt;name&gt;/SKILL.md    # ch10 §10.3
+├── commands/*.md             # ch01 §1.2；老格式 skill（扁平 markdown）
+├── agents/*.md               # ch04 §4.3
+├── hooks/hooks.json          # ch14 §3
+├── .mcp.json                 # ch12 §4；配合 manifest.channels 可把 server 声明为消息通道
+├── .lsp.json
+├── output-styles/*.md
+└── settings.json             # 只允许 `agent` 一个 key（见 11.3 末）</code></pre></figure>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/plugins/pluginLoader.ts:1776-1782</code>）：<code>PluginSettingsSchema</code> 用 <code>SettingsSchema().pick({ agent: true }).strip()</code>——<strong>仅 <code>agent</code> 一个 key 进白名单，其余静默剥离</strong>。官方 docs（<a href="https://code.claude.com/docs/en/plugins-reference" rel="noreferrer">https://code.claude.com/docs/en/plugins-reference</a>）描述允许 <code>agent</code> 和 <code>subagentStatusLine</code> 两个，但本仓库代码只收 <code>agent</code>。配合 <code>.strip()</code>，作者在 plugin 的 <code class="ref">settings.json</code> 里写 <code>env</code>、<code>permissions</code>、<code>subagentStatusLine</code> 都不会报错——加载后默默无效。这对想按 docs 测试的 plugin 作者是个隐蔽坑（settings scope 的完整级联见 <a class="chref" href="../ch09/">ch.09</a> §9.3）。</p></blockquote>
+<p>manifest 可以完全省略——省略时从目录名取 plugin name，自动扫 <code>skills/</code> <code>commands/</code> <code>agents/</code> 等默认路径。写 manifest 是为了：声明元数据（版本、作者）、改路径、内联 hooks/MCP 配置、声明 <code>userConfig</code>（用户侧变量）、声明 <code>dependencies</code>（版本化依赖其他 plugin）。完整 schema 见 <code class="ref">src/utils/plugins/schemas.ts:884-898</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/plugins/schemas.ts:884-898</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">PluginManifestSchema</span> = lazySchema(() =&gt;
+  z.object({
+    ...<span class="hl-type">PluginManifestMetadataSchema</span>().shape,
+    ...<span class="hl-type">PluginManifestHooksSchema</span>().partial().shape,
+    ...<span class="hl-type">PluginManifestCommandsSchema</span>().partial().shape,
+    ...<span class="hl-type">PluginManifestAgentsSchema</span>().partial().shape,
+    ...<span class="hl-type">PluginManifestSkillsSchema</span>().partial().shape,
+    ...<span class="hl-type">PluginManifestOutputStylesSchema</span>().partial().shape,
+    ...<span class="hl-type">PluginManifestChannelsSchema</span>().partial().shape,
+    ...<span class="hl-type">PluginManifestMcpServerSchema</span>().partial().shape,
+    ...<span class="hl-type">PluginManifestLspServerSchema</span>().partial().shape,
+    ...<span class="hl-type">PluginManifestSettingsSchema</span>().partial().shape,
+    ...<span class="hl-type">PluginManifestUserConfigSchema</span>().partial().shape,
+  }),
+)</code></pre></figure>
+<p>这个 schema 有一个取舍值得讲：<strong>顶层 unknown key 静默剥离，嵌套 unknown key fail-fast</strong>。作者在 <code class="ref">schemas.ts:875-883</code> 的注释里解释：</p>
+<blockquote><p>Unknown top-level fields are silently stripped (zod default) rather than rejected. This keeps plugin loading resilient to custom/future top-level fields that plugin authors may add. Nested config objects (userConfig options, channels, lspServers) remain strict — unknown keys inside those still fail, since a typo there is more likely to be an author mistake than a vendor extension.</p></blockquote>
+<p>顶层留扩展余地（未来加字段、作者可加供应商特定字段），嵌套内部严格（打错字早发现）。这个策略比单一地"一律严格"或"一律宽松"更细——取决于该字段位置的"可能是未来扩展 vs 可能是打字错误"的先验概率。同样的取舍可以用在任何长寿命的 JSON schema 上。</p>
+<h3>channels：MCP server 作为消息通道</h3>
+<p>十种贡献点里最特别的是 <code>channels</code>（<code class="ref">schemas.ts:655-703</code>）。它不是一个独立的代码装载器，而是<strong>在 <code>mcpServers</code> 之上加一层语义标记</strong>——把某个 MCP server 声明成"能往会话里注入消息的通道"，典型场景是 Telegram / Slack / Discord 集成：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/plugins/schemas.ts:670-703（精简）</span>
+<span class="hl-kw">const</span> <span class="hl-type">PluginManifestChannelsSchema</span> = lazySchema(() =&gt;
+  z.object({
+    channels: z.array(
+      z.object({
+        server: z.string().min(<span class="hl-num">1</span>),           <span class="hl-cm">// 必须对应 mcpServers 里一个 key</span>
+        displayName: z.string().optional(),
+        userConfig: z.record(z.string(), <span class="hl-type">PluginUserConfigOptionSchema</span>()).optional(),
+      }).strict(),
+    ),
+  }),
+)</code></pre></figure>
+<p>声明 channel 的价值来自它和 <code>userConfig</code> 的联动：plugin 启用时 UI 会弹出 <code>PluginOptionsFlow</code> 要求用户填入这个 channel 专属的 bot token / owner id 之类的敏感变量，存到 settings 后在 MCP env 里替换 <code>${user_config.KEY}</code>——用户不用手改 <code class="ref">settings.json</code>。<code>server</code> 字段和 <code>mcpServers</code> 的 key 跨字段对齐，但 schema 解析时<strong>不做</strong>交叉校验：</p>
+<blockquote><p>The <code>server</code> field must match a key in the plugin's <code>mcpServers</code> — this is not cross-validated at schema parse time (the mcpServers field can be a path to a JSON file we haven't read yet), so the check happens at load time in mcpPluginIntegration.ts instead.（<code class="ref">schemas.ts:665-668</code>）</p></blockquote>
+<p>消费侧在 <code class="ref">src/utils/plugins/mcpPluginIntegration.ts:290-318</code> 的 <code>getUnconfiguredChannels()</code>：plugin 启用后 <code class="ref">ManagePlugins.tsx</code> 调它过一遍所有 channel，凡 <code>validateUserConfig</code> 不通过（必填项没存）就塞进返回列表，触发配置 dialog。这是"让用户在正确时间填对值"的一种温和强制——绕过它就只是看到 server 起不来。</p>
+<h3>载入后的形状：LoadedPlugin</h3>
+<p>从磁盘读进来之后，每个 plugin 变成一个 <code>LoadedPlugin</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/types/plugin.ts:48-70</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">LoadedPlugin</span> = {
+  name: string
+  manifest: <span class="hl-type">PluginManifest</span>
+  path: string           <span class="hl-cm">// 安装位置绝对路径</span>
+  source: string         <span class="hl-cm">// &quot;name@marketplace&quot; / &quot;name@inline&quot; / &quot;name@builtin&quot;</span>
+  repository: string
+  enabled?: boolean
+  isBuiltin?: boolean
+  sha?: string           <span class="hl-cm">// git 版本锁</span>
+  commandsPath?: string; commandsPaths?: string[]
+  commandsMetadata?: <span class="hl-type">Record</span>&lt;string, <span class="hl-type">CommandMetadata</span>&gt;
+  agentsPath?: string; agentsPaths?: string[]
+  skillsPath?: string; skillsPaths?: string[]
+  outputStylesPath?: string; outputStylesPaths?: string[]
+  hooksConfig?: <span class="hl-type">HooksSettings</span>
+  mcpServers?: <span class="hl-type">Record</span>&lt;string, <span class="hl-type">McpServerConfig</span>&gt;
+  lspServers?: <span class="hl-type">Record</span>&lt;string, <span class="hl-type">LspServerConfig</span>&gt;
+  settings?: <span class="hl-type">Record</span>&lt;string, <span class="hl-kw">unknown</span>&gt;
+}</code></pre></figure>
+<p>注意 <code>mcpServers</code> 和 <code>lspServers</code> 是<strong>懒缓存槽</strong>：<code>loadAllPlugins()</code> 不主动填，后续 <code>extractMcpServersFromPlugins()</code> / <code>getPluginLspServers()</code> 才写入。这个隐含契约踩过 issue #15521 的坑（LSP manager 读到 stale 结果），<code class="ref">src/utils/plugins/refresh.ts:140-145</code> 里的"unconditional reinitializeLspServerManager" 就是补丁。值得记住：<strong>数据结构上让一个字段"可以懒填"是方便，但实际上意味着对所有后续读取者有"你可能读不到最新版本"的隐式契约</strong>。</p>
+<h2>11.4 三类 plugin 来源</h2>
+<p>Plugin 来源在系统里有三种，ID 规则区分：</p>
+<div class="table-wrap"><table><thead><tr><th>来源</th><th>ID 形式</th><th>声明在</th><th>生命周期</th></tr></thead><tbody><tr><td>Built-in</td><td><code>name@builtin</code></td><td><code>registerBuiltinPlugin()</code> 编译时调用</td><td>随二进制打包，用户可 enable/disable</td></tr>
+<tr><td>Marketplace-installed</td><td><code>name@marketplace</code></td><td>settings 的 <code>enabledPlugins</code> + marketplace 注册</td><td>跨 session，版本化 cache</td></tr>
+<tr><td>Session-only（inline）</td><td><code>name@inline</code></td><td><code>--plugin-dir ./path</code> 启动参数</td><td>进程退出即消失</td></tr></tbody></table></div>
+<p>这三类在启动时并行加载，最后合并：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/plugins/pluginLoader.ts:3164-3182</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> inlinePlugins = getInlinePlugins()
+<span class="hl-kw">const</span> [marketplaceResult, sessionResult] = <span class="hl-kw">await</span> <span class="hl-type">Promise</span>.all([
+  marketplaceLoader(),
+  inlinePlugins.length &gt; <span class="hl-num">0</span>
+    ? loadSessionOnlyPlugins(inlinePlugins)
+    : <span class="hl-type">Promise</span>.resolve({ plugins: [], errors: [] }),
+])
+<span class="hl-kw">const</span> builtinResult = getBuiltinPlugins()
+
+<span class="hl-kw">const</span> { plugins: allPlugins, errors: mergeErrors } = mergePluginSources({
+  session: sessionResult.plugins,
+  marketplace: marketplaceResult.plugins,
+  builtin: [...builtinResult.enabled, ...builtinResult.disabled],
+  managedNames: getManagedPluginNames(),
+})</code></pre></figure>
+<p>优先级是 <strong>session &gt; marketplace &gt; builtin</strong>——这是给开发者的方便，<code>--plugin-dir ./local-copy</code> 可以临时盖掉已装的同名 marketplace plugin。<strong>唯一例外</strong>是 managed settings（企业策略）锁定的 plugin：锁定后 session 覆盖也没用，企业策略压过开发便利（<code class="ref">pluginLoader.ts:2995-3007</code> 注释）。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/plugins/pluginLoader.ts:3018-3045</code>）：当 plugin 名命中 <code>managedNames</code> 时，<code>--plugin-dir</code> 的 session 副本被<strong>静默过滤</strong>出合并结果——同时注入一条 <code>generic-error</code>：<code>&quot;--plugin-dir copy of \&quot;X\&quot; ignored: plugin is locked by managed settings&quot;</code>。UI 层不会中断启动，只在 <code>/plugin</code> 的 Errors tab 看到。开发者用 <code>--plugin-dir</code> 调试企业锁定的 plugin 时，改了代码却看不到效果，往往直到打开 Errors tab 才恍然大悟。这就是"让企业策略压过 session 覆盖"落到代码层的具体模样。</p></blockquote>
+<p>值得一提的是 built-in plugin 在当前仓库里是<strong>空脚手架</strong>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/plugins/bundled/index.ts:20-23</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> initBuiltinPlugins(): <span class="hl-kw">void</span> {
+  <span class="hl-cm">// No built-in plugins registered yet — this is the scaffolding for</span>
+  <span class="hl-cm">// migrating bundled skills that should be user-toggleable.</span>
+}</code></pre></figure>
+<p>机制已就位（注册 API、合并路径、user settings enable 开关），但还没有任何具体 plugin 入驻。这个时刻值得注意的设计是 <code class="ref">builtinPlugins.ts:145-149</code> 为 built-in plugin 里的 skill 特地选了 <code>source: &#x27;bundled&#x27;</code> 而不是 <code>&#x27;builtin&#x27;</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/plugins/builtinPlugins.ts:145-149</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// &#x27;bundled&#x27; not &#x27;builtin&#x27; — &#x27;builtin&#x27; in Command.source means hardcoded</span>
+<span class="hl-cm">// slash commands (/help, /clear). Using &#x27;bundled&#x27; keeps these skills in</span>
+<span class="hl-cm">// the Skill tool&#x27;s listing, analytics name logging, and prompt-truncation</span>
+<span class="hl-cm">// exemption. The user-toggleable aspect is tracked on LoadedPlugin.isBuiltin.</span></code></pre></figure>
+<p>"硬编码的系统命令" 和 "随二进制分发、用户可 toggle 的 skill" 是两个不同的设施，虽然名字都带 "built-in"。把这个区分固化在 <code>source</code> 字段里，UI 和分析管线就不用再靠字符串匹配拆开。</p>
+<h2>11.5 Marketplace 与官方市场</h2>
+<p>官方市场 <code>claude-plugins-official</code> 启动即装，默认 auto-update。但"官方"并不等于"一定自动更新"：</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/plugins/schemas.ts:30-35</code>）：<code>NO_AUTO_UPDATE_OFFICIAL_MARKETPLACES = new Set([&#x27;knowledge-work-plugins&#x27;])</code>——<strong>保留名单 8 个里有 1 个被显式从 "官方默认 auto-update" 里剔除</strong>。其余 7 个官方 marketplace 默认 auto-update（<code>isAutoUpdateEnabledForMarketplace</code> 在 <code class="ref">schemas.ts:37-67</code>），<code>knowledge-work-plugins</code> 走"和非官方 marketplace 一样要显式开"的路径。这个差异在 UI 上没有任何提示：用户会默认"官方的都 auto-update"，但装 <code>knowledge-work-plugins</code> 里的 plugin 后新版本静默停滞。原因是这类内容型 marketplace 更新意味着行为变化，不宜无声替换。</p></blockquote>
+<figure class="codeblock"><figcaption><span class="file">src/utils/plugins/officialMarketplace.ts:15-25</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">OFFICIAL_MARKETPLACE_SOURCE</span> = {
+  source: &#x27;github&#x27;,
+  repo: &#x27;anthropics/claude-plugins-official&#x27;,
+} <span class="hl-kw">as</span> <span class="hl-kw">const</span> <span class="hl-kw">satisfies</span> <span class="hl-type">MarketplaceSource</span>
+
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">OFFICIAL_MARKETPLACE_NAME</span> = &#x27;claude-plugins-official&#x27;</code></pre></figure>
+<p>Marketplace source 有九种（<code class="ref">schemas.ts:906-1044</code>）：</p>
+<ul>
+<li><code>url</code> / <code>github</code> / <code>git</code> / <code>npm</code> / <code>file</code> / <code>directory</code>——六种真实来源</li>
+<li><code>hostPattern</code> / <code>pathPattern</code>——两种<strong>不是来源、是白名单通配</strong>，给企业策略用（<code>strictKnownMarketplaces</code>）</li>
+<li><code>settings</code>——内联 marketplace 清单，直接写在 settings.json 里；reconciler 会合成一份 <code class="ref">marketplace.json</code> 放到 cache</li>
+</ul>
+<p>围绕"官方" 身份做的防冒充：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/plugins/schemas.ts:19-28</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">ALLOWED_OFFICIAL_MARKETPLACE_NAMES</span> = <span class="hl-kw">new</span> <span class="hl-type">Set</span>([
+  &#x27;claude-code-marketplace&#x27;,
+  &#x27;claude-code-plugins&#x27;,
+  &#x27;claude-plugins-official&#x27;,
+  &#x27;anthropic-marketplace&#x27;,
+  &#x27;anthropic-plugins&#x27;,
+  &#x27;agent-skills&#x27;,
+  &#x27;life-sciences&#x27;,
+  &#x27;knowledge-work-plugins&#x27;,
+])</code></pre></figure>
+<p>保留名只能来自 <code>github.com/anthropics/</code>（<code>validateOfficialNameSource</code> 在 <code class="ref">schemas.ts:119-157</code>）。同时挡住同形字符（<code>NON_ASCII_PATTERN</code>，防用西里尔字母 <code>а</code> 假扮 <code>anthropic</code>）和名字模式里的 <code>official + anthropic/claude</code> 组合。这一整套防线都是纯名字层的——安装后还有个 managed policy 层可以进一步限制。</p>
+<p>Plugin source 比 marketplace source 多一个 <code>git-subdir</code>（<code class="ref">schemas.ts:1131-1157</code>），专给 monorepo 用的稀疏 clone：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts">{ source: &#x27;git-subdir&#x27;, url, path, ref?, sha? }</code></pre></figure>
+<p>用 <code>git clone --filter=tree:0</code> 只拉这个子目录，不下整个仓库。<code>pip</code> 也在 schema 里（<code class="ref">schemas.ts:1088-1106</code>），但 <code class="ref">pluginLoader.ts:959-960</code> 运行时直接抛：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/plugins/pluginLoader.ts:959-960</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">case</span> &#x27;pip&#x27;:
+  <span class="hl-kw">throw</span> <span class="hl-kw">new</span> <span class="hl-type">Error</span>(&#x27;<span class="hl-type">Python</span> <span class="hl-kw">package</span> plugins are not yet supported&#x27;)</code></pre></figure>
+<p>schema 先行实现滞后是典型的接口占位做法——将来实现 pip 源时不用改 schema 也不用改 marketplace 声明。</p>
+<h2>11.6 三层加载模型</h2>
+<p>这是本章的核心概念。<code class="ref">refresh.ts:2-8</code> 的注释一句话说清：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">Three-layer model (see reconciler.ts for Layer-2):
+ - Layer 1: intent (settings)
+ - Layer 2: materialization (~/.claude/plugins/) — reconcileMarketplaces()
+ - Layer 3: active components (AppState) — this file</code></pre></figure>
+<ul>
+<li><strong>Layer 1 意图</strong>：用户写 <code>enabledPlugins</code> 和 <code>extraKnownMarketplaces</code> 到 settings 文件。</li>
+<li><strong>Layer 2 物化</strong>：<code>~/.claude/plugins/</code> 下的 <code class="ref">known_marketplaces.json</code>、<code class="ref">installed_plugins.json</code>、版本化 cache 目录。</li>
+<li><strong>Layer 3 激活</strong>：当前 session 的 <code>AppState.plugins</code>、<code>STATE.registeredHooks</code>、MCP 连接管理器状态。</li>
+</ul>
+<p>三层分开的价值在于：每层的<strong>写路径独立、读路径有 invalidation 钥匙</strong>。改了 Layer 1，Layer 2 不自动跟；Layer 2 变了，Layer 3 只在 <code>/reload-plugins</code> 时跟。这种松耦合意味着：</p>
+<ul>
+<li>用户手动编辑 settings.json（Layer 1 改），不会在键入瞬间触发磁盘 clone</li>
+<li>后台 auto-update 改了 Layer 2，不会吃掉正在跑的 session 状态</li>
+<li><code>/reload-plugins</code> 只负责 Layer 3，它能假设 Layer 2 已经物化好</li>
+</ul>
+<p>三层的具体跨越点：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">Layer 1 → Layer 2:   reconcileMarketplaces()   src/utils/plugins/reconciler.ts:114
+                     cachePlugin()             src/utils/plugins/pluginLoader.ts:911
+Layer 2 → Layer 3:   loadAllPlugins()          src/utils/plugins/pluginLoader.ts:3096
+                     loadAllPluginsCacheOnly() src/utils/plugins/pluginLoader.ts:3137
+Layer 3 refresh:     refreshActivePlugins()    src/utils/plugins/refresh.ts:72</code></pre></figure>
+<h2>11.7 安装的完整链路</h2>
+<p>一次 <code>/plugin install foo@bar</code> 下去会发生什么：</p>
+<ol>
+<li><strong>Parse</strong>：<code>parsePluginArgs(&quot;install foo@bar&quot;)</code> 解析出 <code>{ type: &#x27;install&#x27;, plugin: &#x27;foo&#x27;, marketplace: &#x27;bar&#x27; }</code>（<code class="ref">src/commands/plugin/parseArgs.ts</code>）。</li>
+<li><strong>UI 分发</strong>：<code>PluginSettings</code> → <code>ManagePlugins</code> 或 <code>BrowseMarketplace</code> 组件。</li>
+<li><strong>操作层</strong>：<code class="ref">src/services/plugins/pluginOperations.ts</code> 写 <code>enabledPlugins[&lt;scope&gt;]</code>、调 <code>cachePlugin()</code>。</li>
+<li><strong>下载</strong>：<code>cachePlugin()</code> 走六条路径之一——字符串本地路径 + 五种对象 source（<code class="ref">pluginLoader.ts:937-963</code>）：  <code><code>ts  // src/utils/plugins/pluginLoader.ts:937-963  if (typeof source === &#x27;string&#x27;) {    await installFromLocal(source, tempPath)  } else {    switch (source.source) {      case &#x27;npm&#x27;:        await installFromNpm(...)      case &#x27;github&#x27;:     await installFromGitHub(source.repo, tempPath, source.ref, source.sha)      case &#x27;url&#x27;:        await installFromGit(...)      case &#x27;git-subdir&#x27;: gitCommitSha = await installFromGitSubdir(...)      case &#x27;pip&#x27;:        throw new Error(&#x27;Python package plugins are not yet supported&#x27;)    }  }  </code></code></li>
+<li><strong>物化</strong>：拷贝到 <code>~/.claude/plugins/cache/&lt;marketplace&gt;/&lt;plugin&gt;/&lt;version&gt;/</code>，版本化目录结构在 <code class="ref">pluginLoader.ts:139-162</code>。写入 <code class="ref">installed_plugins.json</code>。</li>
+<li><strong>Layer 3 标记 dirty</strong>：<code>AppState.plugins.needsRefresh = true</code>。</li>
+<li><strong>通知，不自动刷新</strong>：  <code><code>ts  // src/hooks/useManagePlugins.ts:293-303  useEffect(() =&gt; {    if (!enabled || !needsRefresh) return    addNotification({      key: &#x27;plugin-reload-pending&#x27;,      text: &#x27;Plugins changed. Run /reload-plugins to activate.&#x27;,      color: &#x27;suggestion&#x27;,      priority: &#x27;low&#x27;,    })    // Do NOT auto-refresh. Do NOT reset needsRefresh — /reload-plugins    // consumes it via refreshActivePlugins().  }, [enabled, needsRefresh, addNotification])  </code></code></li>
+<li><strong>用户跑 <code>/reload-plugins</code></strong>：<code>refreshActivePlugins()</code> 完成 Layer 3 swap。</li>
+</ol>
+<p>为什么不自动刷新？<code class="ref">refresh.ts:14-18</code> 的注释给了答案：之前试过，有个 stale-cache bug。只清了 <code>loadAllPlugins</code> 的 memoize，下游 <code>getPluginCommands</code>、<code>loadPluginAgents</code>、<code>loadPluginMcpServers</code> 各自还有独立 memoize，读了老数据；而且 MCP 连接、<code>agentDefinitions</code> 这些散落状态也没被同步考虑。</p>
+<p>与其小心翼翼维护"自动刷新能清掉的所有东西"的清单，不如把 refresh 整理成一个<strong>原子重入点</strong>，让用户显式触发。</p>
+<p>UX 上显式触发看似倒退，工程上它把一个分散的 invalidation 问题收敛成了单点——<strong>少写一段自动化代码，换来一套可预测的状态机</strong>。</p>
+<h2>11.8 <code>refreshActivePlugins</code> 做到了什么</h2>
+<p>来看 Layer 3 的完整 swap：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/plugins/refresh.ts:72-191（关键段）</span>
+<span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span> refreshActivePlugins(setAppState) {
+  clearAllCaches()                         <span class="hl-cm">// 清 9 个 memoize</span>
+  clearPluginCacheExclusions()
+
+  <span class="hl-kw">const</span> pluginResult = <span class="hl-kw">await</span> loadAllPlugins()
+  <span class="hl-kw">const</span> [pluginCommands, agentDefinitions] = <span class="hl-kw">await</span> <span class="hl-type">Promise</span>.all([
+    getPluginCommands(),
+    getAgentDefinitionsWithOverrides(getOriginalCwd()),
+  ])
+
+  <span class="hl-cm">// 回填 mcp/lsp 懒缓存槽 + 统计</span>
+  <span class="hl-kw">const</span> [mcpCounts, lspCounts] = <span class="hl-kw">await</span> <span class="hl-type">Promise</span>.all([...])
+
+  setAppState(prev =&gt; ({
+    ...prev,
+    plugins: { ...prev.plugins, enabled, disabled, commands, ..., needsRefresh: <span class="hl-kw">false</span> },
+    agentDefinitions,
+    mcp: { ...prev.mcp, pluginReconnectKey: prev.mcp.pluginReconnectKey + <span class="hl-num">1</span> },
+  }))
+
+  reinitializeLspServerManager()
+  <span class="hl-kw">await</span> loadPluginHooks()   <span class="hl-cm">// clear-then-register</span>
+  ...
+}</code></pre></figure>
+<p>五个不同子系统的 swap，用五种不同方式：</p>
+<ol>
+<li><strong>Commands &amp; agents</strong>：直接清 memoize cache，再跑一遍。</li>
+<li><strong>Plugin settings 层</strong>：<code>cachePluginSettings()</code> 把 enabled plugin 的 <code class="ref">settings.json</code>（只有 <code>agent</code> key 被白名单 pick）合并进 settings cascade，作为最底层的 default（<code class="ref">pluginLoader.ts:3281-3295</code>）。</li>
+<li><strong>Hooks</strong>：<code>loadPluginHooks()</code> 里的 clear-then-register 原子对——下节细讲。</li>
+<li><strong>MCP</strong>：<strong>不直接重连</strong>，只 bump <code>mcp.pluginReconnectKey</code>。真正的重连逻辑在 <code>useManageMCPConnections</code> effect 里，依赖 <code>pluginReconnectKey</code> 变化自己重入。refresh 不跨模块越权。</li>
+<li><strong>LSP</strong>：<code>reinitializeLspServerManager()</code> 重读配置。因为 LSP server 是 lazy-start 的，重读配置等价于"准备好，等第一次需求再起"。</li>
+</ol>
+<p>这五种方式的共通点：<strong>refresh 本身不知道每个子系统内部怎么重建，它只负责 invalidate 正确的 key</strong>。每个子系统自己在合适的时点重建。这是"谁拥有状态，谁负责重建"的常规做法，但在一个有九种贡献点的 plugin 系统里能坚持做，是本章最值得借鉴的一点。</p>
+<h3>clear-then-register 原子对</h3>
+<p>Hook 的 swap 有个专门的细节值得单独贴：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/plugins/loadPluginHooks.ts:138-148</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// Clear-then-register as an atomic pair. Previously the clear lived in</span>
+<span class="hl-cm">// clearPluginHookCache(), which meant any clearAllCaches() call (from</span>
+<span class="hl-cm">// /plugins UI, pluginInstallationHelpers, thinkback, etc.) wiped plugin</span>
+<span class="hl-cm">// hooks from STATE.registeredHooks and left them wiped until someone</span>
+<span class="hl-cm">// happened to call loadPluginHooks() again. SessionStart explicitly awaits</span>
+<span class="hl-cm">// loadPluginHooks() before firing so it always re-registered; Stop has no</span>
+<span class="hl-cm">// such guard, so plugin Stop hooks silently never fired after any plugin</span>
+<span class="hl-cm">// management operation (gh-29767). Doing the clear here makes the swap</span>
+<span class="hl-cm">// atomic — old hooks stay valid until this point, new hooks take over.</span>
+clearRegisteredPluginHooks()
+registerHookCallbacks(allPluginHooks)</code></pre></figure>
+<p>原来 "清 cache" 和 "重注册" 是两个分开的函数——<code>clearPluginHookCache()</code> 和 <code>loadPluginHooks()</code>。结果任何调 <code>clearAllCaches()</code> 的地方都会先清 hook，下次 <code>loadPluginHooks()</code> 被触发之前 hook 是死的。SessionStart 因为显式 await，幸运地总能重注册；但 Stop hook 没有这个保证，悄悄死掉了（GitHub issue #29767）。</p>
+<p>修复方式是把 clear 挪到 <code>loadPluginHooks()</code> 内部，作为"先清再注册"的原子对。调用者不再有"先清再等另一个 function 重注册"的窗口期。</p>
+<p>这个教训可迁移：任何"cache + rebuild"的双步操作，<strong>把步骤放进同一函数</strong>比把它们作为独立 API 暴露更安全。库的用户永远会找到奇怪的顺序。</p>
+<h3>有意不做的卸载热更</h3>
+<p>对应的反面做法在 <code>pruneRemovedPluginHooks()</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/plugins/loadPluginHooks.ts:179-207</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span> pruneRemovedPluginHooks(): <span class="hl-type">Promise</span>&lt;<span class="hl-kw">void</span>&gt; {
+  <span class="hl-cm">// Remove hooks from plugins no longer in the enabled set, without adding</span>
+  <span class="hl-cm">// hooks from newly-enabled plugins. Called from clearAllCaches() so</span>
+  <span class="hl-cm">// uninstalled/disabled plugins stop firing hooks immediately (gh-36995),</span>
+  <span class="hl-cm">// while newly-enabled plugins wait for /reload-plugins — consistent with</span>
+  <span class="hl-cm">// how commands/agents/MCP behave.</span>
+  ...
+}</code></pre></figure>
+<p><strong>卸载的 hook 立即生效，新装的 hook 等 <code>/reload-plugins</code></strong>。不对称是故意的：让刚卸载的恶意 plugin 继续跑 hook 是安全问题，让刚装的 plugin 晚一点生效只是体验问题。非对称策略的共性——<strong>破坏性操作（卸载、禁用）走快路径，构建性操作（安装、启用）走慢路径</strong>。</p>
+<h2>11.9 memoize 分层：cache-only vs full</h2>
+<p><code>loadAllPlugins</code> 有两个 memoize 入口：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/plugins/pluginLoader.ts:3096-3108, 3137-3146</span>
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> loadAllPlugins = memoize(<span class="hl-kw">async</span> (): <span class="hl-type">Promise</span>&lt;<span class="hl-type">PluginLoadResult</span>&gt; =&gt; {
+  <span class="hl-kw">const</span> result = <span class="hl-kw">await</span> assemblePluginLoadResult(() =&gt;
+    loadPluginsFromMarketplaces({ cacheOnly: <span class="hl-kw">false</span> }),
+  )
+  loadAllPluginsCacheOnly.cache?.<span class="hl-kw">set</span>(<span class="hl-kw">undefined</span>, <span class="hl-type">Promise</span>.resolve(result))
+  <span class="hl-kw">return</span> result
+})
+
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> loadAllPluginsCacheOnly = memoize(
+  <span class="hl-kw">async</span> (): <span class="hl-type">Promise</span>&lt;<span class="hl-type">PluginLoadResult</span>&gt; =&gt; {
+    <span class="hl-kw">if</span> (isEnvTruthy(process.env.<span class="hl-type">CLAUDE_CODE_SYNC_PLUGIN_INSTALL</span>)) {
+      <span class="hl-kw">return</span> loadAllPlugins()
+    }
+    <span class="hl-kw">return</span> assemblePluginLoadResult(() =&gt;
+      loadPluginsFromMarketplaces({ cacheOnly: <span class="hl-kw">true</span> }),
+    )
+  },
+)</code></pre></figure>
+<p>两个 memoize cache 是<strong>独立的</strong>，关系单向：</p>
+<ul>
+<li><code>loadAllPlugins</code> 会触网（git clone、npm install），结果能满足任何 caller</li>
+<li><code>loadAllPluginsCacheOnly</code> 只读已物化的 plugin，结果<strong>不能</strong>满足要 fresh source 的 caller</li>
+<li>但 full load 完成后会<strong>主动 warm</strong> cache-only 的 memoize（<code class="ref">pluginLoader.ts:3106</code>）</li>
+</ul>
+<p>起点是 startup 性能：启动时一大堆模块（命令、agents、MCP config）都想 <code>loadAllPlugins()</code>。如果它们全去跑完整 load，git clone 会串起来。改用 cache-only 后，interactive 启动永远不阻塞在 clone 上；显式刷新路径才跑 full。</p>
+<p>环境变量 <code>CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1</code> 让 cache-only 降级为 full load——给 headless 首次运行用（还没 <code class="ref">installed_plugins.json</code>，cache-only 会全部 miss）。</p>
+<p>这个设计可迁移的点是：<strong>同一个数据源两个 memoize key 代表两个语义等级</strong>，让不同调用方按自己的 SLA 选择。比"一个 cache + 一堆参数"清晰。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/plugins/pluginLoader.ts:3100-3106</code>）：<code>loadAllPlugins</code> 完成后<strong>主动写进</strong> <code>loadAllPluginsCacheOnly.cache</code>——"既然刚 full load 过，cache-only 的调用拿这份结果天然成立"。这让 <code>refreshActivePlugins</code> 里后续看似独立的 <code>getPluginCommands()</code> / <code>getAgentDefinitionsWithOverrides()</code>（两者现在调 cache-only 变体）读到的是<strong>刚 clone 完的那份</strong>，不会穿透去读还没被 flush 的 <code class="ref">installed_plugins.json</code>。两个 memoize 之间的单向 warming 少见，文档不会提——但删掉它 refresh 路径会偶发读到 stale cache。</p></blockquote>
+<h2>11.10 Plugin vs Skills vs MCP 的边界</h2>
+<p>本章一开始就说过 plugin 是个壳。以依赖方向图示：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">         plugin（打包单位）
+              │
+              ├─ command  ← 也可独立存在于 .claude/commands/                （ch01 §1.2）
+              ├─ skill    ← 也可独立存在于 .claude/skills/ 与 bundled/       （ch10 §10.3）
+              ├─ agent    ← 也可独立存在于 .claude/agents/                   （ch04 §4.3）
+              ├─ hook     ← 也可直接写 settings.json                         （ch14 §3）
+              ├─ MCP      ← 也可写 ~/.claude/.mcp.json                        （ch12 §4）
+              ├─ LSP      ← 也可走 settings
+              ├─ output style
+              ├─ channel  ← MCP server 的消息通道语义化包装；绑定 userConfig
+              ├─ settings（仅 `agent` 白名单，scope 级联见 ch09 §9.3）
+              └─ userConfig（安装时向用户索要的变量；敏感值进 keychain）</code></pre></figure>
+<p>（官方 docs 还列了 <code>monitors</code> / <code>bin/</code> 两项，本仓库源码<strong>未实现</strong>；见 11.2 的隐藏细节 callout。）</p>
+<p>读取方（消费点）也是双入口。以 MCP 为例：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/plugins/mcpPluginIntegration.ts:131</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span> loadPluginMcpServers(
+  plugin: <span class="hl-type">LoadedPlugin</span>,
+  errors: <span class="hl-type">PluginError</span>[] = [],
+): <span class="hl-type">Promise</span>&lt;<span class="hl-type">Record</span>&lt;string, <span class="hl-type">McpServerConfig</span>&gt; | <span class="hl-kw">undefined</span>&gt;</code></pre></figure>
+<p>MCP 连接管理器既读 settings 里的 <code>mcpServers</code>（用户直配），也读 <code>LoadedPlugin.mcpServers</code>（plugin 贡献）。两路输入最终汇到同一个连接池（连接池细节见 <a class="chref" href="../ch12/">ch.12</a> §5）。Plugin <strong>不是 MCP 的前提</strong>，只是 MCP 配置的一种来源。</p>
+<p>这个边界上的限制是：plugin 里的 agent 不支持 <code>hooks</code>、<code>mcpServers</code>、<code>permissionMode</code>（来源：<a href="https://code.claude.com/docs/en/plugins-reference" rel="noreferrer">https://code.claude.com/docs/en/plugins-reference</a>，访问于 2026-04-19）。plugin 之外的自定义 agent 可以用这些字段。理由是 plugin 作为可分发单位信任级别更复杂——plugin 安装时用户同意了 "这个 plugin 能装 MCP server"，但如果 plugin 里的 agent 又能塞自己的 MCP，信任模型就套了一层没打招呼的嵌套。把这几个字段在 plugin agent 里禁掉，避免授权扩散。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/plugins/loadPluginAgents.ts:153-168</code>）：被禁的这三字段（<code>permissionMode</code> / <code>hooks</code> / <code>mcpServers</code>）在 plugin agent frontmatter 里写了<strong>不会报错</strong>——<code>for (const field of [&#x27;permissionMode&#x27;, &#x27;hooks&#x27;, &#x27;mcpServers&#x27;]) { if (frontmatter[field] !== undefined) logForDebugging(..., { level: &#x27;warn&#x27; }) }</code>。只走 <code>logForDebugging</code> 的 warn 级别落日志，文件照常被载入、其他字段正常生效。配合日志默认不开，plugin 作者容易以为自己声明的 hook 生效了（agent 确实跑起来了）却查不出为什么 hook 没 fire。要看到这条 warning，得显式开 debug 模式或过滤 <code>*.log</code>。</p></blockquote>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/plugins/pluginOptionsStorage.ts:385-399</code>）：plugin 里 skill / agent 的 markdown 内容可以插 <code>${user_config.KEY}</code> 占位符引用 userConfig——但如果 KEY 在 schema 里被标了 <code>sensitive: true</code>，substitute 返回的不是变量值也不是空串、不抛错，而是<strong>字面字符串 <code>[sensitive option &#x27;KEY&#x27; not available in skill content]</code></strong>。设计意图是让 plugin 作者一眼看到"你把敏感值放错了位置"——敏感值走 hook env / MCP env，不该出现在模型能看到的 prompt 文本里。这个做法比静默落空更有反馈，比直接 throw 更宽容。</p></blockquote>
+<h2>11.11 错误处理：二十多种类型，用 2 种</h2>
+<figure class="codeblock"><figcaption><span class="file">src/types/plugin.ts:101-283</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">PluginError</span> =
+  | { <span class="hl-kw">type</span>: &#x27;path-not-found&#x27;, source, plugin?, path, component }
+  | { <span class="hl-kw">type</span>: &#x27;git-auth-failed&#x27;, source, plugin?, gitUrl, authType }
+  | { <span class="hl-kw">type</span>: &#x27;git-timeout&#x27;, ... }
+  | { <span class="hl-kw">type</span>: &#x27;network-error&#x27;, ... }
+  | { <span class="hl-kw">type</span>: &#x27;manifest-parse-error&#x27;, ... }
+  | { <span class="hl-kw">type</span>: &#x27;manifest-validation-error&#x27;, ... }
+  | { <span class="hl-kw">type</span>: &#x27;plugin-not-found&#x27;, ... }
+  <span class="hl-cm">// ... 二十多种</span>
+  | { <span class="hl-kw">type</span>: &#x27;generic-error&#x27;, source, plugin?, error }</code></pre></figure>
+<p>作者在 <code class="ref">types/plugin.ts:86-99</code> 注释里承认：</p>
+<blockquote><p>IMPLEMENTATION STATUS: Currently used in production (2 types):</p>
+<ul>
+<li>generic-error: Used for various plugin loading failures</li>
+<li>plugin-not-found: Used when plugin not found in marketplace</li>
+</ul>
+<p>Planned for future use (10 types - see TODOs in pluginLoader.ts): ... These unused types support UI formatting and provide a clear roadmap for improving error specificity. They can be incrementally implemented as error creation sites are refactored.</p></blockquote>
+<p>这是把 TODO 表固化进类型系统的用法。好处是每个未用类型都在 <code>getPluginErrorMessage()</code>（<code class="ref">types/plugin.ts:295-363</code>）里有对应的 formatter，UI 层一旦升级，上游只要切换 error 构造点就能直接用。坏处是 discriminated union 的 exhaustiveness check 对调用方是误导：TypeScript 告诉你"要处理所有 20+ 种"，但运行时只会看到两种。</p>
+<p>可迁移性：作为<strong>路线图载体</strong>，这个做法适合<strong>一次规划、渐进实现</strong>的场景；但如果团队更在意 API 对消费者的可预期性，把未用类型先注释掉 / 放在分开的"roadmap type"里更好。</p>
+<h2>11.12 路径版本化与 7 天墓碑</h2>
+<p>Plugin cache 路径是版本化的：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">~/.claude/plugins/cache/&lt;marketplace&gt;/&lt;plugin&gt;/&lt;version&gt;/</code></pre></figure>
+<p>安装新版本时，老版本目录<strong>不立刻删</strong>——写一个 <code>.orphaned_at</code> 时间戳文件，7 天后 GC（<code>src/utils/plugins/cacheUtils.ts:23-24, 74-116</code>）。</p>
+<p>为什么 7 天？正在运行的 session 可能已经把老版本的代码加载进内存——删掉它的文件会让 <code>require</code>/<code>import</code> 解析失败（比如 lazy 导入的模块）、让 Glob/Grep 工具在老版本目录里乱翻（后者用 <code>clearPluginCacheExclusions</code>，<code class="ref">orphanedPluginFilter.ts</code> 专门拦）。7 天是 "合理的长 session 寿命 + 安全余量"。</p>
+<p>跨版本持久数据走另一个目录 <code>~/.claude/plugins/data/&lt;id&gt;/</code>——plugin manifest 里变量替换 <code>${CLAUDE_PLUGIN_DATA}</code> 指到这里，不随版本切换丢失。典型用法是把 <code>node_modules</code> 装在这里，每次更新用 <code>diff</code> 比对 <code class="ref">package.json</code> 决定要不要 reinstall（来源：<a href="https://code.claude.com/docs/en/plugins-reference" rel="noreferrer">https://code.claude.com/docs/en/plugins-reference</a>，访问于 2026-04-19）。</p>
+<h2>11.13 设计取舍汇总</h2>
+<div class="table-wrap"><table><thead><tr><th>选择</th><th>放弃的</th><th>换到的</th></tr></thead><tbody><tr><td>显式 <code>/reload-plugins</code>，不自动刷新</td><td>"配置改了立刻生效"的便利</td><td>可预测的状态机 + 免维护"什么变化该刷新什么"的表</td></tr>
+<tr><td>顶层 unknown key 静默剥离、嵌套严格</td><td>统一的严格策略</td><td>顶层可扩展、嵌套错字可察</td></tr>
+<tr><td>卸载热更 + 安装慢更的非对称</td><td>行为一致性</td><td>破坏性操作走快路径、安全兜底</td></tr>
+<tr><td><code>LoadedPlugin.mcpServers</code> 懒填</td><td>简单数据结构</td><td>启动时不必解析所有 plugin 的 MCP</td></tr>
+<tr><td><code>loadAllPlugins</code> + <code>loadAllPluginsCacheOnly</code> 双 memoize</td><td>单一 cache API</td><td>startup 路径不阻塞 git clone</td></tr>
+<tr><td>session &gt; marketplace &gt; builtin，managed 例外</td><td>纯粹优先级</td><td>开发便利 + 企业策略两全</td></tr>
+<tr><td>把二十多种 PluginError 当路线图</td><td>Union exhaustiveness 的诚实</td><td>类型即文档即迁移清单</td></tr>
+<tr><td>MCP 重连靠 bump <code>pluginReconnectKey</code> 而不是 refresh 直接调</td><td>直接性</td><td>模块边界清晰，不越权</td></tr></tbody></table></div>
+<h2>11.14 可迁移的点</h2>
+<p>工程上值得搬走用的：</p>
+<ol>
+<li><strong>manifest 驱动的 plugin 系统 + 宽/严双策略 zod</strong>：顶层宽容、嵌套严格是长寿命配置 schema 的好默认。</li>
+<li><strong>三层分离（intent / materialized / active）+ 每层独立 invalidation key</strong>：有多层异步状态的系统通用；写 / 读 / 刷新分流。</li>
+<li><strong>clear-then-register 作为原子对</strong>：任何 "先清 cache、再重注册" 的 API 都应合成一个 function，不暴露中间状态。</li>
+<li><strong>cache-only vs full load 双 memoize</strong>：同一数据源两个 SLA，调用方选择。</li>
+<li><strong>破坏性操作走快路径，构建性操作走慢路径</strong>：安全相关的 invalidation 不应等用户显式触发。</li>
+<li><strong><code>${id}@{source}</code> 命名空间</strong>：用来源作 ID 后缀，一眼看出 plugin 从哪来，方便日志、UI、策略匹配。</li>
+<li><strong>discriminated union 作路线图</strong>：当"目标错误类型 &gt;&gt; 当前实现"时，可以把剩下的写进类型，但要在注释里说清楚哪几个实际在用。</li>
+</ol>
+<h2>11.15 边界与后续章节</h2>
+<ul>
+<li>Commands 本章点到，详细讲在 <strong><a class="chref" href="../ch01/">ch.01</a> §1.2</strong>。Plugin commands 与 bundled / user commands 走同一个 <code>loadAllCommands</code> 聚合路径（<code class="ref">src/commands.ts:449-469</code>）。</li>
+<li>Skills 本章点到，详细讲在 <strong><a class="chref" href="../ch10/">ch.10</a> §10.3 / §10.4</strong>。Plugin 里的 skill 与 <code>~/.claude/skills/</code> 下的 skill 同走该聚合路径。</li>
+<li>Agents 本章点到，详细讲在 <strong><a class="chref" href="../ch04/">ch.04</a> §4.3</strong>；plugin agent 的 <code>permissionMode/hooks/mcpServers</code> 禁用见本章 §11.10。</li>
+<li>MCP 本章点到，详细讲在 <strong><a class="chref" href="../ch12/">ch.12</a> §4 / §5</strong>。Plugin 贡献的 MCP server 与直写 <code>~/.claude/.mcp.json</code> 的 MCP server 走同一个连接池。</li>
+<li>Hooks 本章点到，详细讲在 <strong><a class="chref" href="../ch14/">ch.14</a> §3 / §8</strong>。Plugin hook 走 <code>STATE.registeredHooks</code> 的 <code>PluginHookMatcher</code>，带 <code>pluginName/pluginRoot</code> 上下文；与 settings.json hook 的合并顺序见 <a class="chref" href="../ch14/">ch.14</a> §8。</li>
+<li>权限模型与 settings scope 级联见 <strong><a class="chref" href="../ch09/">ch.09</a></strong>；plugin settings 作为级联最底层 default 的位置见 §11.8。</li>
+<li><code>useManagePlugins</code> 的 React wiring 细节讲在 <strong><a class="chref" href="../ch21/">ch.21</a></strong>；本章只讲它的加载职责和 "通知 - 不自动刷新" 决策。</li>
+</ul>
+<p>本章的路线图条目和未解决项见 <code class="ref">book/research/ch11/open-questions.md</code>。</p>
+  </div>
+</article>
+
+<nav class="chap-nav"><a class="nav-link prev" href="../ch10/"><span class="dir">← Ch.10 · prev</span><span class="t">Skills<span class="cn">技能系统</span></span></a><a class="nav-home" href="../">§ 目录</a><a class="nav-link next" href="../ch12/"><span class="dir">Ch.12 · next →</span><span class="t">MCP<span class="cn">集成与 upstream 代理</span></span></a></nav>
+
+<footer class="colophon">
+  <div class="left">Claude <span class="dot">&amp;</span> Code</div>
+  <div class="right">
+    set in EB garamond · albert sans · jetbrains mono · LXGW wenkai<br>
+    《Claude Code 源码解读》 · ch.11
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.06 Worktree · 隔离模式 — Claude Code 源码解读</title>
+<meta name="description" content="《Claude Code 源码解读》第 6 章 —— 隔离模式（git isolation）">
+<meta property="og:title" content="Ch.06 Worktree · 隔离模式 — Claude Code 源码解读">
+<meta property="og:description" content="《Claude Code 源码解读》第 6 章 —— 隔离模式（git isolation）">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://nayuta403.github.io/claude-code-book/ch06/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,300;1,400;1,500&family=Albert+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<link rel="stylesheet" href="../assets/book.css">
+</head>
+<body>
+
+<nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
+
+<header class="chap-head">
+  <div>
+    <div class="crumb">
+      <a href="../">目录</a>
+      <span class="sep">/</span>
+      <span class="part-tag p2">Part II · 核心引擎</span>
+    </div>
+    <div class="chap-num">Chapter · 06 / 23</div>
+    <h1 class="chap-title">Worktree<span class="cn">隔离模式</span></h1>
+  </div>
+  <aside class="chap-meta">
+    <div><div class="km">part</div><div class="vm">核心引擎（Core Engine）</div></div>
+    <div><div class="km">topic</div><div class="vm m">git isolation</div></div>
+    <div><div class="km">reading</div><div class="vm">≈ 15 min</div></div>
+    <div><div class="km">source refs</div><div class="vm m">32</div></div>
+  </aside>
+</header>
+
+<article class="article">
+  <div class="prose">
+<h2>6.1 用户看到什么</h2>
+<p class="drop">Claude Code 提供三条进入 worktree 的路径，底层共用同一套机制。</p>
+<p><strong>路径 A：CLI 启动标志。</strong> 在仓库根目录运行 <code>claude --worktree feat-auth</code>（或 <code>-w feat-auth</code>），Claude 启动时就把会话落进 <code>&lt;repo&gt;/.claude/worktrees/feat-auth</code>，分支名 <code>worktree-feat-auth</code>，以 <code>origin/HEAD</code> 为 base。没给名字就随机生成一个 <code>bright-running-fox</code> 形式的 slug。</p>
+<p><strong>路径 B：会话中的 <code>EnterWorktree</code> 工具。</strong> 用户对 Claude 说"帮我开个 worktree 做这个重构"，LLM 主动调 <code>EnterWorktree</code>，当前会话的 cwd 被切到新 worktree。工具 prompt 硬性限定：</p>
+<blockquote><p>Use this tool ONLY when the user explicitly asks to work in a worktree. … Never use this tool unless the user explicitly mentions "worktree". —— <code class="ref">src/tools/EnterWorktreeTool/prompt.ts:2-12</code></p></blockquote>
+<p>所以这个工具不会被 LLM 自作主张触发，必须用户在输入里出现"worktree"一词。</p>
+<p><strong>路径 C：sub-agent 的 <code>isolation: &quot;worktree&quot;</code>。</strong> 主 agent 派 sub-agent 时（多 agent 调度的总图详见 <a class="chref" href="../ch04/">ch.04</a>），在 <code>AgentTool</code> 的 <code>isolation</code> 参数里选 <code>&quot;worktree&quot;</code>，sub-agent 会在独立的 worktree 里运行，结束后自动清理或保留（见 6.5）。内置 batch skill 直接把这条写成了硬约束：</p>
+<figure class="codeblock"><figcaption><span class="file">src/skills/bundled/batch.ts:61</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// **All agents must use `isolation: &quot;worktree&quot;` and `run_in_background: true`.**</span></code></pre></figure>
+<p>三条路径的用户视角差异只有触发方式。退出时的 UX 也统一：无改动自动删、有改动弹 dialog 问 keep/remove，或者 LLM 主动调 <code>ExitWorktree</code> 工具（见 6.4）。</p>
+<p>官方文档把路径 A 和 C 说得更详细：<a href="https://code.claude.com/docs/en/common-workflows" rel="noreferrer">https://code.claude.com/docs/en/common-workflows</a>（节 "Run parallel Claude Code sessions with Git worktrees"，访问于 2026-04-19）。</p>
+<h2>6.2 为什么挑这个设计出来讲</h2>
+<blockquote><p>git worktree 作为 agent 沙箱，是"轻量 + 可回溯"的最大公约数。</p></blockquote>
+<p>比 Docker/VM 轻几个数量级 —— 不起容器、不起进程命名空间，纯 git 命令加几次文件 I/O。比 chroot 简单 —— 不碰权限。比纯临时目录 <code>cp -r</code> 强 —— 保留 git 历史，可以 commit、push、merge 回主 worktree。</p>
+<p>取舍很明确：<strong>只隔离文件系统。</strong> 进程、环境变量、网络、凭据、shell history 全部继承主 session。这不是 bug。如果要求 agent 重新 auth、重新拉依赖、重新配 env，那就是另一个产品 —— 更像 Codespaces、不像 CLI 工具。隔离 fs 足够解决"两个 agent 同时改同一个文件"和"改坏了想回滚"这两个主要矛盾；其他矛盾不是 worktree 要管的。</p>
+<p>这章讲透这套沙箱如何实现、清理如何兜底、并发如何处理，以及这个设计模式在哪些场景下能搬。</p>
+<h2>6.3 关键数据结构</h2>
+<p>只有一个有状态对象，module-level 单例：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/worktree.ts:140-156</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">WorktreeSession</span> = {
+  originalCwd: string
+  worktreePath: string
+  worktreeName: string
+  worktreeBranch?: string
+  originalBranch?: string
+  originalHeadCommit?: string
+  sessionId: string
+  tmuxSessionName?: string
+  hookBased?: boolean
+  creationDurationMs?: number
+  usedSparsePaths?: boolean
+}
+
+<span class="hl-kw">let</span> currentWorktreeSession: <span class="hl-type">WorktreeSession</span> | <span class="hl-kw">null</span> = <span class="hl-kw">null</span></code></pre></figure>
+<p><code>originalHeadCommit</code> 是 Exit 时判断"有没有新 commit"的 baseline。<code>hookBased</code> 区分 git vs hook-backed VCS（SVN/Perforce/jj），两者在 Exit 路径上分叉。</p>
+<p><code>EnterWorktreeTool</code> 的 input 只有一个可选 <code>name</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/EnterWorktreeTool/EnterWorktreeTool.ts:23-39</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> inputSchema = lazySchema(() =&gt;
+  z.strictObject({
+    name: z
+      .string()
+      .superRefine((s, ctx) =&gt; {
+        <span class="hl-kw">try</span> { validateWorktreeSlug(s) } <span class="hl-kw">catch</span> (e) { ctx.addIssue(...) }
+      })
+      .optional()
+      .describe(&#x27;<span class="hl-type">Optional</span> name <span class="hl-kw">for</span> the worktree. ...&#x27;),
+  }),
+)</code></pre></figure>
+<p><code>ExitWorktreeTool</code> 的 input 两个字段，表达了整个决策空间：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/ExitWorktreeTool/ExitWorktreeTool.ts:30-44</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">z.strictObject({
+  action: z.<span class="hl-kw">enum</span>([&#x27;keep&#x27;, &#x27;remove&#x27;]),
+  discard_changes: z.boolean().optional(),
+})</code></pre></figure>
+<p><code>AgentTool</code> 暴露的 isolation 参数：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/AgentTool/AgentTool.tsx:99-100</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">isolation: (... z.<span class="hl-kw">enum</span>([&#x27;worktree&#x27;, &#x27;remote&#x27;]) : z.<span class="hl-kw">enum</span>([&#x27;worktree&#x27;])).optional()...
+cwd: z.string().optional().describe(&#x27;... <span class="hl-type">Mutually</span> exclusive <span class="hl-kw">with</span> isolation: &quot;worktree&quot;.&#x27;)</code></pre></figure>
+<p>外部用户只看到 <code>&quot;worktree&quot;</code>；内部构建多一个 <code>&quot;remote&quot;</code>（远程执行后端，不在本章范围；Agent SDK 侧的 <code>isolation</code> 语义详见 <a class="chref" href="../ch23/">ch.23</a>）。</p>
+<h2>6.4 关键流程</h2>
+<h3>6.4.1 Enter：路径选择与切换</h3>
+<p><code>EnterWorktreeTool.call</code> 的正文只有 40 行：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/EnterWorktreeTool/EnterWorktreeTool.ts:77-119</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">async</span> call(input) {
+  <span class="hl-kw">if</span> (getCurrentWorktreeSession()) {
+    <span class="hl-kw">throw</span> <span class="hl-kw">new</span> <span class="hl-type">Error</span>(&#x27;<span class="hl-type">Already</span> <span class="hl-kw">in</span> a worktree session&#x27;)
+  }
+  <span class="hl-kw">const</span> mainRepoRoot = findCanonicalGitRoot(getCwd())
+  <span class="hl-kw">if</span> (mainRepoRoot &amp;&amp; mainRepoRoot !== getCwd()) {
+    process.chdir(mainRepoRoot)
+    setCwd(mainRepoRoot)
+  }
+  <span class="hl-kw">const</span> slug = input.name ?? getPlanSlug()
+  <span class="hl-kw">const</span> worktreeSession = <span class="hl-kw">await</span> createWorktreeForSession(getSessionId(), slug)
+  process.chdir(worktreeSession.worktreePath)
+  setCwd(worktreeSession.worktreePath)
+  setOriginalCwd(getCwd())
+  saveWorktreeState(worktreeSession)
+  clearSystemPromptSections()
+  clearMemoryFileCaches()
+  getPlansDirectory.cache.clear?.()
+  ...
+}</code></pre></figure>
+<p>几点值得注意。</p>
+<p><strong>单例守护。</strong> Enter 第一行就拒绝已有 session，避免嵌套。Exit 的反向守护更细：工具显式设计成"没 session 就 no-op 而不是报错"（<code class="ref">ExitWorktreeTool.ts:180-188</code>），因为用户/LLM 可能误调。</p>
+<p><strong>路径解析到主仓。</strong> 如果 Enter 时 cwd 已经在某个 worktree 内部，先 <code>chdir</code> 回主仓再创建 —— 否则 git 会在嵌套 worktree 的子目录里尝试创建同级兄弟，语义错乱。</p>
+<p><strong>双 cwd 更新。</strong> <code>process.chdir</code> 是 Node 进程的真 cwd，<code>setCwd</code> 是 bootstrap 里 state 层面的 cwd（<code class="ref">src/utils/Shell.js</code>）。两者必须同步，因为 Claude Code 内部不少代码不走 <code>process.cwd()</code>，走 <code>getCwd()</code>。<code>BashTool</code> 的 <code>cd</code> 只改后者，<code>process.cwd()</code> 保持不变 —— 这是已有的 split，worktree 逻辑只是遵守这个 split。</p>
+<p><strong>三个缓存清除。</strong> <code>clearSystemPromptSections</code> 清的是 "env_info_simple" 一类系统段（含当前工作目录），<code>clearMemoryFileCaches</code> 清的是 <code class="ref">CLAUDE.md</code> 的加载缓存，<code>getPlansDirectory</code> 是计算 plans 目录的 memo。都依赖 cwd，cwd 变了必须重算。Plan slug 被 <code>getPlanSlug()</code> 用作 worktree 默认名，是 Plan Mode 的唯一耦合点（Plan Mode 本身详见 <a class="chref" href="../ch05/">ch.05</a>）。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/claudemd.ts:858-897</code>）：cwd 切进 worktree 后，memdir 加载器沿目录链上走时会同时经过 worktree 根和主仓根，两处都可能有 checked-in <code class="ref">CLAUDE.md</code>。加载器通过 <code>isNestedWorktree</code> + <code>skipProject</code> 去重，<strong>只保留 worktree 内的 Project-type <code class="ref">CLAUDE.md</code>，丢掉主仓那份</strong>；但 <code class="ref">CLAUDE.local.md</code>（gitignored）仍从主仓加载。产品层面你看不到这个分叉，但它决定了 sub-agent 在 worktree 里"能看见主仓的 local memory、看不见主仓的 project memory"——如果 sub-agent 依赖主仓 <code class="ref">CLAUDE.md</code> 里的指令，进 worktree 后就不再生效。</p></blockquote>
+<h3>6.4.2 Path 与 branch 命名</h3>
+<p>路径常量固定在仓库内：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/worktree.ts:204-227</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">function</span> worktreesDir(repoRoot: string): string {
+  <span class="hl-kw">return</span> join(repoRoot, &#x27;.claude&#x27;, &#x27;worktrees&#x27;)
+}
+
+<span class="hl-kw">function</span> flattenSlug(slug: string): string {
+  <span class="hl-kw">return</span> slug.replaceAll(&#x27;/&#x27;, &#x27;+&#x27;)
+}
+
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> worktreeBranchName(slug: string): string {
+  <span class="hl-kw">return</span> <span class="hl-str">`worktree-${flattenSlug(slug)}`</span>
+}</code></pre></figure>
+<p>选 <code>&lt;repo&gt;/.claude/worktrees/</code> 而不是 <code>/tmp</code> 的取舍：跟代码走、跟清理周期走、不占系统 tmpfs。代价是要加到 <code>.gitignore</code>（文档有提）—— 仓库本身并不预置这条规则，忘了加就会把 worktree 当 untracked 追进来。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/permissions/filesystem.ts:456-468</code>）：<code>.claude/</code> 目录在权限系统里被整体标成 DANGEROUS_DIRECTORIES（敏感配置/密钥聚集地），但 <code>.claude/worktrees/</code> 被显式特判放行——<strong>只要目录名叫 <code>worktrees</code>，权限系统就不再拦写入</strong>。这是 worktree 能在 <code>.claude/</code> 下面正常工作的前提；反过来，如果将来有人把别的东西塞到 <code>.claude/worktrees/</code> 下想绕过危险目录拦截，理论上也能绕过。权限系统的总体设计详见 <a class="chref" href="../ch09/">ch.09</a>。</p></blockquote>
+<p><strong>slug 校验</strong> 防 path traversal：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/worktree.ts:48-87</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">VALID_WORKTREE_SLUG_SEGMENT</span> = /^[a-zA-<span class="hl-type">Z0</span>-<span class="hl-num">9</span>._-]+$/
+<span class="hl-kw">const</span> <span class="hl-type">MAX_WORKTREE_SLUG_LENGTH</span> = <span class="hl-num">64</span>
+
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> validateWorktreeSlug(slug: string): <span class="hl-kw">void</span> {
+  <span class="hl-kw">if</span> (slug.length &gt; <span class="hl-type">MAX_WORKTREE_SLUG_LENGTH</span>) <span class="hl-kw">throw</span> <span class="hl-kw">new</span> <span class="hl-type">Error</span>(...)
+  <span class="hl-kw">for</span> (<span class="hl-kw">const</span> segment <span class="hl-kw">of</span> slug.split(&#x27;/&#x27;)) {
+    <span class="hl-kw">if</span> (segment === &#x27;.&#x27; || segment === &#x27;..&#x27;) <span class="hl-kw">throw</span> ...
+    <span class="hl-kw">if</span> (!<span class="hl-type">VALID_WORKTREE_SLUG_SEGMENT</span>.test(segment)) <span class="hl-kw">throw</span> ...
+  }
+}</code></pre></figure>
+<p>segment 级校验允许嵌套（<code>user/feature</code>），但 <code>..</code>、空段、drive spec、leading/trailing <code>/</code> 全部拒绝。值得抄：<strong>校验放在 <code>path.join</code> 之前</strong>，因为 <code>path.join</code> 会 normalize <code>..</code>，校验放在后面就被绕过了。注释点明了这个顺序依赖。</p>
+<p><code>flattenSlug</code> 用 <code>+</code> 替换 <code>/</code>，因为分支名和目录路径都要展平。不展平会有两个问题：git 分支 <code>worktree-user</code> 作为文件和 <code>worktree-user/feature</code> 作为目录产生 D/F 冲突；目录 <code>.claude/worktrees/user/feature/</code> 是 <code>user</code> worktree 的子目录，<code>git worktree remove user</code> 会把带未提交工作的子 worktree 也删了。</p>
+<h3>6.4.3 Base branch 的选择与 fetch 避让</h3>
+<p><code>getOrCreateWorktree</code> 的核心 40 行值得细看：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/worktree.ts:235-303（略）</span>
+<span class="hl-kw">const</span> existingHead = <span class="hl-kw">await</span> readWorktreeHeadSha(worktreePath)
+<span class="hl-kw">if</span> (existingHead) {
+  <span class="hl-kw">return</span> { worktreePath, worktreeBranch, headCommit: existingHead, existed: <span class="hl-kw">true</span> }
+}
+<span class="hl-cm">// ... 没找到才创建</span>
+<span class="hl-kw">const</span> [defaultBranch, gitDir] = <span class="hl-kw">await</span> <span class="hl-type">Promise</span>.all([
+  getDefaultBranch(), resolveGitDir(repoRoot),
+])
+<span class="hl-kw">const</span> originRef = <span class="hl-str">`origin/${defaultBranch}`</span>
+<span class="hl-kw">const</span> originSha = gitDir
+  ? <span class="hl-kw">await</span> resolveRef(gitDir, <span class="hl-str">`refs/remotes/origin/${defaultBranch}`</span>)
+  : <span class="hl-kw">null</span>
+<span class="hl-kw">if</span> (originSha) {
+  baseBranch = originRef  <span class="hl-cm">// 本地已有 ref，跳过 fetch</span>
+  baseSha = originSha
+} <span class="hl-kw">else</span> {
+  <span class="hl-kw">const</span> { code: fetchCode } = <span class="hl-kw">await</span> execFileNoThrowWithCwd(gitExe(),
+    [&#x27;fetch&#x27;, &#x27;origin&#x27;, defaultBranch], ...)
+  baseBranch = fetchCode === <span class="hl-num">0</span> ? originRef : &#x27;<span class="hl-type">HEAD</span>&#x27;
+}</code></pre></figure>
+<p>两条优化都围绕"别 spawn git"：</p>
+<ol>
+<li><strong>Fast-resume 走文件指针。</strong> 同名 slug 直接读 <code>.git/worktrees/&lt;slug&gt;/HEAD</code> 这个 pointer 文件。注释里写得明白：<code>git rev-parse HEAD</code> 即便目标只要 2ms 的工作，光 spawn 都要 15ms（<code class="ref">worktree.ts:244-247</code>）。对于 "我又跑了一次 <code>claude -w feat-auth</code>" 的高频场景，这是 resume-not-recreate 的关键。</li>
+<li><strong>Skip fetch when ref exists locally.</strong> 大仓 <code>git fetch</code> 光扫 commit-graph 就 6-8 秒（<code class="ref">worktree.ts:279-283</code>）。优先读 <code>refs/remotes/origin/&lt;defaultBranch&gt;</code> 的本地 ref —— 值得稍微 stale 的代价。</li>
+</ol>
+<p>创建命令：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/worktree.ts:322-331</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> addArgs = [&#x27;worktree&#x27;, &#x27;add&#x27;]
+<span class="hl-kw">if</span> (sparsePaths?.length) addArgs.push(&#x27;--no-checkout&#x27;)
+<span class="hl-cm">// -B (not -b): reset any orphan branch left behind by a removed worktree dir.</span>
+addArgs.push(&#x27;-<span class="hl-type">B</span>&#x27;, worktreeBranch, worktreePath, baseBranch)</code></pre></figure>
+<p>用 <code>-B</code> 不用 <code>-b</code> 是故意的。<code>-b</code> 遇到同名分支会报"already exists"；<code>-B</code> reset 到指定 commit。场景：上次 worktree 目录被手删但分支还在。用 <code>-B</code> 省了一次 <code>git branch -D</code> 的 spawn。</p>
+<p>Git 文档对两者的行为差异：<a href="https://git-scm.com/docs/git-worktree" rel="noreferrer">https://git-scm.com/docs/git-worktree</a>（访问于 2026-04-19）。</p>
+<h3>6.4.4 Post-creation setup</h3>
+<p>git worktree add 完事远不等于可用。Claude Code 补了四件事（<code class="ref">src/utils/worktree.ts:510-624</code>）：</p>
+<p><strong>1. 复制 <code class="ref">settings.local.json</code></strong>（<code class="ref">worktree.ts:514-534</code>）。这个文件可能含 API key / 本地 override，要 propagate 到 worktree 的 <code class="ref">.claude/settings.local.json</code>，否则 worktree 会用默认值。</p>
+<p><strong>2. 链接 hook 目录</strong>（<code class="ref">worktree.ts:537-578</code>）。优先找 <code>.husky</code>，其次 <code>.git/hooks</code>，把 worktree 的 <code>core.hooksPath</code> 设到主仓的 hooks 目录。注释提到一个陷阱：<code>git config core.hooksPath</code>（不带 <code>--worktree</code> flag）写的是主仓 <code>.git/config</code>，所有 worktree 共享，所以这行本质是"所有 worktree 用主仓 hooks"。再设一次就 no-op，检查 existing 的逻辑是为了省那次 14ms spawn。</p>
+<p><strong>3. Symlink 大目录</strong>（<code class="ref">worktree.ts:102-138</code>、<code class="ref">worktree.ts:580-585</code>）。通过 settings 的 <code>worktree.symlinkDirectories</code> opt-in，典型是 <code>node_modules</code>。<code>symlink(&quot;node_modules&quot;, destPath, &quot;dir&quot;)</code> 之后 worktree 共享主仓依赖，省几 GB。EEXIST / ENOENT 静默跳过。</p>
+<p><strong>4. 复制 <code>.worktreeinclude</code></strong>（<code class="ref">worktree.ts:391-504</code>）。这是 gitignore 语法的白名单，列 <code>.env</code> / <code>.env.local</code> 这类"gitignored 但 worktree 需要"的文件。实现里有一个性能关键优化：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/worktree.ts:413-417</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> gitignored = <span class="hl-kw">await</span> execFileNoThrowWithCwd(gitExe(),
+  [&#x27;ls-files&#x27;, &#x27;--others&#x27;, &#x27;--ignored&#x27;, &#x27;--exclude-standard&#x27;, &#x27;--directory&#x27;],
+  ...)</code></pre></figure>
+<p><code>--directory</code> 让 git 把 <code>node_modules/</code> 一类完全 gitignored 的目录折叠成一条记录而不是列出里面每个文件。注释里给了数字：大仓能从 "500k entries / ~7s" 降到 "数百 entries / ~100ms"。只有 <code>.worktreeinclude</code> pattern 确实指向某个折叠目录内部时，才对那个目录做第二次 scoped <code>ls-files</code> 展开。</p>
+<p>这段是<strong>值得借鉴的工程细节</strong>：不是"先列全、再过滤"，而是"先列折叠、按需展开"。同一套思路可以用在任何"在 gitignore 基础上二次白名单"的场景。</p>
+<h3>6.4.5 Exit：validateInput + call 的分工</h3>
+<p><code>ExitWorktreeTool</code> 把决策和执行分成两段，中间通过 tool 框架自动重入：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/ExitWorktreeTool/ExitWorktreeTool.ts:174-224（节选）</span>
+<span class="hl-kw">async</span> validateInput(input) {
+  <span class="hl-kw">const</span> session = getCurrentWorktreeSession()
+  <span class="hl-kw">if</span> (!session) {
+    <span class="hl-kw">return</span> { result: <span class="hl-kw">false</span>, message: &#x27;<span class="hl-type">No</span>-op: there <span class="hl-kw">is</span> no active...&#x27;, errorCode: <span class="hl-num">1</span> }
+  }
+  <span class="hl-kw">if</span> (input.action === &#x27;remove&#x27; &amp;&amp; !input.discard_changes) {
+    <span class="hl-kw">const</span> summary = <span class="hl-kw">await</span> countWorktreeChanges(session.worktreePath, session.originalHeadCommit)
+    <span class="hl-kw">if</span> (summary === <span class="hl-kw">null</span>) {
+      <span class="hl-kw">return</span> { result: <span class="hl-kw">false</span>, message: &#x27;<span class="hl-type">Could</span> not verify worktree state...&#x27;, errorCode: <span class="hl-num">3</span> }
+    }
+    <span class="hl-kw">const</span> { changedFiles, commits } = summary
+    <span class="hl-kw">if</span> (changedFiles &gt; <span class="hl-num">0</span> || commits &gt; <span class="hl-num">0</span>) {
+      <span class="hl-kw">return</span> { result: <span class="hl-kw">false</span>, message: <span class="hl-str">`Worktree has ... discard_changes: true`</span>, errorCode: <span class="hl-num">2</span> }
+    }
+  }
+  <span class="hl-kw">return</span> { result: <span class="hl-kw">true</span> }
+}</code></pre></figure>
+<p>三种拒绝：</p>
+<ul>
+<li>errorCode 1：没 session 可退（no-op，不算错）。</li>
+<li>errorCode 2：有 uncommitted 或 unpushed commit，要求 <code>discard_changes: true</code>。</li>
+<li>errorCode 3：git 命令失败（锁、坏索引、坏 ref），状态未知 → 拒绝。</li>
+</ul>
+<p><strong>errorCode 3 是 fail-closed 设计的核心</strong>：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/ExitWorktreeTool/ExitWorktreeTool.ts:79-113（节选）</span>
+<span class="hl-kw">async</span> <span class="hl-kw">function</span> countWorktreeChanges(worktreePath, originalHeadCommit): <span class="hl-type">Promise</span>&lt;<span class="hl-type">ChangeSummary</span> | <span class="hl-kw">null</span>&gt; {
+  <span class="hl-kw">const</span> status = <span class="hl-kw">await</span> execFileNoThrow(&#x27;git&#x27;, [&#x27;-<span class="hl-type">C</span>&#x27;, worktreePath, &#x27;status&#x27;, &#x27;--porcelain&#x27;])
+  <span class="hl-kw">if</span> (status.code !== <span class="hl-num">0</span>) <span class="hl-kw">return</span> <span class="hl-kw">null</span>
+  ...
+  <span class="hl-kw">if</span> (!originalHeadCommit) {
+    <span class="hl-cm">// git status 成功 → 是 git 仓库，但没 baseline commit 数不出 commits。</span>
+    <span class="hl-cm">// Fail-closed 而不是谎称 0。</span>
+    <span class="hl-kw">return</span> <span class="hl-kw">null</span>
+  }
+  <span class="hl-kw">const</span> revList = <span class="hl-kw">await</span> execFileNoThrow(&#x27;git&#x27;, [&#x27;-<span class="hl-type">C</span>&#x27;, worktreePath, &#x27;rev-list&#x27;, &#x27;--count&#x27;, <span class="hl-str">`${originalHeadCommit}..HEAD`</span>])
+  <span class="hl-kw">if</span> (revList.code !== <span class="hl-num">0</span>) <span class="hl-kw">return</span> <span class="hl-kw">null</span>
+  ...
+}</code></pre></figure>
+<p>函数的文档注释写得比代码还重要：</p>
+<blockquote><p>Returns null when state cannot be reliably determined — callers that use this as a safety gate must treat null as "unknown, assume unsafe" (fail-closed). A silent 0/0 would let cleanupWorktree destroy real work.</p></blockquote>
+<p>三态（<code>ChangeSummary</code> / <code>null</code>）而不是两态（is-dirty <code>boolean</code>）—— 因为用户对"误删"的容忍度远低于"没删干净"。这是整个 worktree 模块的一贯原则。</p>
+<p><code>call</code> 阶段（<code class="ref">ExitWorktreeTool.ts:227-321</code>）在 validateInput 放行后执行：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (input.action === &#x27;keep&#x27;) {
+  <span class="hl-kw">await</span> keepWorktree()
+  restoreSessionToOriginalCwd(originalCwd, projectRootIsWorktree)
+  <span class="hl-kw">return</span> { data: { action: &#x27;keep&#x27;, ..., message: <span class="hl-str">`Exited worktree. Your work is preserved at ${worktreePath}...`</span> } }
+}
+<span class="hl-cm">// action === &#x27;remove&#x27;</span>
+<span class="hl-kw">if</span> (tmuxSessionName) <span class="hl-kw">await</span> killTmuxSession(tmuxSessionName)
+<span class="hl-kw">await</span> cleanupWorktree()
+restoreSessionToOriginalCwd(originalCwd, projectRootIsWorktree)</code></pre></figure>
+<p><code>keepWorktree</code> 只清 module 变量和 project config 里的 <code>activeWorktreeSession</code>，worktree 目录和分支不动（<code class="ref">src/utils/worktree.ts:780-811</code>）。</p>
+<p><code>cleanupWorktree</code> 的 git-based 分支（<code class="ref">worktree.ts:813-894</code>）做三件事：</p>
+<ol>
+<li><code>process.chdir(originalCwd)</code> —— 先离开 worktree，不然自己占着删不掉。</li>
+<li><code>git worktree remove --force &lt;worktreePath&gt;</code>。<code>--force</code> 是必须的：<code>discard_changes: true</code> 场景下 worktree 就是 dirty，git 默认拒绝删。</li>
+<li><code>await sleep(100)</code> —— 等 git 释放锁（注释原文："Wait a bit to ensure git has released all locks"）。</li>
+<li><code>git branch -D &lt;worktreeBranch&gt;</code> 删临时分支。</li>
+</ol>
+<p><code>restoreSessionToOriginalCwd</code>（<code class="ref">ExitWorktreeTool.ts:122-146</code>）是 <code>EnterWorktreeTool.call</code> 最后那段 mutation 的精确反向操作：<code>setCwd</code> + <code>setOriginalCwd</code> + 条件 <code>setProjectRoot</code> + <code>saveWorktreeState(null)</code> + 三个缓存 clear。</p>
+<h3>6.4.6 session 结束时的 Dialog</h3>
+<p>用户直接 <code>/exit</code> 或 ctrl+d 退 session 时，如果还在 worktree 里 —— <code>WorktreeExitDialog</code> 弹出来问（<code class="ref">src/components/WorktreeExitDialog.tsx</code>）。</p>
+<p>关键设计：<strong>无改动不问</strong>。</p>
+<figure class="codeblock"><figcaption><span class="file">src/components/WorktreeExitDialog.tsx:57-73</span><span class="lang">tsx</span></figcaption><pre><code class="language-tsx"><span class="hl-kw">if</span> (changeLines.length === <span class="hl-num">0</span> &amp;&amp; count === <span class="hl-num">0</span>) {
+  setStatus(&#x27;removing&#x27;)
+  <span class="hl-kw">void</span> cleanupWorktree().then(() =&gt; {
+    process.chdir(worktreeSession.originalCwd)
+    setCwd(worktreeSession.originalCwd)
+    recordWorktreeExit()
+    setResultMessage(&#x27;<span class="hl-type">Worktree</span> removed (no changes)&#x27;)
+  })...
+}</code></pre></figure>
+<p>在这里，"无改动"的判定比 <code>ExitWorktreeTool</code> 宽松一些 —— 只 <code>git status --porcelain</code> 加 <code>rev-list --count</code>，git 命令失败不会 fail-closed，走 catch 打印 "Worktree cleanup failed, exiting anyway"。这条路径假设用户主动退出，给出两个选择就够了；机器调用走 <code>ExitWorktreeTool</code>，fail-closed 才到位。两套 UX 对应两套容错策略。</p>
+<h2>6.5 两条并行路径：session 与 agent</h2>
+<p>Claude Code 里创建 worktree 的函数其实有<strong>两个</strong>，共用底层，顶层分叉：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/worktree.ts:702-778（session 版，节选）</span>
+<span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span> createWorktreeForSession(sessionId, slug, tmuxSessionName?, options?) {
+  validateWorktreeSlug(slug)
+  <span class="hl-kw">const</span> originalCwd = getCwd()
+  <span class="hl-kw">if</span> (hasWorktreeCreateHook()) {
+    <span class="hl-kw">const</span> hookResult = <span class="hl-kw">await</span> executeWorktreeCreateHook(slug)
+    currentWorktreeSession = { originalCwd, worktreePath: hookResult.worktreePath, ..., hookBased: <span class="hl-kw">true</span> }
+  } <span class="hl-kw">else</span> {
+    <span class="hl-kw">const</span> gitRoot = findGitRoot(getCwd())
+    ...
+    <span class="hl-kw">const</span> { worktreePath, worktreeBranch, headCommit, existed } = <span class="hl-kw">await</span> getOrCreateWorktree(gitRoot, slug, options)
+    <span class="hl-kw">if</span> (!existed) <span class="hl-kw">await</span> performPostCreationSetup(gitRoot, worktreePath)
+    currentWorktreeSession = { originalCwd, worktreePath, ..., sessionId, ... }
+  }
+  saveCurrentProjectConfig(current =&gt; ({ ...current, activeWorktreeSession: currentWorktreeSession }))
+  <span class="hl-kw">return</span> currentWorktreeSession
+}</code></pre></figure>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/worktree.ts:902-952（agent 版，节选）</span>
+<span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span> createAgentWorktree(slug: string): <span class="hl-type">Promise</span>&lt;{...}&gt; {
+  validateWorktreeSlug(slug)
+  <span class="hl-kw">if</span> (hasWorktreeCreateHook()) { ... <span class="hl-kw">return</span> { worktreePath, hookBased: <span class="hl-kw">true</span> } }
+  <span class="hl-kw">const</span> gitRoot = findCanonicalGitRoot(getCwd())
+  ...
+  <span class="hl-kw">const</span> { worktreePath, worktreeBranch, headCommit, existed } = <span class="hl-kw">await</span> getOrCreateWorktree(gitRoot, slug)
+  <span class="hl-kw">if</span> (!existed) <span class="hl-kw">await</span> performPostCreationSetup(gitRoot, worktreePath)
+  <span class="hl-kw">else</span> <span class="hl-kw">await</span> utimes(worktreePath, now, now)
+  <span class="hl-kw">return</span> { worktreePath, worktreeBranch, headCommit, gitRoot }
+}</code></pre></figure>
+<p>共享底层：<code>validateWorktreeSlug</code>、<code>getOrCreateWorktree</code>、<code>performPostCreationSetup</code>、<code>executeWorktreeCreateHook</code>。</p>
+<p>顶层分叉的差异：</p>
+<ul>
+<li><code>createWorktreeForSession</code> <strong>写 module 单例</strong> <code>currentWorktreeSession</code>、<strong>写 project config</strong>、<strong>不碰</strong> <code>process.chdir</code>（留给调用方）。</li>
+<li><code>createAgentWorktree</code> <strong>不写任何全局状态</strong>，纯返回 <code>{ worktreePath, worktreeBranch, headCommit, gitRoot }</code>。</li>
+</ul>
+<p>两条路径有一个关键差异：gitRoot 的解析。</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/worktree.ts:922-926（createAgentWorktree）</span>
+<span class="hl-cm">// findCanonicalGitRoot (not findGitRoot) so agent worktrees always land in</span>
+<span class="hl-cm">// the main repo&#x27;s .claude/worktrees/ even when spawned from inside a session</span>
+<span class="hl-cm">// worktree — otherwise they nest at &lt;worktree&gt;/.claude/worktrees/ and the</span>
+<span class="hl-cm">// periodic cleanup (which scans the canonical root) never finds them.</span>
+<span class="hl-kw">const</span> gitRoot = findCanonicalGitRoot(getCwd())</code></pre></figure>
+<p>"主 session 在 worktree A 里，然后派了个带 <code>isolation: &quot;worktree&quot;</code> 的 sub-agent" —— 用 <code>findGitRoot</code> 会返回 worktree A 自己，sub-agent worktree 会嵌到 <code>worktreeA/.claude/worktrees/</code> 下。用 <code>findCanonicalGitRoot</code> 解析到主仓。结果是：<strong>所有 agent worktree 都平铺在主仓的 <code>.claude/worktrees/</code></strong>，periodic stale sweep 才能统一扫到。</p>
+<p>Resume 已存在的 agent worktree 会 <code>utimes(worktreePath, now, now)</code>（<code class="ref">worktree.ts:944-948</code>）：fast-resume 路径是只读的，worktree 目录的 mtime 维持创建时间，可能已过 30 天 cutoff，被 stale sweep 误删。主动 bump mtime 解决。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/worktree.ts:942-948</code>）：这个 <code>utimes</code> bump 是"长时间睡眠后唤起 agent 能不能恢复原 worktree"的唯一保障。产品层看不到——用户不会意识到"fast-resume 顺带刷新了 mtime"——但如果哪天 refactor 动了这行，30 天前创建、今天第一次重用的 agent worktree 会在本次启动的 <code>cleanupStaleAgentWorktrees</code>（<code class="ref">worktree.ts:1094-1118</code>）里被顺手清掉，看起来就是"长期任务的上下文无故丢失"。</p></blockquote>
+<h3>6.5.1 并发</h3>
+<p><strong>session worktree 单例</strong>：Enter 第一行就拒绝 <code>currentWorktreeSession</code> 非空（<code class="ref">EnterWorktreeTool.ts:79-81</code>）。一个 session 同时只能有一个 session worktree。</p>
+<p><strong>agent worktree 无上限</strong>：每次 <code>AgentTool.call</code> 生成新的 slug <code>agent-&lt;earlyAgentId.slice(0,8)&gt;</code>（<code class="ref">AgentTool.tsx:591</code>），<code>createAgentWorktree</code> 不碰全局状态 —— 主 agent 可以并发派任意多个 sub-agent，各占一个 worktree。</p>
+<p>但 <code>process.chdir</code> 全进程只有一份，不能给每个 agent 用。解决方案：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/AgentTool/AgentTool.tsx:640-641</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> cwdOverridePath = cwd ?? worktreeInfo?.worktreePath
+<span class="hl-kw">const</span> wrapWithCwd = &lt;<span class="hl-type">T</span>,&gt;(fn: () =&gt; <span class="hl-type">T</span>): <span class="hl-type">T</span> =&gt;
+  cwdOverridePath ? runWithCwdOverride(cwdOverridePath, fn) : fn()</code></pre></figure>
+<p><code>runWithCwdOverride</code> 通过 AsyncLocalStorage 把"cwd override"传给该 agent 栈内的所有 tool 调用，每个文件操作和 shell 命令都在 override 下工作 —— <strong>不改进程 cwd</strong>。这是并发 worktree 跑起来的前置条件。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/cwd.ts:12-14</code> + <code class="ref">src/tools/AgentTool/AgentTool.tsx:640-641</code>）：整个进程的 <code>process.cwd()</code> 始终是主仓，每个并发 sub-agent 的 worktree 路径只存在于 AsyncLocalStorage。若某个工具实现漏走 <code>getCwd()</code> / 绕过 override 直接读 <code>process.cwd()</code>，它会拿到主仓路径——<strong>结果是工具在 sub-agent 的 worktree 外"意外写文件"</strong>，且测试阶段很难复现（单 agent 情况下两者一致）。<code>BashTool</code> 的 <code>cd</code> 行为就是专门照这个 split 设计（改 <code>getCwd()</code> 不改 <code>process.cwd()</code>）。</p></blockquote>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/worktree.ts:813-894</code> + 全仓库无 <code>git worktree lock</code> 调用）：Claude Code <strong>没有使用 git 原生的 <code>git worktree lock</code> 机制</strong>；<code>cleanupWorktree</code> 里那句 <code>sleep(100)</code> 的注释"Wait a bit to ensure git has released all locks" 指的是 git 内部的 refs lock，不是 worktree lock。并发保护只靠两层：①<code>currentWorktreeSession</code> 单例守护 session worktree；②agent worktree slug 是 <code>agent-&lt;8hex&gt;</code> 随机、碰撞极小。<strong>剩下的唯一裸奔窗口是两个独立 <code>claude --worktree &lt;same-name&gt;</code> 进程撞在一起</strong>——fast-resume 的 <code>readWorktreeHeadSha</code> 到后续 <code>git worktree add -B</code> 之间没有锁，后到者会被 git 自己的 add lock 拒绝返回错误。产品层感知不到，但说明 worktree 模块<strong>默认假定单进程使用</strong>。</p></blockquote>
+<h3>6.5.2 agent 结束后的清理</h3>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/AgentTool/AgentTool.tsx:644-685（节选）</span>
+<span class="hl-kw">const</span> cleanupWorktreeIfNeeded = <span class="hl-kw">async</span> () =&gt; {
+  <span class="hl-kw">if</span> (!worktreeInfo) <span class="hl-kw">return</span> {}
+  <span class="hl-kw">const</span> { worktreePath, worktreeBranch, headCommit, gitRoot, hookBased } = worktreeInfo
+  worktreeInfo = <span class="hl-kw">null</span>  <span class="hl-cm">// idempotent</span>
+  <span class="hl-kw">if</span> (hookBased) <span class="hl-kw">return</span> { worktreePath }  <span class="hl-cm">// hook-based 总保留</span>
+  <span class="hl-kw">if</span> (headCommit) {
+    <span class="hl-kw">const</span> changed = <span class="hl-kw">await</span> hasWorktreeChanges(worktreePath, headCommit)
+    <span class="hl-kw">if</span> (!changed) {
+      <span class="hl-kw">await</span> removeAgentWorktree(worktreePath, worktreeBranch, gitRoot)
+      <span class="hl-kw">return</span> {}
+    }
+  }
+  logForDebugging(<span class="hl-str">`Agent worktree has changes, keeping: ${worktreePath}`</span>)
+  <span class="hl-kw">return</span> { worktreePath, worktreeBranch }
+}</code></pre></figure>
+<p>三分支：</p>
+<ol>
+<li>hook-based → 保留（hook 无法判断 VCS 有没有改动，保守）。</li>
+<li>git-based 无改动 → <code>git worktree remove --force</code> + <code>git branch -D</code>（<code class="ref">worktree.ts:961-1020</code>）。</li>
+<li>git-based 有改动 → 保留，把路径和分支名返回给主 agent，主 agent 在消息里看到 <code>worktreePath</code> 和 <code>worktreeBranch</code> 就可以告诉用户或决定下一步。</li>
+</ol>
+<p>这是主 agent 能接收 sub-agent 结果"物质化"的关键：sub-agent 工作不丢失，以分支形式交付。</p>
+<h3>6.5.3 启动时的 stale sweep</h3>
+<p><code>cleanupStaleAgentWorktrees</code>（<code class="ref">src/utils/worktree.ts:1058-1136</code>）在 <code class="ref">cleanup.ts:595</code> 的定期任务里调，cutoff 来自 <code>cleanupPeriodDays</code> 设置（默认 30 天）。</p>
+<p><strong>只扫 ephemeral 模式</strong>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/worktree.ts:1030-1041</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">EPHEMERAL_WORKTREE_PATTERNS</span> = [
+  /^agent-a[<span class="hl-num">0</span>-9a-f]{<span class="hl-num">7</span>}$/,          <span class="hl-cm">// AgentTool 的 agent-a&lt;7hex&gt;</span>
+  /^wf_[<span class="hl-num">0</span>-9a-f]{<span class="hl-num">8</span>}-[<span class="hl-num">0</span>-9a-f]{<span class="hl-num">3</span>}-\d+$/, <span class="hl-cm">// WorkflowTool</span>
+  /^wf-\d+$/,                       <span class="hl-cm">// legacy</span>
+  /^bridge-[<span class="hl-type">A</span>-<span class="hl-type">Za</span>-z0-<span class="hl-num">9_</span>]+(-[<span class="hl-type">A</span>-<span class="hl-type">Za</span>-z0-<span class="hl-num">9_</span>]+)*$/, <span class="hl-cm">// bridgeMain</span>
+  /^job-[a-zA-<span class="hl-type">Z0</span>-<span class="hl-num">9</span>._-]{<span class="hl-num">1</span>,<span class="hl-num">55</span>}-[<span class="hl-num">0</span>-9a-f]{<span class="hl-num">8</span>}$/,  <span class="hl-cm">// 模板 job</span>
+]</code></pre></figure>
+<p>正则严格匹配"机器生成"的形状，用户命名的 <code>feat-auth</code> / <code>bugfix-123</code> 不会被扫。这是 docs 所说的"Worktrees you create with <code>--worktree</code> are never removed by this sweep"的实现。</p>
+<p><strong>三重 fail-closed 检查</strong>（<code class="ref">worktree.ts:1094-1118</code>）：</p>
+<ul>
+<li>mtime 不过期 → 跳过。</li>
+<li><code>git status --porcelain -uno</code> 非零或有输出 → 跳过（<code>-uno</code> 忽略 untracked：30 天老的 agent worktree 的 untracked 多是 build 产物，扫一遍比较慢）。</li>
+<li><code>rev-list --max-count=1 HEAD --not --remotes</code> 非零或有输出 → 跳过（有未推送 commit 就不删）。</li>
+</ul>
+<p>全过才删。扫完 <code>git worktree prune</code> 清 admin 文件。整个策略的口径就是"<strong>宁可留、不可误删</strong>"。</p>
+<h2>6.6 Hook 作为 VCS 抽象</h2>
+<p>worktree 不绑死 git。两个 hook <code>WorktreeCreate</code> / <code>WorktreeRemove</code> 在 settings.json 里配了以后，git 路径就被整体替换。</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/worktree.ts:714-728（createWorktreeForSession 的 hook 优先分支）</span>
+<span class="hl-kw">if</span> (hasWorktreeCreateHook()) {
+  <span class="hl-kw">const</span> hookResult = <span class="hl-kw">await</span> executeWorktreeCreateHook(slug)
+  currentWorktreeSession = {
+    originalCwd,
+    worktreePath: hookResult.worktreePath,
+    worktreeName: slug,
+    sessionId,
+    tmuxSessionName,
+    hookBased: <span class="hl-kw">true</span>,
+  }
+}</code></pre></figure>
+<p>hook 合约很薄：输入 slug，输出 worktree 绝对路径写到 stdout（<code class="ref">src/utils/hooks.ts:4928-4958</code>）。remove hook 输入 <code>worktree_path</code>（<code class="ref">hooks.ts:4967-5003</code>）。这样 SVN / Perforce / jj / fossil 都能接进来，只要能提供 "给我一个 slug，给你一个隔离目录" 的语义。</p>
+<p>副作用：hook-based worktree 没 <code>originalHeadCommit</code>（git 概念），<code>countWorktreeChanges</code> 进入 null 路径（<code class="ref">ExitWorktreeTool.ts:94-98</code>），Exit remove 必须 <code>discard_changes: true</code>。从"不绑 VCS"的角度看合理；从 SVN 用户角度看有点烦。文档没明说这个约束 —— 在源码注释里。</p>
+<h2>6.7 设计取舍</h2>
+<p>几种替代方案的对照：</p>
+<div class="table-wrap"><table><thead><tr><th>方案</th><th>隔离范围</th><th>创建成本</th><th>可回溯</th><th>Claude Code 选择</th></tr></thead><tbody><tr><td>Docker 容器</td><td>fs + proc + net</td><td>秒级起容器 + 卷挂载</td><td>得 commit/export 才能带出</td><td>重，不选</td></tr>
+<tr><td>Linux namespace / chroot</td><td>fs + proc</td><td>需要 root / 特殊权限</td><td>无原生</td><td>用户态工具不适用</td></tr>
+<tr><td>临时目录 + <code>cp -r</code></td><td>仅 fs</td><td>拷贝时间与仓库大小线性相关</td><td>丢 git 历史</td><td>不能 merge 回</td></tr>
+<tr><td><strong>git worktree</strong></td><td>仅 fs（共享 object db）</td><td>秒级</td><td>git 原生</td><td>选它</td></tr></tbody></table></div>
+<p><strong>选择成本</strong>：</p>
+<ul>
+<li>不隔离 env/network/secrets。sub-agent 能读主仓的 <code>.env</code>、能发 HTTP、能调 <code>~/.ssh/id_rsa</code> —— 这不是 worktree 要管的，由权限系统负责（详见 <a class="chref" href="../ch09/">ch.09</a>）。</li>
+<li>不能防止恶意行为。把"不信任的 agent 跑"当目标，worktree 不够，得上容器。</li>
+<li>主仓 object database 共享。一个 worktree 的 <code>git gc</code> 会影响所有 worktree；对长时运行的 agent 是考虑点。Claude Code 里 agent worktree 被设计成短期，问题不显著。</li>
+</ul>
+<p><strong>选择收益</strong>：</p>
+<ul>
+<li>秒级创建 / 删除。不 fetch 场景下 worktree add 通常 &lt; 200ms，post-creation setup 多占 100-500ms（取决于 <code>.worktreeinclude</code> 大小）。</li>
+<li>共享依赖（symlink <code>node_modules</code>）。磁盘占用只和实际改动相关。</li>
+<li>和现有 git 工作流天然兼容。开发者手动 <code>git worktree list</code> / <code>cd</code> 过去继续干活。</li>
+<li>可以 merge 回主分支 —— 这是 vs 临时目录的根本差别。</li>
+</ul>
+<h2>6.8 可迁移的点</h2>
+<p>写完这章，几个可以直接搬到别处的模式：</p>
+<p><strong>1. 用 VCS 自带机制做沙箱。</strong> 不用自己发明 snapshot。hg 有 <code>hg share</code>、jj 有 <code>jj workspace</code>，Mercurial/Jujutsu 用户可以在 hook 里把 git worktree 的地方换成对应命令，Claude Code 架构不变。</p>
+<p><strong>2. Get-or-create 语义。</strong> 同名 slug = resume。fast-resume 路径读文件指针绕开 git spawn。这个模式在 cron retry、用户重跑同名任务、崩溃恢复都用得上。关键是：<strong>resume 必须幂等 + 必须快</strong>。</p>
+<p><strong>3. Fail-closed 三态删除门。</strong> <code>ChangeSummary | null</code> 而不是 <code>boolean</code>。用户对"误删"的容忍远低于"删不干净"。这个模式也适用于权限撤销、资源回收、数据迁移的 dry-run 判断。</p>
+<p><strong>4. 分层复用</strong>。底层 <code>getOrCreateWorktree</code> / <code>performPostCreationSetup</code> 纯函数不碰全局状态。顶层 <code>createWorktreeForSession</code>（写单例）和 <code>createAgentWorktree</code>（不写）各自包装。比起"在底层加 <code>isSession: boolean</code> 参数"更清晰 —— 参数开关堆多了会变成 god function，分层之后每层只做一件事。</p>
+<p><strong>5. Hook 作为 VCS 抽象层。</strong> 两个 hook 就抽象了整个 VCS 后端。前提：把 worktree 的语义压缩到最小接口（slug in → path out）。这也适用于任何"核心逻辑用 git 但想兼容其他系统"的场景 —— 别试图在内部抽象出"VCS 接口"，让用户配置 hook 自己实现更简单。</p>
+<p><strong>6. 目录折叠 + 按需展开。</strong> <code>.worktreeinclude</code> 处理 gitignored 文件时用 <code>ls-files --directory</code> 先折叠，再按 pattern 展开需要的。在任何"大量文件 + 白名单过滤"的场景都能搬（比如构建产物清理、大仓 CI）。</p>
+<h2>6.9 边界（交叉引用）</h2>
+<ul>
+<li><strong>Agent Loop</strong> 本身不在本章范围（详见 <a class="chref" href="../ch03/">ch.03</a>）。worktree 是 agent 的运行地，不是 agent 的推理逻辑。</li>
+<li><strong>Sub-agent 调度</strong>（主 agent 何时派 sub-agent / async 还是 sync / 失败重试）详见 <a class="chref" href="../ch04/">ch.04</a>。本章只讲 worktree 侧 —— sub-agent 要不要隔离、在哪里隔离、如何清理。</li>
+<li><strong>Plan Mode</strong> 详见 <a class="chref" href="../ch05/">ch.05</a>。Plan 产出的 slug 会被 <code>getPlanSlug()</code> 用作 worktree 默认名（<code class="ref">EnterWorktreeTool.ts:90</code>），这是耦合点，但 plan 本身的机制不讲。</li>
+<li><strong>Tool 接口</strong>（<code>buildTool</code> 模板、<code>shouldDefer</code>、<code>validateInput</code> 在框架里的位置）详见 <a class="chref" href="../ch08/">ch.08</a>。</li>
+<li><strong>权限</strong>（agent 能不能访问 worktree 外文件、能不能调 shell）详见 <a class="chref" href="../ch09/">ch.09</a>。worktree 提供文件系统隔离；访问控制由权限系统负责，两者互补不互替。</li>
+<li><strong>Agent SDK</strong> 的 <code>isolation</code> 参数（面向外部集成者、和本章 <code>AgentTool</code> 的 <code>isolation</code> 同义）详见 <a class="chref" href="../ch23/">ch.23</a>。</li>
+</ul>
+  </div>
+</article>
+
+<nav class="chap-nav"><a class="nav-link prev" href="../ch05/"><span class="dir">← Ch.05 · prev</span><span class="t">Plan Mode<span class="cn">让 Agent 先想后做</span></span></a><a class="nav-home" href="../">§ 目录</a><a class="nav-link next" href="../ch07/"><span class="dir">Ch.07 · next →</span><span class="t">Context<span class="cn">上下文管理与记忆</span></span></a></nav>
+
+<footer class="colophon">
+  <div class="left">Claude <span class="dot">&amp;</span> Code</div>
+  <div class="right">
+    set in EB garamond · albert sans · jetbrains mono · LXGW wenkai<br>
+    《Claude Code 源码解读》 · ch.06
+  </div>
+</footer>
+
+</body>
+</html>

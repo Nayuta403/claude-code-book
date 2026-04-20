@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code 源码解读 · 设计备选</title>
+<meta name="description" content="《Claude Code 源码解读》网站的四个排版方向选择页：杂志风、专著风、日志风、瑞士档案风。">
+<meta property="og:title" content="Claude Code 源码解读 · Showcase">
+<meta property="og:description" content="《Claude Code 源码解读》一书网站的四个排版方向 showcase。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://nayuta403.github.io/claude-code-book/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="./favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Geist+Mono:wght@300;400;500&family=Young+Serif&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=EB+Garamond:ital,wght@0,400;1,300;1,400&family=Noto+Sans+SC:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: oklch(0.978 0.006 260);
+    --paper-alt: oklch(0.955 0.008 260);
+    --ink: oklch(0.19 0.008 260);
+    --ink-dim: oklch(0.42 0.008 260);
+    --ink-faint: oklch(0.62 0.006 260);
+    --rule: oklch(0.84 0.006 260);
+    --rule-hair: oklch(0.90 0.005 260);
+    --accent: oklch(0.52 0.17 28);
+    --accent-soft: oklch(0.72 0.12 30);
+
+    --sans: "Familjen Grotesk", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+    --mono: "Geist Mono", ui-monospace, monospace;
+  }
+  *,*::before,*::after { box-sizing: border-box; }
+  html, body { background: var(--paper); color: var(--ink); }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    font-feature-settings: "kern","liga","calt";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .hat {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    padding: 16px 32px;
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    background: var(--paper-alt);
+  }
+  .hat b { color: var(--ink); font-weight: 500; }
+  .hat .r { color: var(--accent); }
+
+  .wrap {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 96px 32px 64px;
+  }
+
+  h1.title {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: clamp(2.6rem, 6vw, 4.6rem);
+    line-height: 0.98;
+    letter-spacing: -0.028em;
+    margin: 0 0 24px 0;
+  }
+  h1.title .it { font-style: italic; font-weight: 400; color: var(--accent); }
+
+  .sub {
+    font-family: var(--sans);
+    font-size: clamp(1.05rem, 1.8vw, 1.2rem);
+    color: var(--ink-dim);
+    max-width: 62ch;
+    margin: 0 0 48px 0;
+    line-height: 1.55;
+  }
+  .sub code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    color: var(--accent);
+  }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 16px;
+  }
+
+  .directions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px;
+    margin-top: 48px;
+  }
+
+  a.card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    overflow: hidden;
+    transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+                border-color 0.2s,
+                box-shadow 0.3s;
+  }
+  a.card:hover {
+    transform: translateY(-2px);
+    border-color: var(--ink);
+    box-shadow: 0 20px 40px -20px oklch(0.2 0.01 260 / 0.15);
+  }
+
+  a.card .preview {
+    aspect-ratio: 3 / 2.2;
+    border-bottom: 1px solid var(--rule);
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* preview D — editorial magazine (impeccable-inspired) */
+  a.card.d .preview {
+    background: oklch(96% 0.005 350);
+    padding: 0;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    position: relative;
+    overflow: hidden;
+  }
+  a.card.d .preview::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 60% 40% at 80% 90%, oklch(88% 0.05 350 / 0.35), transparent 60%);
+    pointer-events: none;
+  }
+  a.card.d .preview .dbar {
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: oklch(55% 0 0);
+    border-bottom: 1px solid oklch(92% 0 0);
+    position: relative; z-index: 1;
+  }
+  a.card.d .preview .dbar .dot-rose { color: var(--accent); font-weight: 500; }
+  a.card.d .preview .dbody {
+    padding: 24px 22px 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative; z-index: 1;
+  }
+  a.card.d .preview .dht {
+    font-family: "EB Garamond", Georgia, serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: 38px;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: oklch(10% 0 0);
+  }
+  a.card.d .preview .dht .amp {
+    color: var(--accent);
+    font-weight: 300;
+  }
+  a.card.d .preview .dht .cn {
+    display: block;
+    font-family: Georgia, "Noto Serif SC", serif;
+    font-style: normal;
+    font-size: 20px;
+    color: oklch(25% 0 0);
+    margin-top: 4px;
+    font-weight: 400;
+  }
+  a.card.d .preview .dmeta {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: oklch(55% 0 0);
+    letter-spacing: 0.06em;
+    padding-top: 10px;
+    border-top: 1px solid oklch(92% 0 0);
+  }
+
+  /* preview A — editorial */
+  a.card.a .preview {
+    background:
+      radial-gradient(ellipse 60% 40% at 20% 10%, oklch(0.955 0.022 60) 0%, transparent 70%),
+      oklch(0.975 0.012 75);
+    padding: 24px 28px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-family: Georgia, "Noto Serif SC", serif;
+  }
+  a.card.a .preview .ht {
+    font-family: "Young Serif", Georgia, serif;
+    font-size: 42px;
+    line-height: 0.95;
+    color: oklch(0.22 0.017 50);
+    letter-spacing: -0.02em;
+  }
+  a.card.a .preview .ht .amp {
+    font-style: italic;
+    color: oklch(0.48 0.14 48);
+    font-family: Georgia, serif;
+  }
+  a.card.a .preview .fb {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: oklch(0.62 0.014 58);
+    margin-top: 8px;
+    border-top: 1px solid oklch(0.82 0.022 65);
+    padding-top: 10px;
+    display: flex;
+    gap: 16px;
+  }
+  a.card.a .preview .fb .dot { color: oklch(0.48 0.14 48); }
+
+  /* preview B — terminal */
+  a.card.b .preview {
+    background: oklch(0.165 0.012 55);
+    color: oklch(0.93 0.01 85);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  a.card.b .preview .bar {
+    padding: 10px 16px;
+    background: oklch(0.135 0.01 55);
+    border-bottom: 1px solid oklch(0.27 0.014 55);
+    font-family: var(--mono);
+    font-size: 10px;
+    color: oklch(0.48 0.014 65);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+  }
+  a.card.b .preview .bar .f { color: oklch(0.785 0.135 72); }
+  a.card.b .preview .main {
+    flex: 1;
+    padding: 20px 22px;
+    font-family: "Bricolage Grotesque", sans-serif;
+  }
+  a.card.b .preview .ht {
+    font-weight: 500;
+    font-size: 34px;
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+    margin-bottom: 10px;
+  }
+  a.card.b .preview .ht .s { color: oklch(0.785 0.135 72); }
+  a.card.b .preview .rows {
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.85;
+    color: oklch(0.69 0.012 75);
+  }
+  a.card.b .preview .rows .n { color: oklch(0.48 0.014 65); margin-right: 12px; }
+  a.card.b .preview .rows .k { color: oklch(0.785 0.135 72); }
+
+  /* preview C — swiss */
+  a.card.c .preview {
+    background: oklch(0.985 0.003 240);
+    padding: 0;
+    display: grid;
+    grid-template-rows: auto 1fr;
+  }
+  a.card.c .preview .cbar {
+    padding: 10px 20px;
+    background: oklch(0.962 0.004 240);
+    border-bottom: 1px solid oklch(0.80 0.006 240);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    justify-content: space-between;
+  }
+  a.card.c .preview .cbar span:last-child { color: oklch(0.40 0.008 240); }
+  a.card.c .preview .g {
+    display: grid;
+    grid-template-columns: 2fr 1.2fr;
+    gap: 24px;
+    padding: 24px 22px;
+  }
+  a.card.c .preview .g .ht {
+    font-family: "Familjen Grotesk", sans-serif;
+    font-weight: 500;
+    font-size: 36px;
+    line-height: 0.95;
+    letter-spacing: -0.035em;
+    color: oklch(0.175 0.008 240);
+  }
+  a.card.c .preview .g .ht .i {
+    font-style: italic;
+    color: var(--accent);
+    font-weight: 400;
+  }
+  a.card.c .preview .g .fx {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+    color: oklch(0.40 0.008 240);
+    border-top: 1px solid oklch(0.175 0.008 240);
+    padding-top: 8px;
+    line-height: 1.7;
+    text-transform: uppercase;
+  }
+  a.card.c .preview .g .fx .r { color: var(--accent); }
+
+  /* card body */
+  a.card .meta {
+    padding: 20px 22px 22px;
+  }
+  a.card .label {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+  a.card .label .rec {
+    color: var(--accent);
+    font-weight: 500;
+    letter-spacing: 0.1em;
+  }
+  a.card h3 {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: 22px;
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+    margin: 0 0 6px 0;
+    color: var(--ink);
+  }
+  a.card h3 .en {
+    font-style: italic;
+    color: var(--accent);
+    font-weight: 400;
+  }
+  a.card p.desc {
+    font-family: var(--sans);
+    font-size: 14.5px;
+    color: var(--ink-dim);
+    line-height: 1.55;
+    margin: 0 0 12px 0;
+    max-width: 38ch;
+  }
+  a.card .tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
+    border-top: 1px dashed var(--rule-hair);
+    padding-top: 12px;
+  }
+  a.card .tags span::after { content: " · "; color: var(--ink-faint); opacity: 0.5; }
+  a.card .tags span:last-child::after { content: ""; }
+
+  .notebox {
+    margin-top: 64px;
+    padding: 24px 28px;
+    background: var(--paper-alt);
+    border: 1px solid var(--rule-hair);
+    border-radius: 2px;
+    max-width: 72ch;
+    font-size: 14.5px;
+    color: var(--ink-dim);
+    line-height: 1.65;
+  }
+  .notebox b { color: var(--ink); font-weight: 500; }
+  .notebox code { font-family: var(--mono); font-size: 0.92em; color: var(--accent); }
+
+  footer {
+    margin-top: 80px;
+    padding-top: 20px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  @media (max-width: 600px) {
+    .wrap { padding: 48px 20px; }
+    .hat { padding: 12px 20px; font-size: 10.5px; }
+  }
+
+  ::selection { background: color-mix(in oklch, var(--accent) 25%, transparent); }
+</style>
+</head>
+<body>
+
+<div class="hat">
+  <span>设计备选 · <b>Claude Code 源码解读</b> · 四个排版方向</span>
+  <span class="r">preview · 2026-04-21</span>
+</div>
+
+<div class="wrap">
+  <div class="tag">style proposal · pick one</div>
+  <h1 class="title">设计备选 <span class="it">存档</span>。</h1>
+  <p class="sub">做书的时候同一份内容跑了四个排版方向。<b style="color:var(--accent);font-weight:500">方向 D · 杂志风</b> 已采用为全书正文，<a href="./" style="color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in oklch, var(--accent) 30%, transparent);padding-bottom:1px">点此回到书 →</a>。其他三个方向作设计备选保留在这里。</p>
+
+  <div class="directions">
+
+    <a class="card d" href="./d-magazine/index.html">
+      <div class="preview">
+        <div class="dbar">
+          <span>Vol. I — 2026</span>
+          <span class="dot-rose">No. 01</span>
+        </div>
+        <div class="dbody">
+          <div class="dht">Claude <span class="amp">&amp;</span> Code<br><span class="cn">源码解读</span></div>
+          <div class="dmeta">23 chapters · ≈ 15,000 lines · 简体中文</div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="label">
+          <span>方向 D</span>
+          <span class="rec">◆ 参照 impeccable.style</span>
+        </div>
+        <h3>Editorial Magazine <span class="en">· 杂志风</span></h3>
+        <p class="desc">Cream 纸感 + 玫粉色 accent + 大号斜体衬线 display。两栏 hero，数字编号小标签，大量留白。最贴近你发的参考站。</p>
+        <div class="tags">
+          <span>cream</span><span>italic serif</span><span>rose accent</span><span>airy</span>
+        </div>
+      </div>
+    </a>
+
+    <a class="card a" href="./a-editorial/index.html">
+      <div class="preview">
+        <div>
+          <div class="ht">Claude Code<br><span class="amp">&amp;</span> 源码解读</div>
+        </div>
+        <div class="fb">
+          <span>§ 23 章</span>
+          <span class="dot">·</span>
+          <span>engineering monograph</span>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="label">
+          <span>方向 A</span>
+          <span>monograph</span>
+        </div>
+        <h3>Editorial Monograph <span class="en">· 编辑部专著风</span></h3>
+        <p class="desc">暖米色纸感、氧化墨色正文、大衬线标题、章节旁 marginalia 标注。把书当书排，不当营销页排。</p>
+        <div class="tags">
+          <span>warm</span><span>serif-forward</span><span>asymmetric</span><span>marginalia</span>
+        </div>
+      </div>
+    </a>
+
+    <a class="card b" href="./b-terminal/index.html">
+      <div class="preview">
+        <div class="bar">
+          <span>~/book/chapters/<span class="f">all</span></span>
+          <span>23 files</span>
+        </div>
+        <div class="main">
+          <div class="ht">claude-code<span class="s">/</span><br>source</div>
+          <div class="rows">
+            <div><span class="n">ch.03</span><span class="k">Agent Loop</span></div>
+            <div><span class="n">ch.08</span>工具系统</div>
+            <div><span class="n">ch.12</span><span class="k">MCP</span> bridge</div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="label">
+          <span>方向 B</span>
+          <span>terminal</span>
+        </div>
+        <h3>Terminal Logbook <span class="en">· 日志本风</span></h3>
+        <p class="desc">暖炭灰底、纸白字、琥珀色只点在 <code style="font-family:var(--mono);font-size:0.88em;color:var(--accent)">file:line</code> 上。把整本书当成一本可翻页的 pager。</p>
+        <div class="tags">
+          <span>dark</span><span>pager-style</span><span>mono-flavored</span><span>amber accent</span>
+        </div>
+      </div>
+    </a>
+
+    <a class="card c" href="./c-swiss/index.html">
+      <div class="preview">
+        <div class="cbar">
+          <span>§ catalogue · 23</span>
+          <span>rev 2026-04</span>
+        </div>
+        <div class="g">
+          <div class="ht">Claude Code<br><span class="i">源码解读</span></div>
+          <div class="fx">
+            chapters · <span class="r">23</span><br>
+            refs · 1,200<br>
+            language · zh<br>
+            part · i — v
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="label">
+          <span>方向 C</span>
+          <span>archival</span>
+        </div>
+        <h3>Swiss Archival <span class="en">· 档案栅格风</span></h3>
+        <p class="desc">冷灰白纸感、硬派瑞士排版、§ 编号外露、目录以表格呈现、单一氧化红做强调。信息密度最高。</p>
+        <div class="tags">
+          <span>cool</span><span>grid-exposed</span><span>tabular</span><span>oxide-red</span>
+        </div>
+      </div>
+    </a>
+
+  </div>
+
+  <div class="notebox">
+    <b>使用说明：</b> 三个方向的内容完全一致（masthead + 23 章目录 + 第 3 章试读）。选定后我会把对应风格扩展成完整站点：章节阅读页、目录页、代码高亮、搜索、深色模式切换等。如果想要 A/B 混合（编辑骨架 + terminal 的 <code>file:line</code> 展示），也直接说。
+  </div>
+
+  <footer>
+    <span>claude code · source reading · showcase</span>
+    <span>nayuta / 2026</span>
+  </footer>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.10 Skills · 技能系统 — Claude Code 源码解读</title>
+<meta name="description" content="《Claude Code 源码解读》第 10 章 —— 技能系统（prompt pack）">
+<meta property="og:title" content="Ch.10 Skills · 技能系统 — Claude Code 源码解读">
+<meta property="og:description" content="《Claude Code 源码解读》第 10 章 —— 技能系统（prompt pack）">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://nayuta403.github.io/claude-code-book/ch10/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,300;1,400;1,500&family=Albert+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<link rel="stylesheet" href="../assets/book.css">
+</head>
+<body>
+
+<nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
+
+<header class="chap-head">
+  <div>
+    <div class="crumb">
+      <a href="../">目录</a>
+      <span class="sep">/</span>
+      <span class="part-tag p3">Part III · 扩展机制</span>
+    </div>
+    <div class="chap-num">Chapter · 10 / 23</div>
+    <h1 class="chap-title">Skills<span class="cn">技能系统</span></h1>
+  </div>
+  <aside class="chap-meta">
+    <div><div class="km">part</div><div class="vm">扩展机制（Extensions）</div></div>
+    <div><div class="km">topic</div><div class="vm m">prompt pack</div></div>
+    <div><div class="km">reading</div><div class="vm">≈ 21 min</div></div>
+    <div><div class="km">source refs</div><div class="vm m">41</div></div>
+  </aside>
+</header>
+
+<article class="article">
+  <div class="prose">
+<p class="drop">本章讲 Claude Code 里被叫作 <strong>skill</strong> 的那套扩展机制。它不是工具（Tool，<a class="chref" href="../ch08/">ch.08</a>），也不是记忆（memdir，<a class="chref" href="../ch07/">ch.07</a>），是专门放"知识 + 流程 + playbook"的一等扩展。</p>
+<blockquote><p><strong>本章的价值判断</strong>：Claude Code 把"模型可以调用的动作"和"要注入到 prompt 的内容"分到两条完全独立的通道，用不同的注册机制、不同的缓存、不同的 token 预算治理。skill 是后一条通道的完整实现。这个分离本身——而不是具体某个 skill——是值得借鉴的。</p></blockquote>
+<h2>10.1 用户看到什么</h2>
+<p>打开 Claude Code，输入 <code>/</code> 就能看到一堆 skill 跳出来：<code>/commit</code>、<code>/simplify</code>、<code>/claude-api</code>、<code>/loop</code>、<code>/keybindings-help</code>……这些是<strong>用户可手动触发</strong>的入口。</p>
+<p>但更有意思的是<strong>模型主动触发</strong>。你问"这段 diff 有点绕，能不能顺一下"，Claude 会自己去调 <code>/simplify</code>——不是因为你说了 "simplify" 这个词，是因为 <code>/simplify</code> 在 system prompt 里留了一条描述：</p>
+<blockquote><p><code>simplify: Review changed code for reuse, quality, and efficiency, then fix any issues found.</code></p></blockquote>
+<p>模型看到你提了"顺一下 diff"，把这条描述匹配上，就去调 <code>Skill</code> 工具执行它。Transcript 上会显示一次 tool call：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">Skill(skill: &quot;simplify&quot;)
+  → Successfully loaded skill · 1 tool allowed</code></pre></figure>
+<p>跟直接 Bash/Edit 不同，skill 的执行本质上是"往对话里塞了一大段 markdown"。</p>
+<p>最后，<code>/skills</code> 命令弹出一个分组视图，告诉你哪些 skill 从哪里来：<code>Bundled skills</code>、<code>Project skills (.claude/skills/…)</code>、<code>User skills (~/.claude/skills/…)</code>、<code>Plugin skills</code>、<code>MCP skills</code>。每条旁边标着它的 description 大约占多少 token。</p>
+<h2>10.2 为什么挑这个设计讲</h2>
+<p>一句话：<strong>Tool 和 Skill 是同一套"能力扩展"问题的两种答案，分开管理比合并更好。</strong></p>
+<p>对照看：</p>
+<div class="table-wrap"><table><thead><tr><th>维度</th><th>Tool</th><th>Skill</th></tr></thead><tbody><tr><td>注册给 LLM 的形式</td><td>JSON Schema 的函数</td><td>一段 markdown description</td></tr>
+<tr><td>调用时交换的内容</td><td>结构化 input / output</td><td>字符串 prompt 注入</td></tr>
+<tr><td>编写者的画像</td><td>需要写代码</td><td>能写 markdown 就行</td></tr>
+<tr><td>按需加载的单位</td><td>工具定义（schema）</td><td>提示正文（body）</td></tr>
+<tr><td>本仓库对应机制</td><td><code>ToolSearch</code>（<a class="chref" href="../ch08/">ch.08</a>）</td><td><code>SkillTool</code> / <code>DiscoverSkillsTool</code></td></tr></tbody></table></div>
+<p>两者在"按需加载"这件事上是对称的：<code>ToolSearch</code> 让工具<strong>定义</strong>可以 deferred 加载（<a class="chref" href="../ch08/">ch.08</a> §"Tool 定义的懒加载"），<code>SkillTool</code> 让提示<strong>正文</strong>可以 deferred 加载。两条路径的目标都是<strong>保住 context window 的预算</strong>，只是保护的资源不一样——<a class="chref" href="../ch08/">ch.08</a> 已经把 Tool 侧的 schema 预算讲透了，本章只需要把对偶关系点到为止，然后聚焦在 prompt-body 这条通道独有的问题上（描述压缩、信任边界、来源合流）。</p>
+<p>把"动作能力"和"知识/流程"混到一条通道也能做——MCP server 原生就是把 tools、prompts、resources 放在一起的——但这么做有两个问题。第一，schema-based tool 的描述对非程序员不友好：你很难跟产品同事说"帮我补个 review-pr 工具"让他直接写 JSON schema。第二，prompt 正文的大小级别（KB-级，claude-api skill 的 content 就接近 250KB）根本不适合塞进每一次 tool 列表广播。</p>
+<p>所以把两条分开，让每条用最适合自己的数据形态和加载时机——markdown 按需 / schema 启动时，是 Claude Code 的选择。下面把这条选择的实现展开。</p>
+<h2>10.3 一个 skill 的形态</h2>
+<p>skill 的物理形态是一个目录 + 一个 <code class="ref">SKILL.md</code>：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">my-skill/
+├── SKILL.md          (必需，入口)
+├── reference.md      (可选，模型按需 Read)
+├── examples/
+│   └── sample.md
+└── scripts/
+    └── helper.py</code></pre></figure>
+<p><code class="ref">SKILL.md</code> 两段式：YAML frontmatter + markdown 正文。看一个真实的 bundled skill：</p>
+<figure class="codeblock"><figcaption><span class="file">src/skills/bundled/verify/SKILL.md:1-12</span><span class="lang">md</span></figcaption><pre><code class="language-md">---
+description: Verify a code change by running the app, the relevant command, or a focused server flow and reporting concrete evidence.
+---
+
+# Verify
+
+Use this skill when a task is not finished until the change is exercised.
+
+## Goal
+
+Produce a short verification result grounded in execution, not inference.</code></pre></figure>
+<p>官方文档的完整 frontmatter 字段表见 <code>docs.claude.com</code> 的 skills 页（访问于 2026-04-19，<a href="https://code.claude.com/docs/en/skills" rel="noreferrer">https://code.claude.com/docs/en/skills</a>）。本仓库源码层面的解析口径在 <code class="ref">src/skills/loadSkillsDir.ts:185-265</code>，覆盖：</p>
+<ul>
+<li><code>name</code> / <code>description</code> / <code>when_to_use</code> —— 身份和触发提示</li>
+<li><code>allowed-tools</code> / <code>model</code> / <code>effort</code> —— 执行期的权限和模型覆盖</li>
+<li><code>disable-model-invocation</code> / <code>user-invocable</code> —— 谁能触发</li>
+<li><code>context</code> (<code>fork</code>) / <code>agent</code> —— 是否 fork 到子 agent（和 <a class="chref" href="../ch04/">ch.04</a> 有交集）</li>
+<li><code>paths</code> —— 按文件路径 glob 条件激活</li>
+<li><code>hooks</code> / <code>shell</code> —— 生命周期 hook 和 shell 风格</li>
+</ul>
+<p><strong>为什么用 markdown 而不是 JSON 或 代码？</strong></p>
+<ol>
+<li><strong>可读可 diff 可 review</strong>：<code class="ref">.claude/skills/deploy/SKILL.md</code> 可以像任何代码文件一样进 git，team 可以 PR 审阅。</li>
+<li><strong>作者门槛低</strong>：产品、技术运营、架构师都能改 markdown 里的某一步指令，不需要懂 TypeScript。</li>
+<li><strong>正文就是给 LLM 的 prompt</strong>：没有"序列化 → 渲染"两步。文件落盘是什么样、注入到对话就是什么样。</li>
+<li><strong>跨工具</strong>：Skills 已经被 Anthropic 作为开放标准发布（<a href="https://agentskills.io" rel="noreferrer">https://agentskills.io</a>，访问于 2026-04-19），官网列出了 20+ 种已经采纳的 agent 产品，包括 Cursor、GitHub Copilot、OpenAI Codex、VS Code。markdown 是最小公约数。</li>
+</ol>
+<p>前言字段的形状和 <a class="chref" href="../ch07/">ch.07</a> 的 memdir 子系统同构（<a class="chref" href="../ch07/">ch.07</a> §7.7.3 已经点名这条"复用模板"）——Claude Code 里凡是"带元数据的长文本"基本都走 YAML frontmatter + markdown 这个规格：<code class="ref">MEMORY.md</code> 索引 + 话题文件带 frontmatter（memdir） vs <code class="ref">SKILL.md</code> 本体带 frontmatter（skill）。同一套工程模板在仓库里被复用了两次，说明它是可推广的。</p>
+<blockquote><p><strong>编译期 vs 运行时决策</strong>（隐藏细节）：bundled skill 走两种物理形态。大多数（<code class="ref">simplify.ts</code> / <code class="ref">skillify.ts</code> / <code class="ref">batch.ts</code> 等）是 TypeScript 模板字符串——没有落盘的 SKILL.md，body 就是代码里的常量。但 <code>verify/</code> 和 <code>claude-api/</code> 这两个目录下确实存在 SKILL.md 文件，只是 <code class="ref">verify.ts</code> / <code class="ref">claudeApiContent.ts</code> 在<strong>编译期</strong>用 <code>parseFrontmatter(SKILL_MD)</code> 把 md 内联成字符串常量打进 bundle。运行时看到的仍然只有字符串、没有文件 IO——这让 bundled skill 既能用 md 写、又不用在运行时去读磁盘。落盘只发生在 <code>files:</code> 字段触发的参考文件释放（§10.9.3）。</p></blockquote>
+<h2>10.4 加载路径：四种来源合流</h2>
+<p>把 skill 的加载分两个维度看：</p>
+<ul>
+<li><strong>来源</strong>（skill 是从哪里登记的）</li>
+<li><strong>发现时机</strong>（什么时候进入当前会话的 listing）</li>
+</ul>
+<h3>10.4.1 四种来源</h3>
+<p><strong>Source 1：Bundled（编译进进制）</strong></p>
+<p><code class="ref">src/skills/bundledSkills.ts:44</code> 里有一个进程内数组：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/skills/bundledSkills.ts:44-108 节选</span>
+<span class="hl-kw">const</span> bundledSkills: <span class="hl-type">Command</span>[] = []
+
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> registerBundledSkill(definition: <span class="hl-type">BundledSkillDefinition</span>): <span class="hl-kw">void</span> {
+  <span class="hl-cm">// ...把 definition 转成 Command，loadedFrom = &#x27;bundled&#x27;，塞进数组</span>
+  bundledSkills.push(command)
+}
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> getBundledSkills(): <span class="hl-type">Command</span>[] {
+  <span class="hl-kw">return</span> [...bundledSkills]
+}</code></pre></figure>
+<p>启动时 <code class="ref">src/skills/bundled/index.ts:24-34</code> 的 <code>initBundledSkills()</code> 挨个调 <code>registerXxxSkill()</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/skills/bundled/index.ts:24-34</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> initBundledSkills(): <span class="hl-kw">void</span> {
+  registerUpdateConfigSkill()
+  registerKeybindingsSkill()
+  registerVerifySkill()
+  registerDebugSkill()
+  registerLoremIpsumSkill()
+  registerSkillifySkill()
+  registerRememberSkill()
+  registerSimplifySkill()
+  registerBatchSkill()
+  registerStuckSkill()
+  <span class="hl-cm">// ...剩下的是 feature-gated，见原文件</span>
+}</code></pre></figure>
+<p>这些 skill 的 body 是 TypeScript 里的模板字符串或动态拼装出来的文本——它们不是 markdown 文件落盘，是代码生成的。好处是可以依赖运行时状态（<code class="ref">src/skills/bundled/keybindings.ts:20-111</code> 的 keybindings-help 就是从 <code>DEFAULT_BINDINGS / KEYBINDING_ACTIONS</code> 常量实时生成三张 markdown 表），坏处是非工程同事动不了。</p>
+<p><strong>Source 2：文件系统扫描</strong></p>
+<p><code class="ref">src/skills/loadSkillsDir.ts:638-804</code> 的 <code>getSkillDirCommands(cwd)</code> 并行扫四处：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/skills/loadSkillsDir.ts:679-714 节选</span>
+<span class="hl-kw">const</span> [managedSkills, userSkills, projectSkillsNested,
+       additionalSkillsNested, legacyCommands] = <span class="hl-kw">await</span> <span class="hl-type">Promise</span>.all([
+  <span class="hl-cm">// managed/policy — ~/.claude.d (或类似) + .claude/skills</span>
+  loadSkillsFromSkillsDir(managedSkillsDir,  &#x27;policySettings&#x27;),
+  <span class="hl-cm">// user — ~/.claude/skills</span>
+  loadSkillsFromSkillsDir(userSkillsDir,     &#x27;userSettings&#x27;),
+  <span class="hl-cm">// project — 当前项目 .claude/skills，以及往上走到 $HOME 的每一层</span>
+  projectSkillsDirs.map(dir =&gt;
+     loadSkillsFromSkillsDir(dir, &#x27;projectSettings&#x27;)),
+  <span class="hl-cm">// --add-dir 传入的额外目录下的 .claude/skills</span>
+  additionalDirs.map(dir =&gt;
+     loadSkillsFromSkillsDir(join(dir,&#x27;.claude&#x27;,&#x27;skills&#x27;), &#x27;projectSettings&#x27;)),
+  <span class="hl-cm">// legacy：.claude/commands/ —— 官方文档说已经合并到 skills</span>
+  loadSkillsFromCommandsDir(cwd),
+])</code></pre></figure>
+<p>几个选择值得注意：</p>
+<ul>
+<li><strong>只接受目录格式</strong>：<code>&lt;name&gt;/SKILL.md</code>，单个 <code>.md</code> 文件在 <code>/skills/</code> 下直接忽略（<code class="ref">src/skills/loadSkillsDir.ts:425-428</code>）。这个约束让每个 skill 都有自己的 sandbox 目录放 <code>scripts/</code>、<code>examples/</code>。</li>
+<li><strong>realpath dedup</strong>：不同路径指向同一 inode 的 skill 只保留一份（<code>src/skills/loadSkillsDir.ts:118-124, 736-762</code>）。这直接处理了 symlink 重复和"父目录重叠"的坑。</li>
+<li><strong>legacy commands 仍加载</strong>：<code>loadSkillsFromCommandsDir</code> 兼容 <code>.claude/commands/</code> 下的单 md 和嵌套 SKILL.md，loadedFrom 打成 <code>&#x27;commands_DEPRECATED&#x27;</code>。官方文档（<a href="https://code.claude.com/docs/en/skills" rel="noreferrer">https://code.claude.com/docs/en/skills</a>，访问于 2026-04-19）说："Custom commands have been merged into skills"——新写法统一走 skills，老文件继续可用。</li>
+<li><strong><code>--bare</code> 模式短路</strong>：<code class="ref">src/skills/loadSkillsDir.ts:658-675</code> 在 bare 模式下只加载显式 <code>--add-dir</code> 里的 skill，不做自动发现。</li>
+</ul>
+<p>优先级：enterprise &gt; personal &gt; project（同名覆盖）。Plugin skills 用 <code>plugin-name:skill-name</code> 的 namespace 不冲突（见官方文档访问日期同上）。</p>
+<p><strong>Source 3：Plugin</strong></p>
+<p><code class="ref">src/commands.ts:360-398</code> 的 <code>getSkills(cwd)</code> 汇总了 plugin 的贡献：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/commands.ts:360-373 节选</span>
+<span class="hl-kw">const</span> [skillDirCommands, pluginSkills] = <span class="hl-kw">await</span> <span class="hl-type">Promise</span>.all([
+  getSkillDirCommands(cwd).<span class="hl-kw">catch</span>(...),
+  getPluginSkills().<span class="hl-kw">catch</span>(...),
+])
+<span class="hl-kw">const</span> bundledSkills = getBundledSkills()
+<span class="hl-kw">const</span> builtinPluginSkills = getBuiltinPluginSkillCommands()</code></pre></figure>
+<p>plugin 自己的 <code>skills/</code> 子目录里的 SKILL.md 最终也是 Command 对象，<code>source: &#x27;plugin&#x27;</code>、带 <code>pluginInfo</code>。plugin 的打包分发、marketplace 协议、<code>plugin-name:skill-name</code> namespace 规则见 <strong><a class="chref" href="../ch11/">ch.11</a> §"plugin 如何贡献 skill"</strong>；本章只管<strong>它们以 skill 形式汇入</strong>这个事实。Validator 核对的两个入口：<code class="ref">src/commands.ts:368</code> 的 <code>getPluginSkills()</code>（用户装的 plugin）和 <code>:377</code> 的 <code>getBuiltinPluginSkillCommands()</code>（Claude Code 自带的 builtin plugin），都返回 <code>source: &#x27;plugin&#x27;</code> 的 Command。</p>
+<p><strong>Source 4：MCP</strong></p>
+<p>MCP 连接建立时（<code class="ref">src/services/mcp/client.ts:2344-2350</code>）：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/services/mcp/client.ts:2344-2350 节选</span>
+<span class="hl-kw">const</span> [tools, mcpCommands, mcpSkills, resources] = <span class="hl-kw">await</span> <span class="hl-type">Promise</span>.all([
+  fetchToolsForClient(client),
+  fetchCommandsForClient(client),
+  <span class="hl-cm">// Discover skills from skill:// resources</span>
+  feature(&#x27;<span class="hl-type">MCP_SKILLS</span>&#x27;) &amp;&amp; supportsResources
+    ? fetchMcpSkillsForClient!(client)
+    : <span class="hl-type">Promise</span>.resolve([]),
+  ...
+])</code></pre></figure>
+<p>MCP-wrapped skill 从 server 暴露的<strong>资源</strong>里挑 <code>skill://</code> scheme 的项升格而来。skill 层和 MCP 层之间有一个模块环问题，Claude Code 的处理办法是"写一次性注册点":</p>
+<figure class="codeblock"><figcaption><span class="file">src/skills/mcpSkillBuilders.ts:26-44</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">MCPSkillBuilders</span> = {
+  createSkillCommand: <span class="hl-kw">typeof</span> createSkillCommand
+  parseSkillFrontmatterFields: <span class="hl-kw">typeof</span> parseSkillFrontmatterFields
+}
+<span class="hl-kw">let</span> builders: <span class="hl-type">MCPSkillBuilders</span> | <span class="hl-kw">null</span> = <span class="hl-kw">null</span>
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> registerMCPSkillBuilders(b: <span class="hl-type">MCPSkillBuilders</span>): <span class="hl-kw">void</span> {
+  builders = b
+}
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> getMCPSkillBuilders(): <span class="hl-type">MCPSkillBuilders</span> {
+  <span class="hl-kw">if</span> (!builders) <span class="hl-kw">throw</span> <span class="hl-kw">new</span> <span class="hl-type">Error</span>(&#x27;<span class="hl-type">MCP</span> skill builders not registered — ...&#x27;)
+  <span class="hl-kw">return</span> builders
+}</code></pre></figure>
+<p>和 <code class="ref">src/skills/loadSkillsDir.ts:1082-1086</code> 的写入：</p>
+<figure class="codeblock"><figcaption><span class="file">src/skills/loadSkillsDir.ts:1082-1086</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">registerMCPSkillBuilders({
+  createSkillCommand,
+  parseSkillFrontmatterFields,
+})</code></pre></figure>
+<p>这样 MCP 层 (<code class="ref">mcpSkills.ts</code>) 不直接 import <code class="ref">loadSkillsDir.ts</code>（否则会形成环），而是在运行时调 <code>getMCPSkillBuilders()</code> 拿到两个函数引用。<code class="ref">src/skills/mcpSkillBuilders.ts:6-24</code> 的注释把坑讲得很具体——不是"理论上可能有环"，是 Bun 打包器对动态 import specifier 的解析路径和 dep-cruiser 的环检查在这里会互相撕扯。</p>
+<blockquote><p><strong>恢复期声明</strong>：本仓库里 <code class="ref">src/skills/mcpSkills.ts:1-3</code> 只有一行 <code>return []</code>，真实的 fetch/parse 逻辑缺失。所以本章不深入 MCP skill 的字段格式——需要完整实现的读者请以当前官方源为准。<strong><code>skill://</code> URI 约定、resource-to-skill 的字段映射详见 <a class="chref" href="../ch12/">ch.12</a> §"MCP resource 如何被升格为 skill"</strong>。</p></blockquote>
+<p><strong>MCP-wrapped skill 的信任边界</strong>很重要，下一节讲。</p>
+<h3>10.4.2 汇合顺序</h3>
+<p>所有来源在 <code class="ref">src/commands.ts:449-469</code> 的 <code>loadAllCommands</code> 里拼接：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/commands.ts:449-469 节选</span>
+<span class="hl-kw">const</span> loadAllCommands = memoize(<span class="hl-kw">async</span> (cwd: string): <span class="hl-type">Promise</span>&lt;<span class="hl-type">Command</span>[]&gt; =&gt; {
+  <span class="hl-kw">const</span> [
+    { skillDirCommands, pluginSkills, bundledSkills, builtinPluginSkills },
+    pluginCommands, workflowCommands,
+  ] = <span class="hl-kw">await</span> <span class="hl-type">Promise</span>.all([getSkills(cwd), getPluginCommands(), getWorkflowCommands?.(cwd)])
+
+  <span class="hl-kw">return</span> [
+    ...bundledSkills,
+    ...builtinPluginSkills,
+    ...skillDirCommands,
+    ...workflowCommands,
+    ...pluginCommands,
+    ...pluginSkills,
+    ...<span class="hl-type">COMMANDS</span>(),       <span class="hl-cm">// 内建斜杠命令，如 /help /clear /compact</span>
+  ]
+})</code></pre></figure>
+<p>顺序不是随意的：bundled 在最前，是为了让<strong>平台保证的 skill 的 description 永远优先、不会被预算压力挤掉</strong>（后面 §10.5 会展开）。</p>
+<h3>10.4.3 动态发现时机：条件激活与嵌套发现</h3>
+<p>前面是"静态来源"。还有两种<strong>运行时</strong>才出现的 skill：</p>
+<p><strong>条件激活</strong>：SKILL.md 的 frontmatter 里写 <code>paths: src/web/**</code>，启动时这个 skill 不进 listing，只有当模型 Read/Write 到匹配的文件时，<code class="ref">src/skills/loadSkillsDir.ts:997-1058</code> 的 <code>activateConditionalSkillsForPaths</code> 用 gitignore 风格的 glob 把它激活：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/skills/loadSkillsDir.ts:1012-1040 节选</span>
+<span class="hl-kw">for</span> (<span class="hl-kw">const</span> [name, skill] <span class="hl-kw">of</span> conditionalSkills) {
+  <span class="hl-kw">const</span> skillIgnore = ignore().add(skill.paths!)
+  <span class="hl-kw">for</span> (<span class="hl-kw">const</span> filePath <span class="hl-kw">of</span> filePaths) {
+    <span class="hl-kw">const</span> relativePath = isAbsolute(filePath) ? relative(cwd, filePath) : filePath
+    <span class="hl-kw">if</span> (skillIgnore.ignores(relativePath)) {
+      dynamicSkills.<span class="hl-kw">set</span>(name, skill)
+      conditionalSkills.<span class="hl-kw">delete</span>(name)
+      activatedConditionalSkillNames.add(name)
+      <span class="hl-kw">break</span>
+    }
+  }
+}</code></pre></figure>
+<p><strong>嵌套目录发现</strong>：monorepo 场景下，<code>packages/frontend/.claude/skills/</code> 里的 skill 在启动时并不会加载（只 cwd 那一层会）。<code class="ref">src/skills/loadSkillsDir.ts:861-915</code> 的 <code>discoverSkillDirsForPaths</code> 在每次文件操作时从文件所在目录沿父目录往上走到 cwd（不含 cwd），每层看有没有 <code>.claude/skills/</code>；新发现的目录会先走 <code>git check-ignore</code>——如果 <code>node_modules/pkg/.claude/skills</code> 这种被 gitignored 的，跳过。</p>
+<p>两种机制都通过 <code>dynamicSkills</code> Map 汇入，最终被 <code>getCommands</code> 在"built-in commands 之前"插入（<code class="ref">src/commands.ts:504-516</code>），并触发一次 <code>skill_listing</code> 的增量 delta（下一节讲）。</p>
+<h3>10.4.4 实验性第五条支路：<code>DiscoverSkillsTool</code> 与 <code>_canonical_*</code> 远程</h3>
+<p>前面 4 种来源构成正文讨论的范围。代码里还有一条实验性支路值得<strong>登记位置</strong>但不展开实现：<code>feature(&#x27;EXPERIMENTAL_SKILL_SEARCH&#x27;)</code> 门控下，Claude Code 允许模型去远程搜索和按需加载 skill。触发条件和生效环境（隐藏细节）：</p>
+<ul>
+<li><strong>双 gate</strong>：<code>feature(&#x27;EXPERIMENTAL_SKILL_SEARCH&#x27;)</code> + <code>process.env.USER_TYPE === &#x27;ant&#x27;</code>。外部构建用户永远看不到这条路径——<code>EXPERIMENTAL_SKILL_SEARCH</code> 的整个 feature flag 判定会被 DCE（dead-code-elimination）掉，连字符串字面量都不会进 bundle（<code class="ref">src/utils/attachments.ts:95</code> 的注释明说"feature() first for DCE — the property-access string leaks otherwise even with ?. on null"）。<code>USER_TYPE === &#x27;ant&#x27;</code> 是内部人员环境变量，官方 docs 里找不到。</li>
+<li><strong>触发点</strong>：<code>src/tools/SkillTool/SkillTool.ts:375, 489, 601</code> 三处都有 <code>_canonical_&lt;slug&gt;</code> 前缀的拦截逻辑。模型先调 <code>DiscoverSkillsTool</code>（<code class="ref">src/tools/DiscoverSkillsTool/prompt.ts:1</code>）拿一批远程 skill slug，再用标准 <code>SkillTool</code> 传 <code>_canonical_&lt;slug&gt;</code> 作为 skill 名去触发。SkillTool 识别前缀、走 <code>remoteSkillModules.stripCanonicalPrefix</code> + <code>getDiscoveredRemoteSkill(slug)</code>（<code>src/services/skillSearch/</code> 下），加载远程 body。</li>
+<li><strong>在本仓库的状态</strong>：<code>src/tools/DiscoverSkillsTool/</code> 只有一个 <code class="ref">prompt.ts</code> 导出工具名常量，<code>src/services/skillSearch/*</code> 在 restoration 期实现缺失。所以本章不展开字段格式——只登记"如果你在外部 Claude Code 里遇到 <code>DiscoverSkillsTool</code> 的 tool call，是这条路径在起作用；否则就当它不存在"。</li>
+</ul>
+<h2>10.5 两阶段召回：描述常驻，正文按需</h2>
+<p>这是本章最关键的一节。</p>
+<p>官方文档对"progressive disclosure"的描述（访问于 2026-04-19，<a href="https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills" rel="noreferrer">https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills</a>）：</p>
+<blockquote><p>"At startup, the agent pre-loads the <code>name</code> and <code>description</code> of every installed skill into its system prompt."</p>
+<p>"If Claude thinks the skill is relevant to the current task, it will load the skill by reading its full <code class="ref">SKILL.md</code> into context."</p></blockquote>
+<p>对应源码里两个完全独立的阶段。</p>
+<h3>10.5.1 阶段 A：描述注入</h3>
+<p><strong>目的</strong>：让模型知道"这次会话有这些 skill 可用，每个大概是做什么的"，但不把 body 塞进 context。</p>
+<p>入口是 <code class="ref">src/utils/attachments.ts:2670-2751</code> 的 <code>getSkillListingAttachments(toolUseContext)</code>：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/attachments.ts:2676-2684 节选</span>
+<span class="hl-kw">const</span> localCommands = <span class="hl-kw">await</span> getSkillToolCommands(cwd)
+<span class="hl-kw">const</span> mcpSkills = getMcpSkillCommands(toolUseContext.getAppState().mcp.commands)
+<span class="hl-kw">let</span> allCommands = mcpSkills.length &gt; <span class="hl-num">0</span>
+  ? uniqBy([...localCommands, ...mcpSkills], &#x27;name&#x27;)
+  : localCommands</code></pre></figure>
+<p>注意<strong>状态</strong>：listing 是 stateful 的。<code>sentSkillNames: Map&lt;agentId, Set&lt;name&gt;&gt;</code> 记录了每个 agent 已经收到过哪些 skill。初始下发"第一批"，之后只下发"新增的 delta"（<code class="ref">src/utils/attachments.ts:2699-2730</code>）。这样 <code>--resume</code> 恢复会话时不会重复注入。</p>
+<blockquote><p><strong>Sub-agent 怎么看到 skill</strong>（隐藏细节，呼应 <a class="chref" href="../ch04/">ch.04</a>）：<code>sentSkillNames</code> 按 <code>agentId</code> 分桶不是偶然设计，注释写明了（<code class="ref">src/utils/attachments.ts:2603-2606</code>）——"Keyed by agentId (empty string = main thread) so subagents get their own turn-0 listing — without per-agent scoping, the main thread populating this Set would cause every subagent's filterToBundledAndMcp result to dedup to empty"。含义是：sub-agent spawn 时拿到的是<strong>独立的 listing</strong>，不共享主 agent 的"已发送集合"。</p>
+<p>但这也意味着一件容易被忽略的事：<strong>sub-agent 不继承主 agent 在运行中临时加载的 skill state</strong>——conditional-paths 激活的 skill、<code>discoveredSkillNames</code>（远程 skill 搜索的结果缓存）在 sub-agent 里都是空集（<code class="ref">src/utils/forkedAgent.ts:386</code> 明确写 <code>discoveredSkillNames: new Set&lt;string&gt;()</code>）。sub-agent 需要哪个 skill，得按照文件系统/bundled 注册表自己重新匹配；父 agent 在 turn 10 刚 Discover 到的一批远程 skill，sub-agent 看不到。这和 <a class="chref" href="../ch04/">ch.04</a> 讲的"sub-agent 只继承父的对话历史 + 系统提示，其余 in-memory state 要么 clone 要么置空"是一致原则。要让 sub-agent 看到某个 skill，得确保它在<strong>启动时就可发现</strong>（bundled / 文件系统 / plugin / MCP 四条静态来源之一）。</p></blockquote>
+<p><strong>description 的预算压缩</strong>是重点。<code class="ref">src/tools/SkillTool/prompt.ts:21-29</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/SkillTool/prompt.ts:21-29</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">SKILL_BUDGET_CONTEXT_PERCENT</span> = <span class="hl-num">0.01</span>
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">CHARS_PER_TOKEN</span> = <span class="hl-num">4</span>
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">DEFAULT_CHAR_BUDGET</span> = <span class="hl-num">8_000</span> <span class="hl-cm">// 1% of 200k × 4</span>
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">MAX_LISTING_DESC_CHARS</span> = <span class="hl-num">250</span></code></pre></figure>
+<p>三条硬规则（实现见 <code class="ref">src/tools/SkillTool/prompt.ts:70-171</code>）：</p>
+<ol>
+<li><strong>总预算 = 1% × context window</strong>（200K 窗 → 8000 字符 / ~2000 tokens）。环境变量 <code>SLASH_COMMAND_TOOL_CHAR_BUDGET</code> 可覆盖。</li>
+<li><strong>单条描述最多 250 字符</strong>（<code>MAX_LISTING_DESC_CHARS</code>），超过截断成 <code>…</code>。</li>
+<li><strong>预算内塞不下就分级降级</strong>：先尝试全量；超预算时，<strong>Bundled skill 永不被裁</strong>，剩下的 skill 把总预算均分。均分下来每条不足 <code>MIN_DESC_LENGTH=20</code> 字符时，非 bundled 退化成"只有名字"。</li>
+</ol>
+<p>官方文档另加一条（访问于 2026-04-19，<a href="https://code.claude.com/docs/en/skills" rel="noreferrer">https://code.claude.com/docs/en/skills</a>）：</p>
+<blockquote><p>"The combined <code>description</code> and <code>when_to_use</code> text is truncated at 1,536 characters in the skill listing."</p></blockquote>
+<p>这是源头层面的写作建议——即使总预算管够，单条 1536 字符也是上限，逼作者"front-load the key use case"。</p>
+<p>真实注入点在 <code class="ref">src/utils/messages.ts:3728-3738</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/messages.ts:3728-3738</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">case</span> &#x27;skill_listing&#x27;: {
+  <span class="hl-kw">if</span> (!attachment.content) <span class="hl-kw">return</span> []
+  <span class="hl-kw">return</span> wrapMessagesInSystemReminder([
+    createUserMessage({
+      content: <span class="hl-str">`The following skills are available for use with the Skill tool:\n\n${attachment.content}`</span>,
+      isMeta: <span class="hl-kw">true</span>,
+    }),
+  ])
+}</code></pre></figure>
+<p>包成 <code>&lt;system-reminder&gt;</code> 的"伪 user message"。你现在读的这段内容，实际上就是一个用这种机制注入到我（作者 agent）上下文的 skill 列表——顶部那一大段 "The following skills are available for use with the Skill tool: …" 就是它。</p>
+<h3>10.5.2 阶段 B：正文加载</h3>
+<p><strong>触发条件</strong>：模型看到 description 觉得合适，决定调用。</p>
+<p><code>SkillTool</code> 是一个标准工具（<a class="chref" href="../ch08/">ch.08</a> 讲 Tool 接口）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/SkillTool/constants.ts:1</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">SKILL_TOOL_NAME</span> = &#x27;<span class="hl-type">Skill</span>&#x27;</code></pre></figure>
+<p>输入极简（<code class="ref">src/tools/SkillTool/SkillTool.ts:291-298</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/SkillTool/SkillTool.ts:291-298</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">z.object({
+  skill: z.string().describe(&#x27;<span class="hl-type">The</span> skill name. <span class="hl-type">E</span>.g., &quot;commit&quot;, &quot;review-pr&quot;, or &quot;pdf&quot;&#x27;),
+  args:  z.string().optional(),
+})</code></pre></figure>
+<p><code>call</code> 分两条路径（<code class="ref">src/tools/SkillTool/SkillTool.ts:580-841</code>）：</p>
+<ul>
+<li><strong>inline</strong>：走 <code>processPromptSlashCommand</code>，把 skill body 展开成 <code>newMessages</code>（一组 user message），当前会话里接着跑</li>
+<li><strong>fork</strong>（<code>context: fork</code> 的 skill）：走 <code>executeForkedSkill</code>，spawn 一个 sub-agent（复用 <a class="chref" href="../ch04/">ch.04</a> §"sub-agent 生命周期"的整套机制），skill 内容作为 sub-agent 的 prompt，结果以字符串返回（和 <code>AgentTool</code> 语义一致，<code>finalizeAgentTool</code> 把子 agent 的完整 run 压成一条 text-only tool_result）</li>
+</ul>
+<p><strong>body 加载后是否计入 token 预算</strong>（隐藏细节）：会。inline 路径把 body 作为 user message 塞进 <code>newMessages</code>，这些消息和任何普通对话消息一样进入 context、被 Anthropic API 计费、参与后续 compaction。listing 阶段的 1% 预算只保护了"描述"这层——body 才是真正占位的那部分。<code>claude-api</code> 这种 skill 的 body 可以到 6 位数字符级别，一次调用就吃掉相当大一块 window。fork 路径（见下）把 body 隔离到子 agent 的独立 context，是应对这点的主要手段。</p>
+<p>body 拼装在 <code class="ref">src/skills/loadSkillsDir.ts:344-399</code> 的 <code>getPromptForCommand</code>：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/skills/loadSkillsDir.ts:344-399 节选</span>
+<span class="hl-kw">async</span> getPromptForCommand(args, toolUseContext) {
+  <span class="hl-kw">let</span> finalContent = baseDir
+    ? <span class="hl-str">`Base directory for this skill: ${baseDir}\n\n${markdownContent}`</span>
+    : markdownContent
+  finalContent = substituteArguments(finalContent, args, <span class="hl-kw">true</span>, argumentNames)
+  <span class="hl-kw">if</span> (baseDir) {
+    <span class="hl-kw">const</span> skillDir = process.platform === &#x27;win32&#x27; ? baseDir.replace(/\\/g, &#x27;/&#x27;) : baseDir
+    finalContent = finalContent.replace(/\$\{<span class="hl-type">CLAUDE_SKILL_DIR</span>\}/g, skillDir)
+  }
+  finalContent = finalContent.replace(/\$\{<span class="hl-type">CLAUDE_SESSION_ID</span>\}/g, getSessionId())
+
+  <span class="hl-cm">// Security: MCP skills are remote and untrusted — never execute inline</span>
+  <span class="hl-cm">// shell commands (!`…` / ```! … ```) from their markdown body.</span>
+  <span class="hl-kw">if</span> (loadedFrom !== &#x27;mcp&#x27;) {
+    finalContent = <span class="hl-kw">await</span> executeShellCommandsInPrompt(finalContent, ..., <span class="hl-str">`/${skillName}`</span>, shell)
+  }
+  <span class="hl-kw">return</span> [{ <span class="hl-kw">type</span>: &#x27;text&#x27;, text: finalContent }]
+}</code></pre></figure>
+<p>做了四件事：</p>
+<ol>
+<li>前缀 <code>Base directory for this skill: &lt;dir&gt;</code> —— 让模型知道 <code>scripts/*</code>、<code>examples/*</code> 的根</li>
+<li><code>$ARGUMENTS</code> / <code>$0</code> / <code>$1</code> 替换（位置参数 shell-style quoted）</li>
+<li><code>${CLAUDE_SKILL_DIR}</code> / <code>${CLAUDE_SESSION_ID}</code> 替换</li>
+<li>`<code> !</code>cmd<code> </code>` 预执行 shell injection——<strong>只对非 MCP 来源的 skill</strong></li>
+</ol>
+<p>第 4 条是真实的信任边界，下一节展开。</p>
+<h3>10.5.3 和 ToolSearch 的对称</h3>
+<p><a class="chref" href="../ch08/">ch.08</a> 讲 <code>ToolSearch</code>：工具列表有时太大，不可能一次全部注册给模型，于是把"完整 tool 定义"改成 deferred——先只告诉模型有哪些 tool、名字叫什么、大概用途，模型要用时再调 <code>ToolSearch</code> 把真定义搬进来。</p>
+<p><code>SkillTool</code> 是同一招的另一面：<strong>prompt 片段</strong>也是一种上下文资源，也可以 deferred。模型先看 description，觉得匹配就调 <code>SkillTool</code>，body 才进对话。</p>
+<p>两者的对偶性在代码里非常清晰：</p>
+<ul>
+<li><code>ToolSearch</code> 从名字查回<strong>完整 Tool Schema</strong></li>
+<li><code>SkillTool</code> 从名字查回<strong>完整 markdown body</strong></li>
+</ul>
+<p>都是"把名字留在 context 里，把内容留在磁盘/注册表里"。</p>
+<h2>10.6 MCP-wrapped skill 的信任边界</h2>
+<p>MCP 层为什么要费劲包装成 skill，而不是直接把 MCP 的 prompt 交给模型？看 <code class="ref">src/tools/SkillTool/SkillTool.ts:81-94</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/SkillTool/SkillTool.ts:81-94</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">async</span> <span class="hl-kw">function</span> getAllCommands(context: <span class="hl-type">ToolUseContext</span>): <span class="hl-type">Promise</span>&lt;<span class="hl-type">Command</span>[]&gt; {
+  <span class="hl-cm">// Only include MCP skills (loadedFrom === &#x27;mcp&#x27;), not plain MCP prompts.</span>
+  <span class="hl-cm">// Before this filter, the model could invoke MCP prompts via SkillTool</span>
+  <span class="hl-cm">// if it guessed the mcp__server__prompt name — they weren&#x27;t discoverable</span>
+  <span class="hl-cm">// but were technically reachable.</span>
+  <span class="hl-kw">const</span> mcpSkills = context.getAppState().mcp.commands.filter(
+    cmd =&gt; cmd.<span class="hl-kw">type</span> === &#x27;prompt&#x27; &amp;&amp; cmd.loadedFrom === &#x27;mcp&#x27;,
+  )
+  ...
+}</code></pre></figure>
+<p>注释写明：MCP server 上暴露的 prompt 原本就可通过 <code>mcp__server__prompt</code> 形式调用，但"能调不等于应该被列"。只有 server 明确用 <code>skill://</code> URI 暴露的资源，才会升格为"可列出、可被模型主动匹配的 skill"。这是一个显式的"可发现性"闸门。</p>
+<p><strong>shell injection 的禁用</strong>是第二道闸。回到 <code>getPromptForCommand</code> 的 <code>loadedFrom !== &#x27;mcp&#x27;</code> 检查：本地 skill 里写的 `<code> !</code>ls<code> </code>` 会在展开时跑一遍（输出插到 prompt 里），MCP-wrapped skill 里同样的语法<strong>永远不会被执行</strong>。理由简单：本地 skill 由仓库主人写（或 bundled 随 Claude Code 发行），MCP-wrapped skill 来自远端且可能 user-configured 了 untrusted server，同一段文本的信任级别天差地别。</p>
+<p>官方文档的表述（访问 2026-04-19，<a href="https://code.claude.com/docs/en/skills" rel="noreferrer">https://code.claude.com/docs/en/skills</a>）有相关 policy：</p>
+<blockquote><p>"To disable this behavior for skills and custom commands from user, project, plugin, or additional-directory sources, set <code>\&quot;disableSkillShellExecution\&quot;: true</code> in settings. … Bundled and managed skills are not affected."</p></blockquote>
+<p>官方文档没有单独讲 MCP 这条——源码层是 hard-coded 的：<strong>MCP-wrapped skill 不管 policy 怎么设，shell injection 都不跑</strong>。</p>
+<h2>10.7 权限：SkillTool 的自动放行白名单</h2>
+<p>大部分工具有 deny/allow/ask 三态，<code>SkillTool</code> 也一样——但它有一个很微妙的设计：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/SkillTool/SkillTool.ts:875-908 节选</span>
+<span class="hl-kw">const</span> <span class="hl-type">SAFE_SKILL_PROPERTIES</span> = <span class="hl-kw">new</span> <span class="hl-type">Set</span>([
+  &#x27;<span class="hl-kw">type</span>&#x27;,&#x27;progressMessage&#x27;,&#x27;contentLength&#x27;,&#x27;argNames&#x27;,&#x27;model&#x27;,&#x27;effort&#x27;,
+  &#x27;source&#x27;,&#x27;pluginInfo&#x27;,&#x27;disableNonInteractive&#x27;,&#x27;skillRoot&#x27;,&#x27;context&#x27;,
+  &#x27;agent&#x27;,&#x27;getPromptForCommand&#x27;,&#x27;frontmatterKeys&#x27;,
+  &#x27;name&#x27;,&#x27;description&#x27;,&#x27;hasUserSpecifiedDescription&#x27;,&#x27;isEnabled&#x27;,&#x27;isHidden&#x27;,
+  &#x27;aliases&#x27;,&#x27;isMcp&#x27;,&#x27;argumentHint&#x27;,&#x27;whenToUse&#x27;,&#x27;paths&#x27;,&#x27;version&#x27;,
+  &#x27;disableModelInvocation&#x27;,&#x27;userInvocable&#x27;,&#x27;loadedFrom&#x27;,&#x27;immediate&#x27;,&#x27;userFacingName&#x27;,
+])</code></pre></figure>
+<p><code>skillHasOnlySafeProperties</code> 的逻辑：<strong>只要 skill 有任何不在白名单里的、值非空的 property，就不能自动放行、必须问用户</strong>（<code class="ref">src/tools/SkillTool/SkillTool.ts:910-933</code>）。</p>
+<p>意图在注释里（<code class="ref">src/tools/SkillTool/SkillTool.ts:871-874</code>）：</p>
+<blockquote><p>Allowlist of PromptCommand property keys that are safe and don't require permission. If a skill has any property NOT in this set with a meaningful value, it requires permission. This ensures new properties added to PromptCommand in the future default to requiring permission.</p></blockquote>
+<p><strong>为什么值得学</strong>：这是一种"<strong>安全默认演进</strong>"的写法。一般权限白名单检查的是"值",但这里检查的是"有哪些键"。每当 <code>PromptCommand</code> 类型新加一个字段（未来某天加 <code>network_access: true</code>），现有的 SAFE 列表不包含它，已有 skill 只要带这个字段值就要走手动确认——不会偷偷放行。</p>
+<h2>10.8 <code>/skills</code> 命令与 UI</h2>
+<p>命令壳极简（<code class="ref">src/commands/skills/index.ts:1-11</code>）：一个 <code>local-jsx</code> 命令，懒加载 <code>SkillsMenu</code> 组件。</p>
+<p><code>SkillsMenu</code> 按来源分组（<code class="ref">src/components/skills/SkillsMenu.tsx:73-86</code>）：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/components/skills/SkillsMenu.tsx:73-86 节选</span>
+<span class="hl-kw">const</span> groups = { policySettings: [], userSettings: [], projectSettings: [],
+                 localSettings: [], flagSettings: [], plugin: [], mcp: [] }
+<span class="hl-kw">for</span> (<span class="hl-kw">const</span> skill <span class="hl-kw">of</span> skills) {
+  <span class="hl-kw">const</span> source = skill.source <span class="hl-kw">as</span> <span class="hl-type">SkillSource</span>
+  <span class="hl-kw">if</span> (source <span class="hl-kw">in</span> groups) groups[source].push(skill)
+}</code></pre></figure>
+<p>每条 skill 旁边显示 description 估算的 token 数（<code>estimateSkillFrontmatterTokens</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/skills/loadSkillsDir.ts:100-105</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> estimateSkillFrontmatterTokens(skill: <span class="hl-type">Command</span>): number {
+  <span class="hl-kw">const</span> frontmatterText = [skill.name, skill.description, skill.whenToUse]
+    .filter(<span class="hl-type">Boolean</span>).join(&#x27; &#x27;)
+  <span class="hl-kw">return</span> roughTokenCountEstimation(frontmatterText)
+}</code></pre></figure>
+<p>这个估算<strong>只算 description，不算 body</strong>——因为 listing 里本来就只放 description。UI 把预算压力暴露给用户，让你直观看到"哪个 skill 写得太啰嗦"。</p>
+<p>每个分组的副标题是该来源的目录路径（<code>getSkillsPath(source, &#x27;skills&#x27;)</code>），点击告诉用户"去 <code>~/.claude/skills/</code> 里改"——UI 不提供"编辑"操作，保持"生成式 / 文件式"的工作流。</p>
+<h2>10.9 Bundled skill 的形态学</h2>
+<p>看几个有代表性的 bundled skill 能学到"skill 写法"的几种套路。</p>
+<h3>10.9.1 纯文本 prompt</h3>
+<p><code>/simplify</code>（<code class="ref">src/skills/bundled/simplify.ts:55-69</code>）是最简模式：</p>
+<figure class="codeblock"><figcaption><span class="file">src/skills/bundled/simplify.ts:55-69</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> registerSimplifySkill(): <span class="hl-kw">void</span> {
+  registerBundledSkill({
+    name: &#x27;simplify&#x27;,
+    description:
+      &#x27;<span class="hl-type">Review</span> changed code <span class="hl-kw">for</span> reuse, quality, and efficiency, then fix <span class="hl-kw">any</span> issues found.&#x27;,
+    userInvocable: <span class="hl-kw">true</span>,
+    <span class="hl-kw">async</span> getPromptForCommand(args) {
+      <span class="hl-kw">let</span> prompt = <span class="hl-type">SIMPLIFY_PROMPT</span>
+      <span class="hl-kw">if</span> (args) prompt += <span class="hl-str">`\n\n## Additional Focus\n\n${args}`</span>
+      <span class="hl-kw">return</span> [{ <span class="hl-kw">type</span>: &#x27;text&#x27;, text: prompt }]
+    },
+  })
+}</code></pre></figure>
+<p><code>SIMPLIFY_PROMPT</code> 是一段写死的、描述"怎么对最近 diff 做三路并行 review"的指南。这种 skill 和"手写 few-shot"没有本质区别，区别只是<strong>被触发时机和预算治理在系统层统一管了</strong>。</p>
+<h3>10.9.2 会话状态填槽</h3>
+<p><code>/skillify</code>（<code class="ref">src/skills/bundled/skillify.ts:179-197</code>）把当前 session 的内容模板化：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/skills/bundled/skillify.ts:179-194 节选</span>
+<span class="hl-kw">async</span> getPromptForCommand(args, context) {
+  <span class="hl-kw">const</span> sessionMemory = (<span class="hl-kw">await</span> getSessionMemoryContent()) ?? &#x27;<span class="hl-type">No</span> session memory available.&#x27;
+  <span class="hl-kw">const</span> userMessages = extractUserMessages(
+    getMessagesAfterCompactBoundary(context.messages),
+  )
+  <span class="hl-kw">const</span> prompt = <span class="hl-type">SKILLIFY_PROMPT</span>
+    .replace(&#x27;{{sessionMemory}}&#x27;, sessionMemory)
+    .replace(&#x27;{{userMessages}}&#x27;, userMessages.join(&#x27;\n\n---\n\n&#x27;))
+    .replace(&#x27;{{userDescriptionBlock}}&#x27;, args ? <span class="hl-str">`...`</span> : &#x27;&#x27;)
+  <span class="hl-kw">return</span> [{ <span class="hl-kw">type</span>: &#x27;text&#x27;, text: prompt }]
+}</code></pre></figure>
+<p>它要做的事是"把当前对话固化成一个新的 SKILL.md"，所以需要把 session memory 和用户历史消息填到模板里。这种"依赖 toolUseContext"的能力只有 bundled skill 能做——文件系统上的 SKILL.md 没有这种运行时访问。</p>
+<h3>10.9.3 reference files 模式</h3>
+<p><code>/verify</code>（<code class="ref">src/skills/bundled/verify.ts:17-29</code>）示范了 <code>files:</code> 字段：</p>
+<figure class="codeblock"><figcaption><span class="file">src/skills/bundled/verify.ts:17-29</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> registerVerifySkill(): <span class="hl-kw">void</span> {
+  registerBundledSkill({
+    name: &#x27;verify&#x27;,
+    description: <span class="hl-type">DESCRIPTION</span>,
+    userInvocable: <span class="hl-kw">true</span>,
+    files: <span class="hl-type">SKILL_FILES</span>,              <span class="hl-cm">// { &#x27;examples/cli.md&#x27;: ..., &#x27;examples/server.md&#x27;: ... }</span>
+    <span class="hl-kw">async</span> getPromptForCommand(args) {
+      <span class="hl-kw">return</span> [{ <span class="hl-kw">type</span>: &#x27;text&#x27;, text: [<span class="hl-type">SKILL_BODY</span>].join(&#x27;\n\n&#x27;) }]
+    },
+  })
+}</code></pre></figure>
+<p>SKILL.md 的正文里引用了 <code class="ref">examples/cli.md</code>，但这些例子<strong>不直接进 prompt</strong>。<code class="ref">src/skills/bundledSkills.ts:59-73</code> 在首次调用时把 <code>files</code> 里每条释放到 <code>getBundledSkillsRoot()/verify/…</code>，然后 <code>getPromptForCommand</code> 返回的文本前缀 <code>Base directory for this skill: /path/to/verify/files/</code>，模型自己 Read 例子。</p>
+<p>这是 progressive disclosure 的<strong>第三层</strong>：主 SKILL.md 之外的深度参考，只在真的用到时加载。<code>claude-api</code> skill（<code class="ref">src/skills/bundled/claudeApi.ts</code> 配合 <code class="ref">claudeApiContent.ts</code>）把这招做到了极致——内容超过 200KB，按运行时检测到的语言动态挑对应文档注入。</p>
+<p>文件落盘安全性（<code class="ref">src/skills/bundledSkills.ts:176-206</code>）值得一提：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/skills/bundledSkills.ts:176-193 节选</span>
+<span class="hl-kw">const</span> <span class="hl-type">SAFE_WRITE_FLAGS</span> = process.platform === &#x27;win32&#x27;
+  ? &#x27;wx&#x27;
+  : fsConstants.<span class="hl-type">O_WRONLY</span> | fsConstants.<span class="hl-type">O_CREAT</span> | fsConstants.<span class="hl-type">O_EXCL</span> | <span class="hl-type">O_NOFOLLOW</span>
+
+<span class="hl-kw">async</span> <span class="hl-kw">function</span> safeWriteFile(p: string, content: string): <span class="hl-type">Promise</span>&lt;<span class="hl-kw">void</span>&gt; {
+  <span class="hl-kw">const</span> fh = <span class="hl-kw">await</span> open(p, <span class="hl-type">SAFE_WRITE_FLAGS</span>, 0o600)
+  <span class="hl-kw">try</span> { <span class="hl-kw">await</span> fh.writeFile(content, &#x27;utf8&#x27;) }
+  <span class="hl-kw">finally</span> { <span class="hl-kw">await</span> fh.close() }
+}</code></pre></figure>
+<p><code>O_NOFOLLOW | O_EXCL</code> 防符号链接攻击，<code>0o600</code> mode 保证只有进程 owner 能读。根目录用了 per-process nonce（在 <code>getBundledSkillsRoot</code>），避免可预测路径被恶意预置 symlink。这是"提取静态资源"场景下值得抄的防御写法。</p>
+<h3>10.9.4 运行时生成表</h3>
+<p><code>/keybindings-help</code>（<code class="ref">src/skills/bundled/keybindings.ts</code>）从 <code>DEFAULT_BINDINGS / KEYBINDING_ACTIONS / RESERVED_SHORTCUTS</code> 等源运行时生成 markdown 表：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/skills/bundled/keybindings.ts:300-325 节选</span>
+<span class="hl-kw">async</span> getPromptForCommand(args) {
+  <span class="hl-kw">const</span> contextsTable      = generateContextsTable()
+  <span class="hl-kw">const</span> actionsTable       = generateActionsTable()
+  <span class="hl-kw">const</span> reservedShortcuts  = generateReservedShortcuts()
+  <span class="hl-kw">const</span> sections = [
+    <span class="hl-type">SECTION_INTRO</span>, <span class="hl-type">SECTION_FILE_FORMAT</span>, <span class="hl-type">SECTION_KEYSTROKE_SYNTAX</span>,
+    <span class="hl-type">SECTION_UNBINDING</span>, <span class="hl-type">SECTION_INTERACTION</span>, <span class="hl-type">SECTION_COMMON_PATTERNS</span>,
+    <span class="hl-type">SECTION_BEHAVIORAL_RULES</span>, <span class="hl-type">SECTION_DOCTOR</span>,
+    <span class="hl-str">`## Reserved Shortcuts\n\n${reservedShortcuts}`</span>,
+    <span class="hl-str">`## Available Contexts\n\n${contextsTable}`</span>,
+    <span class="hl-str">`## Available Actions\n\n${actionsTable}`</span>,
+  ]
+  <span class="hl-kw">if</span> (args) sections.push(<span class="hl-str">`## User Request\n\n${args}`</span>)
+  <span class="hl-kw">return</span> [{ <span class="hl-kw">type</span>: &#x27;text&#x27;, text: sections.join(&#x27;\n\n&#x27;) }]
+}</code></pre></figure>
+<p>好处：skill 正文和代码里的真值<strong>永远同步</strong>。新加一个 binding action，prompt 里的表格下一次打开就有。</p>
+<h3>10.9.5 占位</h3>
+<p><code class="ref">src/skills/bundled/dream.ts</code>、<code class="ref">hunter.ts</code>、<code class="ref">runSkillGenerator.ts</code> 在本仓库里都是空函数（每个一行 <code>export function registerXxx(): void {}</code>），分别对应 <code>KAIROS_DREAM</code>、<code>REVIEW_ARTIFACT</code>、<code>RUN_SKILL_GENERATOR</code> feature flag。<strong>本章不展开这些</strong>——它们是 restoration 期的 stub。如果你对完整实现好奇，请以当前官方源为准。</p>
+<h2>10.10 设计取舍</h2>
+<h3>描述预算是硬成本</h3>
+<p>每个可见 skill 的 description 都常驻 system prompt。200K context window 给 1% 算 2000 tokens，大致能容纳 40 条长描述或 80 条短描述。这个数字不是拍脑袋的——它决定了<strong>一个 agent 最多能装多少 skill 而不互相挤压</strong>。</p>
+<p>官方文档也点破了这条经验（访问 2026-04-19，同上）：</p>
+<blockquote><p>"Skill descriptions are loaded into context so Claude knows what's available. All skill names are always included, but if you have many skills, descriptions are shortened to fit the character budget, which can strip the keywords Claude needs to match your request."</p></blockquote>
+<p>当预算吃紧时，只有"名字"留下来——名字没有触发关键词，模型就难以匹配。所以描述要<strong>前置关键信息</strong>，把"何时用"写在前 100 字符。</p>
+<h3>为什么不让 LLM 直接去读 SKILL.md？</h3>
+<p>逻辑上你可以写一个 "SkillReader" 工具：模型自己用 <code>Glob ~/.claude/skills/**</code> 扫、用 <code>Read</code> 读。但这样模型<strong>不知道有哪些 skill 存在</strong>——它得先假设某个名字可能存在才去读。描述常驻的意义就在这里：<strong>它给模型一个"目录索引"</strong>，目录项里有触发线索。</p>
+<p>这也解释了"progressive disclosure"为什么是 3 层而不是 2 层：第 1 层（name + description）必须在 context 里，否则模型根本不知道有哪些选项；第 2 层（SKILL.md body）只在匹配后加载；第 3 层（附加文件）连 body 都不全量加载，body 里只列"有哪些文件、干嘛用的"，让模型自己按需 Read。</p>
+<h3>fork 还是 inline</h3>
+<p>frontmatter 里 <code>context: fork</code> 的 skill 跑在子 agent 里（<a class="chref" href="../ch04/">ch.04</a>），inline 的跑在主会话。取舍：</p>
+<ul>
+<li><strong>fork 好处</strong>：独立 token budget，长流程不污染主 context；父 agent 只收一段"结果摘要"</li>
+<li><strong>inline 好处</strong>：skill 的中间产物直接可见，用户能插话纠正</li>
+<li>简化的判断：<strong>单次结果型</strong> → fork；<strong>需要对话中迭代</strong> → inline</li>
+</ul>
+<h3>和工具权限的关系</h3>
+<p><code>allowed-tools</code> 在 frontmatter 里声明激活此 skill 时免问的工具。官方文档的表述（访问 2026-04-19，同上）：</p>
+<blockquote><p>"The <code>allowed-tools</code> field grants permission for the listed tools while the skill is active, so Claude can use them without prompting you for approval. It does not restrict which tools are available."</p></blockquote>
+<p>也就是说，<code>allowed-tools</code> 是"<strong>快捷授权</strong>"而不是"<strong>能力限制</strong>"——sandboxing 要另外用 permission deny rule 做。</p>
+<h2>10.11 可迁移的点</h2>
+<p>如果你在做自研的 Agent 产品，想给它加类似机制，最小可迁移实现是：</p>
+<ol>
+<li><strong>用 frontmatter + markdown 作为 skill 载体</strong>。不要发明 JSON/YAML DSL，不要硬编码 Python。作者门槛低是第一位。</li>
+<li><strong>两阶段召回一定要分开</strong>。启动时注入 description 列表，正文留给一个 <code>InvokeSkill(name, args)</code> 工具去触发。<code>Tool</code> 和 <code>Skill</code> 走两条通道，不要合并。</li>
+<li><strong>给 description 加硬预算</strong>。1% context window + per-entry cap（Claude Code 是 1536 字符）+ 全量先试-超预算降级的策略。Bundled 的核心 skill 不参与降级，总有一条稳定的基线。</li>
+<li><strong>来源要多，但最终汇成一张表</strong>。Claude Code 有 bundled / 文件系统 / plugin / MCP 四路来源 + conditional/dynamic 两种发现时机，拼装顺序决定优先级，realpath 做 dedup。这几条是运维可扩展性的基础。</li>
+<li><strong>给 skill body 做路径锚定</strong>。<code>${CLAUDE_SKILL_DIR}</code> / <code>Base directory for this skill:</code> 前缀让 skill 可以自包含地引用自己的附件文件和脚本。这样 skill 就可以带 <code>scripts/</code>、<code>examples/</code> 目录，不需要把全部内容塞进 body。</li>
+<li><strong>不同来源有不同的信任级别</strong>。本地 skill 里的 `<code> !</code>cmd<code> </code>` 可以跑，MCP-wrapped skill 里的不跑。权限自动放行白名单按"键存在"而不是"值合法"检查——未来加字段默认不放行。</li>
+<li><strong>Commands 和 Skills 合并</strong>。斜杠命令本质就是"用户手动触发的 skill"，用一套机制承载"用户触发 / 模型触发"两种入口。</li>
+</ol>
+<p>第 6 条特别值得强调：<strong>"勒紧信任边界"比"多给能力"更能让一个扩展系统活下去</strong>。MCP 层开了一条路把第三方能力引入，skill 侧立刻在展开时封死 shell execute——这个"接受 + 约束"的搭配，比"要么全信要么全不要"更可持续。</p>
+<hr>
+<p><strong>跨章边界小结</strong>：</p>
+<ul>
+<li>Tool / Skill 两条通道对比、<code>ToolSearch</code> 的 deferred-load → 见 <strong><a class="chref" href="../ch08/">ch.08</a></strong></li>
+<li>skill body 注入主循环后怎么被 Agent 执行 → 见 <strong><a class="chref" href="../ch03/">ch.03</a></strong></li>
+<li><code>context: fork</code> 的 sub-agent 生命周期、sub-agent 不继承主 agent 临时加载的 skill state → 见 <strong><a class="chref" href="../ch04/">ch.04</a></strong></li>
+<li>memdir frontmatter 与 SKILL.md frontmatter 同构、<code>paths:</code> 条件激活的 glob 匹配 → 见 <strong><a class="chref" href="../ch07/">ch.07</a></strong></li>
+<li>plugin 如何打包 skill 并分发、<code>plugin-name:skill-name</code> namespace → 见 <strong><a class="chref" href="../ch11/">ch.11</a></strong></li>
+<li>MCP 协议本身、<code>skill://</code> resource 如何被 MCP-wrapped 成 skill → 见 <strong><a class="chref" href="../ch12/">ch.12</a></strong></li>
+</ul>
+<p><strong>restoration 声明</strong>：<code class="ref">src/skills/mcpSkills.ts</code>（MCP-wrapped skill 的 fetch 逻辑）和 <code>src/tools/DiscoverSkillsTool/</code>（远程 skill 搜索）在本仓库是 shim/占位，<code>src/services/skillSearch/*</code> 也不完整。本章的论断不依赖这两块的具体代码，只描述它们在架构里的位置：MCP-wrapped 在 §10.4.1 Source 4 / §10.6 登记，<code>DiscoverSkillsTool</code> 和 <code>_canonical_*</code> 在 §10.4.4 登记。</p>
+  </div>
+</article>
+
+<nav class="chap-nav"><a class="nav-link prev" href="../ch09/"><span class="dir">← Ch.09 · prev</span><span class="t">Permissions<span class="cn">每次都问却不烦</span></span></a><a class="nav-home" href="../">§ 目录</a><a class="nav-link next" href="../ch11/"><span class="dir">Ch.11 · next →</span><span class="t">Plugins<span class="cn">插件系统</span></span></a></nav>
+
+<footer class="colophon">
+  <div class="left">Claude <span class="dot">&amp;</span> Code</div>
+  <div class="right">
+    set in EB garamond · albert sans · jetbrains mono · LXGW wenkai<br>
+    《Claude Code 源码解读》 · ch.10
+  </div>
+</footer>
+
+</body>
+</html>

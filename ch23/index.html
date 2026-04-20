@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.23 Agent SDK · 把 Claude Code 当库用 — Claude Code 源码解读</title>
+<meta name="description" content="《Claude Code 源码解读》第 23 章 —— 把 Claude Code 当库用（embed）">
+<meta property="og:title" content="Ch.23 Agent SDK · 把 Claude Code 当库用 — Claude Code 源码解读">
+<meta property="og:description" content="《Claude Code 源码解读》第 23 章 —— 把 Claude Code 当库用（embed）">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://nayuta403.github.io/claude-code-book/ch23/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,300;1,400;1,500&family=Albert+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<link rel="stylesheet" href="../assets/book.css">
+</head>
+<body>
+
+<nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
+
+<header class="chap-head">
+  <div>
+    <div class="crumb">
+      <a href="../">目录</a>
+      <span class="sep">/</span>
+      <span class="part-tag p5">Part V · 工程与 SDK</span>
+    </div>
+    <div class="chap-num">Chapter · 23 / 23</div>
+    <h1 class="chap-title">Agent SDK<span class="cn">把 Claude Code 当库用</span></h1>
+  </div>
+  <aside class="chap-meta">
+    <div><div class="km">part</div><div class="vm">工程与 SDK（Engineering）</div></div>
+    <div><div class="km">topic</div><div class="vm m">embed</div></div>
+    <div><div class="km">reading</div><div class="vm">≈ 17 min</div></div>
+    <div><div class="km">source refs</div><div class="vm m">48</div></div>
+  </aside>
+</header>
+
+<article class="article">
+  <div class="prose">
+<h2>23.1 用户看到什么</h2>
+<p class="drop">Claude Code 有两个日常入口。一个是终端 REPL：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">bash</span></figcaption><pre><code class="language-bash">claude &quot;fix the bug in auth.ts&quot;</code></pre></figure>
+<p>另一个是 npm 库：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// SDK 用法</span>
+<span class="hl-kw">import</span> { query } <span class="hl-kw">from</span> &#x27;@anthropic-ai/claude-agent-sdk&#x27;
+
+<span class="hl-kw">for</span> <span class="hl-kw">await</span> (<span class="hl-kw">const</span> message <span class="hl-kw">of</span> query({
+  prompt: &#x27;<span class="hl-type">Find</span> and fix the bug <span class="hl-kw">in</span> auth.ts&#x27;,
+  options: { allowedTools: [&#x27;<span class="hl-type">Read</span>&#x27;, &#x27;<span class="hl-type">Edit</span>&#x27;, &#x27;<span class="hl-type">Bash</span>&#x27;] },
+})) {
+  console.log(message)
+}</code></pre></figure>
+<p>两个入口跑起来行为几乎一致：同一套工具（Read / Edit / Bash / Grep / ...），同一套权限 mode，同一套 MCP / hooks / skills 体系。官方原话——"The Agent SDK gives you the same tools, agent loop, and context management that power Claude Code."（来源：<a href="https://code.claude.com/docs/en/agent-sdk/overview" rel="noreferrer">https://code.claude.com/docs/en/agent-sdk/overview</a>，访问于 2026-04-19）。共享的 Agent Loop 主干见 <a class="chref" href="../ch03/">ch.03</a>。</p>
+<p>区别只在终点：REPL 把 <code>SDKMessage</code> 交给 Ink 渲染，SDK 把 <code>SDKMessage</code> 交给调用方的 async-for 循环。</p>
+<h2>23.2 本章关注点</h2>
+<p>读者真正要学的一件事：<strong>一份 Agent Loop + 工具 + 权限 + MCP + Hooks 引擎，怎样以零代码分叉的方式同时当终端工具和第三方库？</strong></p>
+<p>Claude Code 的答案是——<strong>不给 SDK 写第二份引擎，而是让 SDK spawn CLI 子进程，用 NDJSON 流复用 CLI 的 stdio 当控制面 + 数据面</strong>。扩展点全部降级成消息协议：自定义 Tool、<code>canUseTool</code>、hook、动态改 model、改权限模式、查 MCP 状态——每一个都是一条带 <code>type</code> / <code>subtype</code> 的 JSON。</p>
+<p>这带来两个效果：</p>
+<ol>
+<li>CLI 功能更新自动同步给 SDK，不用两套实现对齐。</li>
+<li>跨进程 / 跨网络 transport 可以用同一份协议——终端 stdio、Remote Session WebSocket（见 <a class="chref" href="../ch17/">ch.17</a> §17）、daemon bridge 都走这份 union 类型。</li>
+</ol>
+<h2>23.3 SDK 的表面积</h2>
+<p>SDK 类型真身在 <code class="ref">src/entrypoints/agentSdkTypes.ts</code> —— 重新导出 core 类型、runtime 类型、声明对外函数签名。本仓库里这些函数的函数体都是 <code>throw new Error(&#x27;not implemented&#x27;)</code>（<code class="ref">src/entrypoints/agentSdkTypes.ts:120-122</code> 等）。</p>
+<p>真正的运行时实现在 npm 包 <code>@anthropic-ai/claude-agent-sdk</code>（见 <code class="ref">package.json:29</code>），它把 Claude Code 二进制作为 optionalDependency 打包并 spawn 为子进程[^1]。</p>
+<p>[^1]: 官方明文："The TypeScript SDK bundles a native Claude Code binary for your platform as an optional dependency"（来源：<a href="https://code.claude.com/docs/en/agent-sdk/overview" rel="noreferrer">https://code.claude.com/docs/en/agent-sdk/overview</a>）。本仓库内 <code class="ref">src/entrypoints/sdk/runtimeTypes.ts:1-22</code> 把 <code>Options</code> / <code>Query</code> / <code>SDKSession</code> 等都定成 <code>Record&lt;string, unknown&gt;</code> ——这是 source-map 还原的 shim，协议级真相以 Zod schema（<code class="ref">coreSchemas.ts</code> / <code class="ref">controlSchemas.ts</code>）为准。</p>
+<h3>23.3.1 导出的函数</h3>
+<p>按仓库 <code class="ref">agentSdkTypes.ts</code> 列出：</p>
+<div class="table-wrap"><table><thead><tr><th>函数</th><th>用途</th><th>行号</th></tr></thead><tbody><tr><td><code>query</code></td><td>主入口。<code>prompt</code> 一次性字符串或 async iterable，返回 <code>Query</code>（async iterable + 控制方法）</td><td>112-122</td></tr>
+<tr><td><code>tool</code></td><td>用 Zod schema 声明一个 SDK MCP tool</td><td>73-88</td></tr>
+<tr><td><code>createSdkMcpServer</code></td><td>把若干 <code>tool()</code> 拼成进程内 MCP server</td><td>103-107</td></tr>
+<tr><td><code>listSessions</code> / <code>getSessionInfo</code> / <code>getSessionMessages</code></td><td>枚举 / 读元信息 / 读 JSONL</td><td>204 / 219 / 178</td></tr>
+<tr><td><code>renameSession</code> / <code>tagSession</code></td><td>改 session 标题 / 打 tag</td><td>232 / 246</td></tr>
+<tr><td><code>forkSession</code></td><td>拷贝 session 换 UUID</td><td>268</td></tr>
+<tr><td><code>unstable_v2_createSession</code> / <code>unstable_v2_resumeSession</code> / <code>unstable_v2_prompt</code></td><td>@alpha。持久 session 对象 / 一次性 prompt</td><td>129 / 140 / 160</td></tr>
+<tr><td><code>AbortError</code></td><td>专用异常</td><td>109</td></tr></tbody></table></div>
+<p>此外还有三个 <code>@internal</code> 的 daemon 原语：</p>
+<ul>
+<li><code>watchScheduledTasks</code>（<code class="ref">agentSdkTypes.ts:350</code>）：watch <code class="ref">.claude/scheduled_tasks.json</code> 并 async-iter 派发 <code>fire</code> / <code>missed</code>——cron 调度细节见 <a class="chref" href="../ch13/">ch.13</a> §13。</li>
+<li><code>buildMissedTaskNotification</code>（<code class="ref">agentSdkTypes.ts:363</code>）：把 missed 一次性任务格式化为供 AskUserQuestion 二次确认的 prompt。</li>
+<li><code>connectRemoteControl</code>（<code class="ref">agentSdkTypes.ts:439</code>）：daemon 持 claude.ai WebSocket 的句柄，用于 Remote Session（见 <a class="chref" href="../ch17/">ch.17</a> §17）。</li>
+</ul>
+<p>这些用于把 SDK 当 agent subprocess 的进程管理器，本章不展开。</p>
+<h3>23.3.2 Options 的扩展点</h3>
+<p>官方 TS SDK 文档（<a href="https://code.claude.com/docs/en/agent-sdk/typescript" rel="noreferrer">https://code.claude.com/docs/en/agent-sdk/typescript</a>，访问于 2026-04-19）列出 <code>Options</code> 的字段群，按职责分组：</p>
+<ul>
+<li><strong>核心</strong>：<code>model</code> / <code>cwd</code> / <code>maxTurns</code> / <code>continue</code> / <code>resume</code></li>
+<li><strong>权限</strong>：<code>permissionMode</code>（<code>default</code> / <code>acceptEdits</code> / <code>bypassPermissions</code> / <code>plan</code> / <code>dontAsk</code> / <code>auto</code>）、<code>allowedTools</code> / <code>disallowedTools</code>、<code>canUseTool</code>、<code>allowDangerouslySkipPermissions</code></li>
+<li><strong>工具 &amp; MCP</strong>：<code>tools</code>（<code>string[]</code> 或 <code>{ type: &#x27;preset&#x27;, preset: &#x27;claude_code&#x27; }</code>）、<code>mcpServers</code></li>
+<li><strong>Agent &amp; System</strong>：<code>agent</code> / <code>agents</code>、<code>systemPrompt</code>（字符串或 <code>{ type: &#x27;preset&#x27;, preset: &#x27;claude_code&#x27; }</code>）、<code>appendSystemPrompt</code></li>
+<li><strong>思考</strong>：<code>thinking</code> / <code>effort</code></li>
+<li><strong>输出</strong>：<code>outputFormat: { type: &#x27;json_schema&#x27;, schema }</code>、<code>includePartialMessages</code></li>
+<li><strong>Hooks</strong>：<code>hooks: Partial&lt;Record&lt;HookEvent, HookCallbackMatcher[]&gt;&gt;</code></li>
+<li><strong>进阶</strong>：<code>abortController</code> / <code>sandbox</code> / <code>plugins</code> / <code>settingSources</code></li>
+</ul>
+<p>每一项都有仓库对应：它们被 SDK 翻成 <code>initialize</code> <code>control_request</code> 的字段（见下节）和 <code>runHeadless</code> 的 options（<code class="ref">src/cli/print.ts:455-492</code>）。<strong>Options 里没有"必传"字段——一个空 Options 跑的就是 CLI 默认行为</strong>。这一条很关键，决定了迁移成本为零。</p>
+<blockquote><p><strong>隐藏细节</strong>（src/utils/claudemd.ts:939）：SDK 的 <code>settingSources</code> 默认值是 <code>[]</code>——即<strong>默认不加载</strong> CLAUDE.md / <code>.claude/</code> 目录 / skills / commands / plugins。这与 CLI 默认全加载正好相反（注释原文："the SDK defaults settingSources to [] when not specified"）。官方 overview 文档措辞"With default options the SDK loads these from .claude/..."与源码直接冲突，以源码为准。SDK 首次跑起来发现"claude 不吃我的 CLAUDE.md"基本都是这一条。</p></blockquote>
+<blockquote><p><strong>隐藏细节</strong>（src/entrypoints/agentSdkTypes.ts:101）：<code>createSdkMcpServer</code> 注册的进程内 MCP tool 走 60s 默认 close timeout，注释原文："If your SDK MCP calls will run longer than 60s, override CLAUDE_CODE_STREAM_CLOSE_TIMEOUT"。用户写长任务 SDK tool 时到 60s 会被 kill，这是标准踩坑点，文档只埋在 docstring 里。</p></blockquote>
+<h3>23.3.3 SDKMessage union</h3>
+<p>SDK 让调用方 <code>for await</code> 的就是这个 union。定义在 <code class="ref">src/entrypoints/sdk/coreSchemas.ts:1854-1881</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">coreSchemas.ts:1854-1881</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">SDKMessageSchema</span> = lazySchema(() =&gt;
+  z.union([
+    <span class="hl-type">SDKAssistantMessageSchema</span>(),
+    <span class="hl-type">SDKUserMessageSchema</span>(),
+    <span class="hl-type">SDKUserMessageReplaySchema</span>(),
+    <span class="hl-type">SDKResultMessageSchema</span>(),
+    <span class="hl-type">SDKSystemMessageSchema</span>(),
+    <span class="hl-type">SDKPartialAssistantMessageSchema</span>(),
+    <span class="hl-type">SDKCompactBoundaryMessageSchema</span>(),
+    <span class="hl-type">SDKStatusMessageSchema</span>(),
+    <span class="hl-type">SDKAPIRetryMessageSchema</span>(),
+    <span class="hl-cm">// ...（共 24 种，@internal 居多）</span>
+  ]),
+)</code></pre></figure>
+<p>对外稳定的主要是这几条：</p>
+<ul>
+<li><code>user</code> / <code>assistant</code> / <code>result</code>：对话回合。</li>
+<li><code>system{subtype: &#x27;init&#x27;}</code>：session 开头一次，带 <code>session_id</code> / <code>model</code> / <code>tools</code> / <code>mcp_servers</code> / <code>slash_commands</code> / <code>output_style</code> / <code>skills</code> / <code>plugins</code>（<code class="ref">coreSchemas.ts:1457-1494</code>）。SDK 用户从这里拿 <code>session_id</code> 用于 resume。</li>
+<li><code>stream_event</code>（<code>SDKPartialAssistantMessage</code>）：逐 token 增量事件。只有 <code>includePartialMessages: true</code> 时产生。</li>
+</ul>
+<p>其余多半是 <code>@internal</code>（<code>streamlined_text</code> / <code>post_turn_summary</code> / <code>hook_started</code> / <code>tool_progress</code> 等）。虽然对外，但不保证稳定。</p>
+<p>终态消息 <code>SDKResultMessage</code>（<code class="ref">coreSchemas.ts:1407-1455</code>）带 <code>duration_ms</code> / <code>total_cost_usd</code> / <code>num_turns</code> / <code>permission_denials</code> / 可选 <code>structured_output</code>——本章第 23.7 节讨论怎么读它。</p>
+<h2>23.4 控制协议：把回调变成消息</h2>
+<p>SDK 用户传的 <code>canUseTool</code> 回调、<code>hooks</code> 回调跑在宿主进程，Agent Loop 跑在 CLI 子进程——跨进程怎么把结果接回去？</p>
+<h3>23.4.1 <code>control_request</code> / <code>control_response</code> 信封</h3>
+<p>信封只有一层：</p>
+<figure class="codeblock"><figcaption><span class="file">controlSchemas.ts:578-584</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">SDKControlRequestSchema</span> = lazySchema(() =&gt;
+  z.object({
+    <span class="hl-kw">type</span>: z.literal(&#x27;control_request&#x27;),
+    request_id: z.string(),
+    request: <span class="hl-type">SDKControlRequestInnerSchema</span>(),
+  }),
+)
+
+<span class="hl-cm">// controlSchemas.ts:605-610</span>
+<span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">SDKControlResponseSchema</span> = lazySchema(() =&gt;
+  z.object({
+    <span class="hl-kw">type</span>: z.literal(&#x27;control_response&#x27;),
+    response: z.union([<span class="hl-type">ControlResponseSchema</span>(), <span class="hl-type">ControlErrorResponseSchema</span>()]),
+  }),
+)</code></pre></figure>
+<p><code>request_id</code> 是 UUID，用来在两侧的 pending map 里配对 response。额外还有 <code>control_cancel_request</code>（<code class="ref">controlSchemas.ts:612-619</code>）—— 单字段 <code>request_id</code>，让一侧通知对端取消某个 pending 请求。远端 WebSocket transport 复用的正是同一份信封（<a class="chref" href="../ch17/">ch.17</a> §17 有独立视角）。</p>
+<h3>23.4.2 Request 子类型清单</h3>
+<p><code>SDKControlRequestInner</code>（<code class="ref">controlSchemas.ts:552-576</code>）是所有控制消息的 discriminated union，按方向列：</p>
+<p><strong>SDK → CLI</strong>（宿主向 Agent 下发）：</p>
+<div class="table-wrap"><table><thead><tr><th>subtype</th><th>用途</th><th>行号</th></tr></thead><tbody><tr><td><code>initialize</code></td><td>注册 hooks / sdkMcpServers / systemPrompt / agents</td><td>57-75</td></tr>
+<tr><td><code>interrupt</code></td><td>中断当前 turn</td><td>97-103</td></tr>
+<tr><td><code>set_permission_mode</code></td><td>改权限模式（见 <a class="chref" href="../ch09/">ch.09</a>）</td><td>124-135</td></tr>
+<tr><td><code>set_model</code> / <code>set_max_thinking_tokens</code></td><td>改模型 / 思考预算</td><td>137 / 146</td></tr>
+<tr><td><code>mcp_status</code> / <code>get_context_usage</code> / <code>get_settings</code></td><td>查状态</td><td>157 / 175 / 475</td></tr>
+<tr><td><code>mcp_set_servers</code> / <code>mcp_reconnect</code> / <code>mcp_toggle</code></td><td>动态管 MCP（见 <a class="chref" href="../ch12/">ch.12</a>）</td><td>384 / 435 / 444</td></tr>
+<tr><td><code>reload_plugins</code></td><td>重载 plugins</td><td>405</td></tr>
+<tr><td><code>rewind_files</code> / <code>cancel_async_message</code> / <code>seed_read_state</code></td><td>对话状态操作</td><td>308 / 330 / 351</td></tr>
+<tr><td><code>stop_task</code></td><td>停后台任务（见 <a class="chref" href="../ch16/">ch.16</a>）</td><td>455</td></tr>
+<tr><td><code>apply_flag_settings</code></td><td>合并一层 settings</td><td>464</td></tr></tbody></table></div>
+<p><strong>CLI → SDK</strong>（Agent 向宿主问问题）：</p>
+<div class="table-wrap"><table><thead><tr><th>subtype</th><th>用途</th><th>行号</th></tr></thead><tbody><tr><td><code>can_use_tool</code></td><td>请求工具权限（见 <a class="chref" href="../ch09/">ch.09</a>）</td><td>106-122</td></tr>
+<tr><td><code>hook_callback</code></td><td>触发 SDK 注册的 hook（见 <a class="chref" href="../ch14/">ch.14</a>）</td><td>363-372</td></tr>
+<tr><td><code>mcp_message</code></td><td>JSON-RPC 透传给某 MCP server（见 <a class="chref" href="../ch12/">ch.12</a>）</td><td>374-382</td></tr>
+<tr><td><code>elicitation</code></td><td>MCP elicitation 代用户回答</td><td>522-536</td></tr></tbody></table></div>
+<p><strong>关键观察</strong>：官方文档里 <code>Query</code> 对象暴露的方法清单——<code>interrupt()</code> / <code>setPermissionMode()</code> / <code>setModel()</code> / <code>mcpServerStatus()</code> / <code>setMcpServers()</code> / <code>rewindFiles()</code> / <code>supportedModels()</code>——一一对应上表的 subtype。<strong><code>Query</code> 的方法就是 <code>control_request</code> 子类型的一层薄语法糖</strong>，没有别的逻辑。</p>
+<h3>23.4.3 <code>initialize</code> 握手</h3>
+<p>SDK 和 CLI 的第一件事是一次 <code>initialize</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">controlSchemas.ts:57-75</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-type">SDKControlInitializeRequestSchema</span> = z.object({
+  subtype: z.literal(&#x27;initialize&#x27;),
+  hooks: z.record(<span class="hl-type">HookEventSchema</span>(), z.array(<span class="hl-type">SDKHookCallbackMatcherSchema</span>())).optional(),
+  sdkMcpServers: z.array(z.string()).optional(),
+  jsonSchema: z.record(z.string(), z.<span class="hl-kw">unknown</span>()).optional(),
+  systemPrompt: z.string().optional(),
+  appendSystemPrompt: z.string().optional(),
+  agents: z.record(z.string(), <span class="hl-type">AgentDefinitionSchema</span>()).optional(),
+  promptSuggestions: z.boolean().optional(),
+  agentProgressSummaries: z.boolean().optional(),
+})</code></pre></figure>
+<p>CLI 回一份能力表（<code class="ref">controlSchemas.ts:77-95</code>）：<code>commands</code> / <code>agents</code> / <code>available_output_styles</code> / <code>models</code> / <code>account</code> / <code>pid</code>。之后 SDK 宿主就能对着表做 UI 选择。</p>
+<p>Hook 回调的注册方式值得看一下。用户传的函数在 SDK 进程，CLI 拿不到；握手时 SDK 把每个 hook 分配一个 <code>hookCallbackIds: string[]</code>（<code>SDKHookCallbackMatcherSchema</code>，<code class="ref">controlSchemas.ts:43-51</code>），CLI 要触发时发一条 <code>hook_callback</code> request 带 <code>callback_id</code>（<code class="ref">controlSchemas.ts:363-372</code>），SDK 侧 dispatch 到对应 JS 函数。整条链路和 MCP server 的做法同构——hooks 的其他注入路径（shell / HTTP / prompt / agent）见 <a class="chref" href="../ch14/">ch.14</a> §14。</p>
+<h2>23.5 CLI 侧的运行时：NDJSON StructuredIO + runHeadless</h2>
+<h3>23.5.1 启动条件</h3>
+<p><code class="ref">src/main.tsx:2831-2835</code> 决定走 SDK 模式：<code>-p/--print</code> 标志加上 <code>--output-format=stream-json</code>。</p>
+<p>自动设置的真正触发条件是 <code>--sdk-url</code>：提供后，input/output format 都会被自动置为 <code>stream-json</code>（<code class="ref">main.tsx:1242-1258</code>），同时顺带把 <code>verbose</code> 和 <code>print</code> 打开。若没有 <code>--sdk-url</code>，<code>--input-format=stream-json</code> 并不会自动升格 output——反而是 <code>input === stream-json &amp;&amp; output !== stream-json</code> 时直接报错退出（<code class="ref">main.tsx:1829-1832</code>）。</p>
+<p>之后动态 <code>import(&#x27;src/cli/print.js&#x27;)</code> 跑 <code>runHeadless()</code>，Ink UI 永不加载。</p>
+<p><code>runHeadless</code> 的 options（<code class="ref">src/cli/print.ts:455-493</code>）就是 Options 的 CLI 侧接收端。里面几个 SDK 独有的字段：</p>
+<ul>
+<li><code>includePartialMessages</code>：开 <code>stream_event</code> 发射。</li>
+<li><code>replayUserMessages</code>：把 stdin 的 user message 再 echo 回 stdout，供宿主做 ack。</li>
+<li><code>enableAuthStatus</code>：允许 <code>auth_status</code> 消息，供 IDE 感知登录态。</li>
+<li><code>workload</code>：进程级别的 billing-header tag，<code>SDK daemon callers that spawn subprocesses for cron work</code>（<code class="ref">main.tsx</code> 选项注释）用。</li>
+</ul>
+<h3>23.5.2 NDJSON StructuredIO：协议多路复用器</h3>
+<p><code class="ref">src/cli/structuredIO.ts:135</code> 起。职责清晰：</p>
+<ul>
+<li>按行读 stdin，<code>jsonParse</code> → normalize → 按 <code>type</code> dispatch（<code>processLine</code>，<code class="ref">structuredIO.ts:333-463</code>）。</li>
+<li>维护 <code>pendingRequests: Map&lt;string, PendingRequest&gt;</code>（<code class="ref">structuredIO.ts:137</code>），每条 <code>control_request</code> 挂一个 <code>{resolve, reject, schema, request}</code>。</li>
+<li>所有对端 response 按 <code>request_id</code> 查表、Zod schema 校验、resolve pending promise（<code class="ref">structuredIO.ts:362-429</code>）。</li>
+<li>取消路径：<code>AbortSignal</code> fire 就 enqueue 一条 <code>control_cancel_request</code> 并 reject 本地 promise（<code class="ref">structuredIO.ts:490-509</code>）。</li>
+</ul>
+<p><strong>值得留意的抗重入保护</strong>：</p>
+<figure class="codeblock"><figcaption><span class="file">structuredIO.ts:155</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">private</span> <span class="hl-kw">readonly</span> resolvedToolUseIds = <span class="hl-kw">new</span> <span class="hl-type">Set</span>&lt;string&gt;()</code></pre></figure>
+<p>有了它，WebSocket 重连 / 消息重放造成的"同一个 tool_use_id 的 <code>control_response</code> 到两次"不会把重复 assistant message 推进 history（会导致 API 400 <code>tool_use ids must be unique</code>）。第二次直接忽略（<code class="ref">structuredIO.ts:378-394</code>）。这是跨进程 + 不稳定网络场景必须做的事。</p>
+<blockquote><p><strong>隐藏细节</strong>（src/cli/structuredIO.ts:133 + 176-186）：<code>resolvedToolUseIds</code> 上限是 <code>MAX_RESOLVED_TOOL_USE_IDS = 1000</code>，满后 <strong>FIFO 驱逐最旧条目</strong>。也就是说，去重窗口有上限——极长 session 里超过 1000 条 tool_use 之后，若最早那批的重复 response 姗姗来迟，会再次被当成"新"的处理掉。正常场景碰不到，边界上需要留意。</p></blockquote>
+<h3>23.5.3 canUseTool 的双源 race</h3>
+<p>Claude Code 的权限系统让 SDK 宿主的 <code>canUseTool</code> 回调与 <code>PermissionRequest</code> hook <strong>并行竞速</strong>（<code class="ref">src/cli/structuredIO.ts:576-659</code>）。权限系统的本地 rules / <code>allowedTools</code> / <code>disallowedTools</code> 判决细节见 <a class="chref" href="../ch09/">ch.09</a> §9。</p>
+<p><strong>前置</strong>：本地 permission 系统先跑一次——只要 <code>behavior === &#x27;allow&#x27;</code> 或 <code>&#x27;deny&#x27;</code> 就直接返回，不发任何 <code>control_request</code>（<code class="ref">structuredIO.ts:544-559</code>）；<strong>只有 <code>behavior === &#x27;ask&#x27;</code> 时才进 race</strong>。整段 race 的逻辑：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// structuredIO.ts:608-638（节选）</span>
+<span class="hl-kw">const</span> winner = <span class="hl-kw">await</span> <span class="hl-type">Promise</span>.race([hookPromise, sdkPromise])
+<span class="hl-kw">if</span> (winner.source === &#x27;hook&#x27;) {
+  <span class="hl-kw">if</span> (winner.decision) {
+    sdkPromise.<span class="hl-kw">catch</span>(() =&gt; {})        <span class="hl-cm">// 吞掉 abort reject</span>
+    hookAbortController.abort()        <span class="hl-cm">// 发 control_cancel_request</span>
+    <span class="hl-kw">return</span> winner.decision
+  }
+  <span class="hl-kw">const</span> sdkResult = <span class="hl-kw">await</span> sdkPromise   <span class="hl-cm">// hook pass-through，等 SDK</span>
+  <span class="hl-kw">return</span> permissionPromptToolResultToPermissionDecision(...)
+}
+<span class="hl-kw">return</span> permissionPromptToolResultToPermissionDecision(...)  <span class="hl-cm">// SDK 胜</span></code></pre></figure>
+<p>为什么并行而不是串行等 hook？——hook 可能是 shell 进程或 HTTP 服务，无上限慢；SDK 宿主（比如 VS Code 的权限弹窗）该立即出现就立即出现，不被后台 hook 卡住。输的一方 abort。这是值得偷的模式：<strong>并发扩展点之间别串行等</strong>。</p>
+<h3>23.5.4 NDJSON 清洁</h3>
+<p>SDK 模式下任何意外 <code>console.log</code> 都会毒化宿主的行分片 parser。<code>runHeadless</code> 一开始就装 stdout guard（<code class="ref">print.ts:594-596</code>），把非 JSON 行改道到 stderr。上线 NDJSON 协议要记得做这件事。</p>
+<h2>23.6 SDK 与 CLI 的代码复用面</h2>
+<p>共享（同一份代码）：</p>
+<ul>
+<li><strong>Agent Loop</strong>（见 <a class="chref" href="../ch03/">ch.03</a> §3）：入口一致，本章不展开。</li>
+<li><strong>工具系统</strong>（见 <a class="chref" href="../ch08/">ch.08</a> §8）：Tool 接口、<code>getTools()</code>、ToolSearch 的动态注入都是共用代码；SDK 自定义 Tool 走 <code>createSdkMcpServer</code> 封装进来，详见 <a class="chref" href="../ch12/">ch.12</a> §12。</li>
+<li><strong>权限</strong>（见 <a class="chref" href="../ch09/">ch.09</a> §9）：<code>hasPermissionsToUseTool</code> 先判本地规则（<code class="ref">structuredIO.ts:546-552</code>），再决定是否发 <code>can_use_tool</code>。</li>
+<li><strong>MCP</strong>（见 <a class="chref" href="../ch12/">ch.12</a> §12）：MCP 客户端 / server 配置 / elicitation 管道全共享。<code>createSdkMcpServer</code> 产出的进程内 server 走同一份 client codepath。</li>
+<li><strong>Hooks</strong>（见 <a class="chref" href="../ch14/">ch.14</a> §14）：SDK 的 <code>createHookCallback</code>（<code class="ref">structuredIO.ts:661-689</code>）是 hook 执行者的第五种（另外四种：shell / HTTP / prompt / agent）。</li>
+<li><strong>Skills / Plugins / Memory</strong>（见 <a class="chref" href="../ch10/">ch.10</a> / <a class="chref" href="../ch11/">ch.11</a> / <a class="chref" href="../ch07/">ch.07</a>）：SDK 的 <code>settingSources</code> 决定是否加载——默认值 <code>[]</code>（见 §23.3.2 callout）与 CLI 默认全加载相反，这是"共享引擎 + 不同默认"的一个典型分叉，迁移到 SDK 时需要显式传 <code>[&#x27;user&#x27;, &#x27;project&#x27;, &#x27;local&#x27;]</code> 才能恢复 CLI 行为。</li>
+<li><strong>Sandbox / Session 存储</strong>。</li>
+</ul>
+<p>CLI 独占：Ink UI（<a class="chref" href="../ch21/">ch.21</a>）、keybindings / voice（<a class="chref" href="../ch20/">ch.20</a>）、statusline / Buddy（<a class="chref" href="../ch19/">ch.19</a>）、交互式 trust dialog、OAuth 登录向导。</p>
+<p>SDK 独占：NDJSON StructuredIO 读写、<code>runHeadless</code> 的 options 展开路径、<code>initialize</code> 握手、<code>ControlErrorResponseSchema.pending_permission_requests</code> 断连恢复（<code class="ref">controlSchemas.ts:599-602</code>）。</p>
+<blockquote><p><strong>隐藏细节</strong>（src/cli/structuredIO.ts:682-686）：SDK hook 回调里 <strong>throw 不会</strong>让 agent 退出——<code>createHookCallback</code> 用 try/catch 捕获异常，<code>console.error</code> 一行后返回 <code>{}</code>（pass-through）。与 shell hook 的"exit code 2 = block"行为完全不同：在 SDK 里写 <code>assert(...)</code> 会被<strong>静默吞掉</strong>，hook 实现里的防御判断必须显式返回 decision 字段，不能靠抛错阻止工具执行。</p></blockquote>
+<blockquote><p><strong>隐藏细节</strong>（src/cli/print.ts:5348-5352）：<code>Query.setMcpServers()</code> 运行时注入 MCP 仍然跑企业 <code>allowedMcpServers / deniedMcpServers</code> 策略过滤（与 <code>--mcp-config</code> 同一条 filter）。注释原文："SDK V2 Query.setMcpServers() was a second policy bypass vector"——没有这层检查的话，运行时热插拔 MCP 就能绕过 enterprise 策略。被 block 的 server 在 response.errors 里报出，SDK 宿主据此展示。</p></blockquote>
+<p><strong>粗略估计共享率：高</strong>。分叉点几乎都在"渲染终点"和"用户输入源"上。Agent Loop、Tool、MCP、Permission、Hooks、Skills、Plugins、Memory、Sandbox、Telemetry、Session 存储——这些是本书大部分章节讲的核心——两端一份代码。</p>
+<h2>23.7 Session 生命周期与错误恢复</h2>
+<h3>23.7.1 一次性 <code>query</code> vs 持久 session</h3>
+<p>官方文档演示的主流用法是<strong>每次调用新起 session，复用靠 <code>session_id</code></strong>：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// 来源: https://code.claude.com/docs/en/agent-sdk/overview</span>
+<span class="hl-kw">let</span> sessionId: string | <span class="hl-kw">undefined</span>
+<span class="hl-kw">for</span> <span class="hl-kw">await</span> (<span class="hl-kw">const</span> m <span class="hl-kw">of</span> query({ prompt: &#x27;<span class="hl-type">Read</span> auth <span class="hl-kw">module</span>&#x27;, options: { allowedTools: [&#x27;<span class="hl-type">Read</span>&#x27;, &#x27;<span class="hl-type">Glob</span>&#x27;] } })) {
+  <span class="hl-kw">if</span> (m.<span class="hl-kw">type</span> === &#x27;system&#x27; &amp;&amp; m.subtype === &#x27;init&#x27;) sessionId = m.session_id
+}
+<span class="hl-kw">for</span> <span class="hl-kw">await</span> (<span class="hl-kw">const</span> m <span class="hl-kw">of</span> query({ prompt: &#x27;<span class="hl-type">Find</span> callers&#x27;, options: { resume: sessionId } })) { <span class="hl-cm">/* ... */</span> }</code></pre></figure>
+<p>第二次 <code>query</code> 传 <code>options.resume: sessionId</code> 就续接。本仓库 <code>unstable_v2_createSession</code> / <code>unstable_v2_resumeSession</code>（<code class="ref">agentSdkTypes.ts:129-144</code>）提供了持有 session 对象的 v2 风格 API，但标 <code>@alpha</code> 未稳定——生产建议走 <code>session_id</code> 路线。</p>
+<h3>23.7.2 错误暴露给 SDK 用户</h3>
+<p>错误从三个通道走：</p>
+<ol>
+<li><strong><code>SDKAPIRetryMessage</code></strong>（<code class="ref">coreSchemas.ts:1572-1588</code>）：API 5xx / 超时等可重试错误，CLI 自动重试前发一条通知，带 <code>attempt</code> / <code>max_retries</code> / <code>retry_delay_ms</code>。SDK 用户只读不响应。</li>
+<li><strong><code>SDKRateLimitEvent</code></strong>（<code class="ref">coreSchemas.ts:1358-1367</code>）：带 <code>resetsAt</code> / <code>rateLimitType</code>（<code>five_hour</code> / <code>seven_day</code> / 等）。</li>
+<li><strong><code>SDKResultErrorSchema</code></strong>（<code class="ref">coreSchemas.ts:1428-1451</code>）：终态错误。<code>subtype</code> 枚举：<code>error_during_execution</code> / <code>error_max_turns</code> / <code>error_max_budget_usd</code> / <code>error_max_structured_output_retries</code>。<code>errors: string[]</code> 累积具体原因，<code>permission_denials</code> 含本 session 里被拒绝的工具调用。</li>
+</ol>
+<p>中断：SDK 用户发 <code>control_request{ subtype: &#x27;interrupt&#x27; }</code>（或直接 <code>abortController.abort()</code>）。本地产生 <code>AbortError</code>（<code class="ref">agentSdkTypes.ts:109</code>）。</p>
+<p><strong>断连恢复的专门设计</strong>：<code>ControlErrorResponseSchema.pending_permission_requests</code>（<code class="ref">controlSchemas.ts:594-603</code>）——宿主重连后可以从 error response 里拿回未完成的权限请求列表，继续处理。这条在本地 NDJSON StructuredIO 路径看不到，是留给跨网络 transport（Remote Session，见 <a class="chref" href="../ch17/">ch.17</a> §17）用的。</p>
+<blockquote><p><strong>隐藏细节</strong>（src/utils/sessionRestore.ts:452-462）：<code>forkSession</code> 不止"拷贝 JSONL 换 UUID"——必须显式 <code>recordContentReplacement</code> 把原 session 的 content replacement 搬到新 session。否则后续 <code>claude -r {newId}</code> 的 tool_use_id 会被判为 FROZEN，全文重传走 cache miss 路径，注释原文称此为 "permanent overage"。SDK 用户调 <code>forkSession</code> 时不需要感知这层，但若跳过 SDK 自己复制 JSONL 拼凑 fork 会直接踩坑。</p></blockquote>
+<h2>23.8 <code class="ref">src/entrypoints/mcp.ts</code>：SDK 的另一种入口</h2>
+<p>Claude Code 还把<strong>自己暴露为一个 MCP server</strong>。<code class="ref">src/entrypoints/mcp.ts:35-196</code> 的 <code>startMCPServer()</code> 通过 stdio transport 把所有内置 Tool 注册为 MCP tool，供其他 MCP client（比如另一个 Claude Code 实例，或任何 MCP 宿主）调用：</p>
+<figure class="codeblock"><figcaption><span class="file">src/entrypoints/mcp.ts:59-97</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">server.setRequestHandler(<span class="hl-type">ListToolsRequestSchema</span>, <span class="hl-kw">async</span> () =&gt; {
+  <span class="hl-kw">const</span> tools = getTools(toolPermissionContext)
+  <span class="hl-kw">return</span> {
+    tools: <span class="hl-kw">await</span> <span class="hl-type">Promise</span>.all(tools.map(<span class="hl-kw">async</span> tool =&gt; ({
+      ...tool,
+      description: <span class="hl-kw">await</span> tool.prompt({ ... }),
+      inputSchema: zodToJsonSchema(tool.inputSchema),
+      outputSchema,
+    }))),
+  }
+})</code></pre></figure>
+<p>这是 SDK 之外的另一条调用路径：不经 <code>query()</code> + <code>canUseTool</code> 协议，而是走 MCP 的标准 <code>tools/list</code> + <code>tools/call</code>。两端最终都落到同一个 <code>getTools()</code>（<code class="ref">src/entrypoints/mcp.ts:64</code>）。MCP server 侧的 Tool 注入和 ToolSearch 行为见 <a class="chref" href="../ch08/">ch.08</a> §8、<a class="chref" href="../ch12/">ch.12</a> §12。</p>
+<h2>23.9 设计取舍</h2>
+<h3>23.9.1 子进程 vs 嵌入式库</h3>
+<p>SDK 为什么不直接把 Agent Loop 做成纯 JS 函数 export 出来？三条理由从源码能看出来：</p>
+<ol>
+<li><strong>CLI 启动有大量全局 state 依赖顺序</strong>：<code class="ref">src/entrypoints/init.ts:57-238</code> 的 memoize + 串行 checkpoint（<code>init_configs_enabled</code> / <code>init_mtls_configured</code> / <code>init_proxy_configured</code> / ...）假设一个进程只 init 一次。SDK 宿主自己已经有一份完整 Node 进程 state，两套合并会踩 env 变量 / TLS 证书 cache / TZ 这些全局。</li>
+<li><strong>可热升级</strong>：子进程二进制由 SDK 按需下载 / 更新（官方文档："bundles native Claude Code binary ... as an optional dependency"）。宿主进程不用重启就能换 Claude Code 版本。</li>
+<li><strong>故障隔离</strong>：Claude Code 有文件 watcher / LSP / plugin 生命周期，崩一条线不影响 SDK 宿主。</li>
+</ol>
+<p>代价：每次 <code>query()</code> 冷启子进程。官方 SDK 提供 <code>startup()</code> 预热函数（文档提及，本仓库未暴露 stub）缓解。NDJSON 序列化 / 反序列化相比函数调用有开销，但 Agent 的瓶颈是 API 延迟，这点开销占比小。</p>
+<h3>23.9.2 把扩展点变成消息类型</h3>
+<p>这是本章最值得借鉴的点。</p>
+<p>常规写法是"接口接受一堆 optional callback"：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// 常规 agent 库的入口签名（对比用）</span>
+query({
+  prompt,
+  canUseTool,
+  onHookEvent,
+  onMcpCall,
+  onToolProgress,
+  onPermissionChange,
+  onRateLimit,
+  <span class="hl-cm">// ... 还要加新的扩展点？改签名</span>
+})</code></pre></figure>
+<p>Claude Code 的写法是：所有可扩展的双向交互都通过 <code>control_request</code> 子类型。加一个扩展点 = 在 <code>SDKControlRequestInner</code> 里加一个 <code>z.literal(...)</code> 成员（<code class="ref">controlSchemas.ts:552-576</code>，当前 21 种），SDK 宿主按 subtype switch。</p>
+<p>相比 callback 集合：</p>
+<ul>
+<li><strong>接口稳定</strong>：<code>query({ prompt, options })</code> 签名不改。</li>
+<li><strong>多 transport 通用</strong>：同一份协议既走 stdio，又走 WebSocket（见 <a class="chref" href="../ch17/">ch.17</a> §17 远端），又走 daemon bridge。加 transport 不动 schema。</li>
+<li><strong>可持久化 / 可回放</strong>：断连恢复用 <code>pending_permission_requests</code> 让对端回放未完成请求——这在 callback 模型下做不到。</li>
+<li><strong>协议版本化</strong>：Zod schema 可以加 discriminator，旧 SDK 不认得的 subtype 可以 fallback。</li>
+</ul>
+<p>代价：SDK 侧需要自己维护 pending request 表（<code class="ref">structuredIO.ts:137</code>），callback 风格要简单得多。</p>
+<blockquote><p><strong>隐藏细节</strong>（src/cli/print.ts:3709-3718）：<code>apply_flag_settings</code> 用 <code>null</code> 作为"清除这一键"的哨兵值——因为 <code>JSON.stringify</code> 会把 <code>undefined</code> 的属性直接 drop 掉，双方无从约定"擦除"语义。CLI 在 merge 前统一把值为 <code>null</code> 的 key <code>delete</code> 掉，再送进 Zod optional 校验。JSON-native 协议做 PATCH 语义都得想好这件事，不是语法糖。</p></blockquote>
+<h3>23.9.3 Zod schema 作为单一真理源</h3>
+<p><code class="ref">coreSchemas.ts</code> 文件开头注释（<code class="ref">coreSchemas.ts:1-8</code>）：</p>
+<blockquote><p>These schemas are the single source of truth for SDK data types. TypeScript types are generated from these schemas and committed for IDE support. @see scripts/generate-sdk-types.ts for type generation</p></blockquote>
+<p>TS SDK 的类型、Python SDK 的类型（官方 Python 包）、CLI 侧的运行时校验——都从这一份 schema 生成或手动对齐。改字段只改一处，三端一起更新。</p>
+<p>Zod schema 天然包含两项：类型 + runtime validator。CLI 侧 <code>StructuredIO.processLine</code> 对 stdin 的 <code>control_response</code> 用 <code>request.schema.parse(result)</code>（<code class="ref">structuredIO.ts:416-423</code>）做校验，<strong>schema 直接当防御第一层</strong>。比手写 TS interface 再写 <code>if (typeof x === &#x27;string&#x27; &amp;&amp; ...)</code> 的防御省事一大截。</p>
+<h3>23.9.4 并发扩展点不串行</h3>
+<p><code>canUseTool</code> × <code>PermissionRequest</code> hook 的 race（<code class="ref">structuredIO.ts:576-659</code>）是一个小但重要的模式：同一个决定有多个可能 resolver 的时候，<strong>并行启动所有 resolver，先到先赢，其他 abort</strong>，不要做"hook 决定了就不问 SDK"这种看似简单的串行逻辑——因为 hook 可能无限慢。</p>
+<p>这个模式在 agent 系统里有通用价值：用户输入来源多元（UI 弹窗 / 快捷键 / hook / 外部 API），任何一个"第一候选人"都不能独占等待时间。</p>
+<h2>23.10 可迁移的点</h2>
+<p>给做 agent 库 / agent 产品的读者：</p>
+<ol>
+<li><strong>NDJSON over stdio 做控制面 + 数据面</strong>。进程间传 agent 流就够了，比 gRPC 轻，比 JSON-RPC 自由（JSON-RPC 没法在同一条流里随意插 partial event）。每行一个 <code>type</code> / <code>subtype</code> 字段就能走很远。</li>
+<li><strong><code>request_id</code> + <code>Map&lt;string, PendingRequest&gt;</code> 统一异步回调模式</strong>。取消、去重、超时、跨网络恢复都用同一套。参见 <code class="ref">structuredIO.ts:469-531</code> 的完整实现。</li>
+<li><strong>扩展点 → 消息类型</strong>。接受 callback 的方案，扩展面积大了接口会爆炸。把扩展点变成 discriminated union 的子类型，主入口签名永远是 <code>query({ prompt, options })</code>。代价是 pending 表管理，但这玩意儿只写一次。</li>
+<li><strong>Zod schema 作协议源</strong>。特别是跨语言 / 跨进程场景，先写 schema、生成类型、运行时 parse 一条龙。手写 interface + 手写 validator 的 drift 是长期维护的大坑。</li>
+<li><strong>stdout guard</strong>。要发 NDJSON 就别让依赖库污染 stdout——安装一层 redirect（参考 <code class="ref">print.ts:594-596</code>）把非 JSON 行送到 stderr。</li>
+<li><strong>断连恢复要在协议里留口子</strong>。像 <code>pending_permission_requests</code> 这种字段，只在"对端重连"时才用得上，但协议里留着，比日后加不兼容升级容易得多。</li>
+<li><strong>并发扩展点 race 而不是 sequence</strong>。同一个决定多个可能的 resolver，让他们并行，先赢者取，输者 abort。</li>
+<li><strong>JSON PATCH 语义要选 <code>null</code> 而非 <code>undefined</code></strong>。<code>JSON.stringify</code> 会 drop <code>undefined</code>，两侧无法约定"擦除这一键"。用 <code>null</code> 当哨兵，接收端在校验前统一转成 <code>delete</code>。</li>
+</ol>
+<hr>
+<p>脚注：本章涉及的所有 CLI → SDK 协议字段均以 <code class="ref">src/entrypoints/sdk/coreSchemas.ts</code> 与 <code class="ref">src/entrypoints/sdk/controlSchemas.ts</code> 的 Zod schema 为准。<code class="ref">agentSdkTypes.ts</code> 导出的函数在本仓库里全部是 <code>throw new Error(&#x27;not implemented&#x27;)</code> 的 shim——真正的运行时在 npm 包 <code>@anthropic-ai/claude-agent-sdk</code>（<code class="ref">package.json:29</code>）内，它作为 SDK 宿主 spawn 本仓库 CLI 二进制。</p>
+  </div>
+</article>
+
+<nav class="chap-nav"><a class="nav-link prev" href="../ch22/"><span class="dir">← Ch.22 · prev</span><span class="t">Observability<span class="cn">成本 / 可观测 / 调试</span></span></a><a class="nav-home" href="../">§ 目录</a><span></span></nav>
+
+<footer class="colophon">
+  <div class="left">Claude <span class="dot">&amp;</span> Code</div>
+  <div class="right">
+    set in EB garamond · albert sans · jetbrains mono · LXGW wenkai<br>
+    《Claude Code 源码解读》 · ch.23
+  </div>
+</footer>
+
+</body>
+</html>

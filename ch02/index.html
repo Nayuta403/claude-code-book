@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.02 Showcase · 典型使用场景 — Claude Code 源码解读</title>
+<meta name="description" content="《Claude Code 源码解读》第 2 章 —— 典型使用场景（five real tasks）">
+<meta property="og:title" content="Ch.02 Showcase · 典型使用场景 — Claude Code 源码解读">
+<meta property="og:description" content="《Claude Code 源码解读》第 2 章 —— 典型使用场景（five real tasks）">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://nayuta403.github.io/claude-code-book/ch02/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,300;1,400;1,500&family=Albert+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<link rel="stylesheet" href="../assets/book.css">
+</head>
+<body>
+
+<nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
+
+<header class="chap-head">
+  <div>
+    <div class="crumb">
+      <a href="../">目录</a>
+      <span class="sep">/</span>
+      <span class="part-tag p1">Part I · 总览</span>
+    </div>
+    <div class="chap-num">Chapter · 02 / 23</div>
+    <h1 class="chap-title">Showcase<span class="cn">典型使用场景</span></h1>
+  </div>
+  <aside class="chap-meta">
+    <div><div class="km">part</div><div class="vm">总览（Overview）</div></div>
+    <div><div class="km">topic</div><div class="vm m">five real tasks</div></div>
+    <div><div class="km">reading</div><div class="vm">≈ 14 min</div></div>
+    <div><div class="km">source refs</div><div class="vm m">25</div></div>
+  </aside>
+</header>
+
+<article class="article">
+  <div class="prose">
+<blockquote><p><a class="chref" href="../ch01/">ch.01</a> 把能力清点完了。这一章换视角：挑 5 个端到端的真实场景，看这些能力<strong>怎么配合</strong>。本章不展开任何模块的实现，触到的地方一律标"（详见 ch0X）"；重点是"胶水"——哪段代码把几件事串成一件事。</p></blockquote>
+<h2>2.1 为什么单开一章讲场景</h2>
+<p class="drop">Claude Code 单个能力拿出来讲不稀奇：开一个 TUI、实现 tool use、装个 git worktree。稀奇在于，同一个二进制要把"用户选中 VS Code 里几行代码"、"在终端让 sub-agent 去 worktree 实现功能"、"下班把 session 推到云上接着跑"、"明早九点 cron 拉 CI 状态提醒"这些事塞进同一条 Agent Loop。</p>
+<p>组装端的代码体量很小，但位置讲究。每个场景里真正值得抄的不是某个工具本身，而是某一条"跨模块的粘合路径"——例如"cron fire 把 prompt 扔进同一条命令队列，用 <code>isMeta:true</code> 把它藏起来"。这类粘合层在单章里最容易被忽略，所以把 showcase 单独拎一章。</p>
+<p>挑选原则：</p>
+<ol>
+<li>每个场景<strong>至少串三个模块</strong>，否则留给模块章讲。</li>
+<li>每个场景有<strong>公开的真实使用佐证</strong>（官方文档 / Anthropic 博客 / 开发者分享）。</li>
+<li>只讲粘合设计，不讲实现。</li>
+</ol>
+<p>五个场景：</p>
+<div class="table-wrap"><table><thead><tr><th>场景</th><th>组合</th></tr></thead><tbody><tr><td>2.2 Review PR</td><td><code>/review</code> prompt 模板 · Bash(<code>gh</code>) · Plan mode · permission <code>ask</code></td></tr>
+<tr><td>2.3 Overnight cron</td><td><code>CronCreate</code> · 命令队列 · <code>task-notification</code> 回流 · Notification hook</td></tr>
+<tr><td>2.4 Plan → worktree sub-agent</td><td><code>/plan</code> · <code>ExitPlanModeV2</code> · <code>AgentTool(isolation:&quot;worktree&quot;)</code> · PreToolUse hook</td></tr>
+<tr><td>2.5 IDE → CLI → Remote Control</td><td>IDE MCP 选区通知 · <code>/remote-control</code> · BRIDGE 白名单 · mobile push</td></tr>
+<tr><td>2.6 Web session → <code>/teleport</code> 回本地</td><td><code>claude --remote</code> · <code>teleportFromSessionsAPI</code> · git 切换</td></tr></tbody></table></div>
+<h2>2.2 场景一：Review my PR</h2>
+<p><strong>用户输入</strong>：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">/review 1234</code></pre></figure>
+<p><strong>用户看到的节点</strong>：进度条显示 <code>reviewing pull request</code>；片刻后 Claude 跑一串 <code>gh</code> 命令（每条要点一次权限确认，除非已加白名单）；最后返回分段评论。如果用户当时在 plan mode，会先被问一次"Exit plan mode?"。</p>
+<p><strong>内部怎么拼起来</strong>：</p>
+<ul>
+<li><code>/review</code> 本身是 <code>type: &#x27;prompt&#x27;</code> 命令，不渲染任何 UI；它只返回一段模板文本作为新一轮用户输入：
+<figure class="codeblock"><figcaption><span class="file">src/commands/review.ts:33-42</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> review: <span class="hl-type">Command</span> = {
+  <span class="hl-kw">type</span>: &#x27;prompt&#x27;,
+  name: &#x27;review&#x27;,
+  description: &#x27;<span class="hl-type">Review</span> a pull request&#x27;,
+  progressMessage: &#x27;reviewing pull request&#x27;,
+  <span class="hl-cm">// ...</span>
+  <span class="hl-kw">async</span> getPromptForCommand(args): <span class="hl-type">Promise</span>&lt;<span class="hl-type">ContentBlockParam</span>[]&gt; {
+    <span class="hl-kw">return</span> [{ <span class="hl-kw">type</span>: &#x27;text&#x27;, text: <span class="hl-type">LOCAL_REVIEW_PROMPT</span>(args) }]
+  },
+}</code></pre></figure>
+<p>模板指令让模型依次跑 <code>gh pr list</code> / <code>gh pr view &lt;n&gt;</code> / <code>gh pr diff &lt;n&gt;</code>（同文件 9-31 行），然后给结构化 review。</p></li>
+<li>Agent Loop（详见 <a class="chref" href="../ch03/">ch.03</a>）接管后，模型的每次 <code>gh</code> 调用都走 Bash 工具，触发 permission 检查（详见 <a class="chref" href="../ch09/">ch.09</a>）。如果 <code>gh</code> 没在 allowlist，用户得按 <code>y</code> 放行一次。</li>
+<li>若当前在 plan mode，情况变得微妙。<code>ExitPlanModeV2Tool</code> 的 <code>validateInput</code> 会拒绝非 plan 模式下调用自身；但反过来，plan mode 对<strong>所有</strong>写操作和大部分 Bash 命令设 <code>ask</code>（详见 <a class="chref" href="../ch05/">ch.05</a>、<a class="chref" href="../ch09/">ch.09</a>）。也就是说：plan mode 下 <code>/review</code> 会先被 ExitPlanMode 的审批卡住，让用户确认"确定要从只读切到执行吗"，再才跑 <code>gh pr diff</code>。</li>
+<li>Anthropic 把"多 agent 并行跑 review"放在云上 <code>/ultrareview</code> 与 GitHub App 里。官方博客描述的这条多 agent 链路，原话是 "The agents look for bugs in parallel, verify bugs to filter out false positives, and rank bugs by severity"（来源：<a href="https://claude.com/blog/code-review" rel="noreferrer">https://claude.com/blog/code-review</a>，访问于 2026-04-19）。仓库里的 <code>/ultrareview</code> 对应 <code class="ref">src/commands/review.ts:48-53</code>，是唯一进云端沙箱的入口。本节讲的是 local <code>/review</code>，两条路径<strong>共用命令名家族，但实现互不重叠</strong>。</li>
+</ul>
+<p><strong>这个场景跑通是因为</strong>：一条命令可以"什么都不做"，只往对话里贴一段内置 prompt。剩下的一切（git、Bash 权限、plan mode 门控、输出格式）都由 Agent Loop 自己决定。没有任何"review 专属"代码路径；也因此本地 <code>/review</code> 只有 50 行。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/commands/review.ts:33-42</code> + <code class="ref">src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts:195-219</code>）：在 plan mode 下输入 <code>/review 1234</code>，触发的不是 <code>gh pr diff</code> 被直接拦截，而是模型先尝试 <code>ExitPlanMode</code>、<code>validateInput</code> 检查 <code>mode === &#x27;plan&#x27;</code> 通过后走 <code>checkPermissions</code> 返回 <code>behavior:&#x27;ask&#x27;</code>，弹出"Exit plan mode?"对话框。用户看到的感觉是"怎么问我退出 plan 了"，但其实是<strong>审批对象从 Bash 变成了 plan 退出</strong>。加了 <code>Bash(gh *)</code> allowlist 也救不了这条，因为它拦的是 plan mode 的 mode-change，不是 shell。</p></blockquote>
+<h2>2.3 场景二：Overnight task with cron</h2>
+<p><strong>用户输入</strong>（睡前）：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">/loop 30m check the release PR and tell me if CI turned red</code></pre></figure>
+<p>第二天早上打开终端，REPL 里多出几条"Running scheduled task" 的标记，每条后面是模型对 CI 的判断。</p>
+<p><strong>用户看到的节点</strong>：cron job 确认消息（带 ID 和 "Auto-expires after 7 days"）；之后每次 fire 时屏幕上出现一条 <code>Running scheduled task (Apr 14 9:00am)</code> 提示行，然后是模型的回复。若用户不在场，<code>Notification</code> hook（详见 <a class="chref" href="../ch14/">ch.14</a> hooks）可把一条 desktop toast 推到系统。</p>
+<p><strong>内部怎么拼起来</strong>：</p>
+<ul>
+<li><code>/loop 30m ...</code> 会让模型调 <code>CronCreate</code> 工具（详见 <a class="chref" href="../ch13/">ch.13</a> cron 的工具家族）：
+<figure class="codeblock"><figcaption><span class="file">src/tools/ScheduleCronTool/CronCreateTool.ts:56-78</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">CronCreateTool</span> = buildTool({
+  name: <span class="hl-type">CRON_CREATE_TOOL_NAME</span>,
+  <span class="hl-cm">// ...</span>
+  isEnabled() { <span class="hl-kw">return</span> isKairosCronEnabled() },
+  <span class="hl-kw">async</span> prompt() { <span class="hl-kw">return</span> buildCronCreatePrompt(isDurableCronEnabled()) },
+  <span class="hl-cm">// ...</span>
+})</code></pre></figure>
+<p>门控见 <code class="ref">src/tools/ScheduleCronTool/prompt.ts:36-45</code>：编译期 <code>feature(&#x27;AGENT_TRIGGERS&#x27;)</code> 与运行时 GrowthBook <code>tengu_kairos_cron</code>（默认 true）任一缺席都会让 cron 全家消失。</p></li>
+<li>REPL 挂了一个轮询器 <code>useScheduledTasks</code>：scheduler tick 每秒检查一次到期任务，fire 时<strong>不直接发请求</strong>，而是把 prompt 塞进命令队列：
+<figure class="codeblock"><figcaption><span class="file">src/hooks/useScheduledTasks.ts:71-82</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> enqueueForLead = (prompt: string) =&gt;
+  enqueuePendingNotification({
+    value: prompt,
+    mode: &#x27;prompt&#x27;,
+    priority: &#x27;later&#x27;,
+    isMeta: <span class="hl-kw">true</span>,
+    workload: <span class="hl-type">WORKLOAD_CRON</span>,
+  })</code></pre></figure>
+<p><code>priority:&#x27;later&#x27;</code> 保证它排在用户刚敲的 prompt 后面（详见 <a class="chref" href="../ch16/">ch.16</a> background tasks 里的命令队列）；<code>isMeta:true</code> 让它不污染可见历史；<code>workload: WORKLOAD_CRON</code> 被写进 API 请求的 billing header，用来在容量紧张时给 cron 请求降级。</p></li>
+<li>cron 触发的回合会产生一条可见的 <code>Running scheduled task (timestamp)</code> 消息打头（<code class="ref">useScheduledTasks.ts:110-113</code>），后面才是模型的实际回复；这解决了"用户早上看屏幕分不清哪段是昨晚跑的、哪段是今天接着聊的"。</li>
+<li>若任务在后台 Bash 里触发副作用（例如 <code>gh run view --log</code> 比较长），结果会作为一种特殊的 queued command 以 <code>mode: &#x27;task-notification&#x27;</code> 注入：
+<figure class="codeblock"><figcaption><span class="file">src/utils/attachments.ts:1044</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">INLINE_NOTIFICATION_MODES</span> = <span class="hl-kw">new</span> <span class="hl-type">Set</span>([&#x27;prompt&#x27;, &#x27;task-notification&#x27;])</code></pre></figure>
+<p>collapse 逻辑（<code class="ref">src/utils/collapseBackgroundBashNotifications.ts:28-70</code>）会把连续的完成通知合成一条"N background commands completed"——否则早上打开终端会看到一屏的完成消息。</p></li>
+</ul>
+<p>官方行为保证：</p>
+<ul>
+<li>"The scheduler checks every second for due tasks and enqueues them at low priority. A scheduled prompt fires between your turns, not while Claude is mid-response"（<a href="https://code.claude.com/docs/en/scheduled-tasks" rel="noreferrer">https://code.claude.com/docs/en/scheduled-tasks</a>，访问于 2026-04-19）。</li>
+<li>"No catch-up for missed fires. If a task's scheduled time passes while Claude is busy on a long-running request, it fires once when Claude becomes idle, not once per missed interval"（同页）。</li>
+</ul>
+<p>社区印证：Rick Hightower 的文章 "Put Claude on Autopilot: Scheduled Tasks with /loop and /schedule built-in Skills"（<a href="https://medium.com/@richardhightower/put-claude-on-autopilot-scheduled-tasks-with-loop-and-schedule-built-in-skills-43f3be5ac1ec" rel="noreferrer">https://medium.com/@richardhightower/put-claude-on-autopilot-scheduled-tasks-with-loop-and-schedule-built-in-skills-43f3be5ac1ec</a>，访问于 2026-04-19）专门给出了 overnight polling 的配方。</p>
+<blockquote><p><strong>跨章边界</strong>：本节讲的是 session-only 的 <code>/loop</code>——关掉终端就随 REPL 一起失效。官方页面把 <code>/loop</code> 与 durable <code>/schedule</code>（写 <code class="ref">.claude/scheduled_tasks.json</code>、跨会话存活）并列描述，二者实现路径不同：durable 侧的生命周期（持久化、7 天过期、teammate 禁用）留给 <a class="chref" href="../ch13/">ch.13</a> cron 展开。</p></blockquote>
+<p><strong>这个场景跑通是因为</strong>：cron 和"用户输入"走同一条 REPL 命令队列。cron 不是特权通道；它只是一个"模型自己输入自己"的特殊 enqueue，于是所有下游组件（permission、hooks、transcript）都自动兼容。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/hooks/useScheduledTasks.ts:71-82</code>）：cron 触发的 prompt 进 API 时带 <code>workload: WORKLOAD_CRON</code>，服务端在流量紧张时会给这类请求排到更低 QoS。用户在 REPL 里完全看不到这条标记，但这是"半夜 cron 任务偶尔比预期慢"的根本原因之一——不是 cron 自己慢，是它被显式降级了。</p></blockquote>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/tools/ScheduleCronTool/CronCreateTool.ts:107-114</code>）：<code>durable:true</code>（让任务写 <code class="ref">.claude/scheduled_tasks.json</code>，跨会话存活）对 teammate 一律禁用，返回 <code>errorCode:4</code>。原因是 teammate 不持久化，durable 会让 <code>agentId</code> 指向一个不存在的 teammate。产品 UI 里 <code>/schedule</code> 看不出这层限制，但若用 sub-agent 帮你排 cron 就会吃到。</p></blockquote>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/tools/ScheduleCronTool/CronCreateTool.ts:97-104</code>）：每个 session 有硬上限 <code>MAX_JOBS</code>（官方文档给的数是 50），超过就返 <code>errorCode:3</code>，错误文案是 "Too many scheduled jobs (max ${MAX_JOBS}). Cancel one first."。REPL 用户只会看到这条报错，不会看到具体阈值——除非翻源码。对用 <code>/loop</code> 密集排各种轮询的用户，这条比 durable-teammate 限制更常撞到，cron 密度设计要预留冗余。</p></blockquote>
+<h2>2.4 场景三：Plan → Worktree sub-agent 落地</h2>
+<p><strong>用户输入</strong>：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">(Shift+Tab 进 Plan mode)
+&gt; 给 auth 模块加 magic-link 登录，列 OAuth / magic-link / passkey 三条路线对比
+(模型给出计划 → 用户按 Ctrl+G 微调 → 确认)
+&gt; 按这个计划实施，派两个 sub-agent 各开一个 worktree 分头干</code></pre></figure>
+<p><strong>用户看到的节点</strong>：底部指示器从 <code>⏸ plan mode on</code> 切回 <code>default</code>；Ctrl+G 打开编辑器改 plan；确认对话 "Exit plan mode?"；主 agent 输出两个 <code>AgentTool</code> 调用，每个 agent 先跑一条 <code>git worktree add</code>；最后回到主 agent 汇总。</p>
+<p><strong>内部怎么拼起来</strong>：</p>
+<ul>
+<li><code>/plan</code> 或 Shift+Tab 进入 plan mode（详见 <a class="chref" href="../ch05/">ch.05</a> plan mode），<code class="ref">src/commands/plan/plan.tsx:73-91</code> 把当前 mode 存到 <code>prePlanMode</code>，再切到 <code>plan</code>。这一步会<strong>剥离</strong>危险 permission 规则（通过 <code>prepareContextForPlanMode</code>）；ExitPlanMode 时若恢复到 default 再把它们塞回来。</li>
+<li>用户确认后，<code>ExitPlanModeV2Tool</code> 的 call()（<code class="ref">src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts:243-418</code>）把 plan 写盘、改 mode、视情况走 teammate 的 mailbox approval 分支；非 teammate 会走本地 <code>setAppState</code> 分支。</li>
+<li>主 agent 决定拆两个 sub-agent 时，<code>AgentTool</code> 的 input schema 支持 <code>isolation: &quot;worktree&quot;</code>（源码实际是 <code>&quot;external&quot; === &#x27;ant&#x27; ? …</code> 三目，下面贴的是 external 分发在运行时命中的分支）：
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/AgentTool/AgentTool.tsx:99-101（external 分支）</span>
+isolation: z.<span class="hl-kw">enum</span>([&#x27;worktree&#x27;]).optional().describe(
+  &#x27;<span class="hl-type">Isolation</span> mode. &quot;worktree&quot; creates a temporary git worktree so the agent works on an isolated copy <span class="hl-kw">of</span> the repo.&#x27;),</code></pre></figure>
+<p>每个 sub-agent 实际调 <code>createAgentWorktree</code>（详见 <a class="chref" href="../ch04/">ch.04</a> sub-agents、<a class="chref" href="../ch06/">ch.06</a> worktree）；worktree 本体创建逻辑见 <code class="ref">src/tools/EnterWorktreeTool/EnterWorktreeTool.ts:77-118</code>，顺便清 <code>claudemd</code> / <code>plansDirectory</code> 缓存、<code>process.chdir</code>、持久化到 session storage。</p></li>
+<li>Worktree 清理策略：sub-agent 完成时若没改动自动删；有改动保留。这是官方文档承诺的："No changes: the worktree and its branch are removed automatically. Changes or commits exist: Claude prompts you to keep or remove the worktree"（<a href="https://code.claude.com/docs/en/common-workflows" rel="noreferrer">https://code.claude.com/docs/en/common-workflows</a>，访问于 2026-04-19）。</li>
+<li>护栏层：用户可以再加一个 PreToolUse hook（详见 <a class="chref" href="../ch14/">ch.14</a> hooks），拦掉 sub-agent 里的高危 Bash。官方给过脚本模板：
+<figure class="codeblock"><figcaption><span></span><span class="lang">bash</span></figcaption><pre><code class="language-bash"><span class="hl-cm"># protect-files.sh —— 官方示例（hooks-guide 页）</span>
+INPUT=$(cat)
+FILE_PATH=$(echo &quot;$INPUT&quot; | jq -r &#x27;.tool_input.file_path // empty&#x27;)
+PROTECTED_PATTERNS=(&quot;.env&quot; &quot;package-lock.json&quot; &quot;.git/&quot;)
+for p in &quot;${PROTECTED_PATTERNS[@]}&quot;; do
+  if [[ &quot;$FILE_PATH&quot; == *&quot;$p&quot;* ]]; then
+    echo &quot;Blocked: $FILE_PATH matches $p&quot; &gt;&amp;2
+    exit 2
+  fi
+done</code></pre></figure>
+<p>HOOK 事件枚举见 <code class="ref">src/entrypoints/sdk/coreTypes.ts:25-53</code>。关键承诺："PreToolUse hooks fire before any permission-mode check. A hook that returns <code>permissionDecision: &#x27;deny&#x27;</code> blocks the tool even in <code>bypassPermissions</code> mode or with <code>--dangerously-skip-permissions</code>"（<a href="https://code.claude.com/docs/en/hooks-guide" rel="noreferrer">https://code.claude.com/docs/en/hooks-guide</a>，访问于 2026-04-19）。</p></li>
+</ul>
+<p><strong>这个场景跑通是因为</strong>：<code>plan → code</code> 的切换点是一次性的"mode transition + 剥离/恢复 permission rules"，之后 sub-agent 各跑各的不互相干涉。粘合点有两个：</p>
+<ol>
+<li>plan 写到磁盘（<code>getPlanFilePath(context.agentId)</code>），sub-agent 能 Read 到同一份。</li>
+<li><code>AgentTool.isolation</code> 把 worktree 的复杂清理周期藏进 sub-agent 生命周期——主 agent 根本不管。</li>
+</ol>
+<h2>2.5 场景四：IDE → CLI → Remote Control → 手机 push</h2>
+<p><strong>用户流程</strong>：</p>
+<ol>
+<li>在 VS Code 里选中 <code class="ref">src/auth/login.ts</code> 的 30-45 行，按 Option+K 把 <code>@src/auth/login.ts#30-45</code> 塞进 Claude 扩展的输入框。</li>
+<li>改完扩展觉得不过瘾，在集成终端里敲 <code>/remote-control</code> 把当前 session 暴露到 claude.ai。</li>
+<li>上楼拿手机继续对话；Claude 跑一个长测试后需要确认，push 推到手机，用户点通知继续。</li>
+</ol>
+<p><strong>用户看到的节点</strong>：VS Code 里的 at-mention、Option+K 自动带行号；<code>/remote-control</code> 后底部出现 session URL / QR code；手机端出现推送。</p>
+<p><strong>内部怎么拼起来</strong>：</p>
+<ul>
+<li>IDE 的选区事件是 MCP notification（详见 <a class="chref" href="../ch12/">ch.12</a> MCP），<code>useIdeSelection</code> 订阅：
+<figure class="codeblock"><figcaption><span class="file">src/hooks/useIdeSelection.ts:92-108</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> selectionChangeHandler = (data: <span class="hl-type">SelectionData</span>) =&gt; {
+  <span class="hl-kw">if</span> (data.selection?.start &amp;&amp; data.selection?.end) {
+    <span class="hl-kw">const</span> { start, end } = data.selection
+    <span class="hl-kw">let</span> lineCount = end.line - start.line + <span class="hl-num">1</span>
+    <span class="hl-cm">// If on the first character of the line, do not count the line</span>
+    <span class="hl-cm">// as being selected.</span>
+    <span class="hl-kw">if</span> (end.character === <span class="hl-num">0</span>) {
+      lineCount--
+    }
+    <span class="hl-cm">// ...</span>
+    onSelect(selection)
+  }
+}</code></pre></figure>
+<p><code>@-mention</code> 走类似通道：<code class="ref">useIdeAtMentioned.ts:16-27</code> 订阅 <code>at_mentioned</code>，在 58-60 把 VS Code 的 0-index 换成 1-index。</p></li>
+<li><code>/remote-control</code> 命令本身是薄壳：
+<figure class="codeblock"><figcaption><span class="file">src/commands/bridge/index.ts:1-24</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">function</span> isEnabled(): boolean {
+  <span class="hl-kw">if</span> (!feature(&#x27;<span class="hl-type">BRIDGE_MODE</span>&#x27;)) <span class="hl-kw">return</span> <span class="hl-kw">false</span>
+  <span class="hl-kw">return</span> isBridgeEnabled()
+}
+<span class="hl-kw">const</span> bridge = {
+  <span class="hl-kw">type</span>: &#x27;local-jsx&#x27;,
+  name: &#x27;remote-control&#x27;,
+  aliases: [&#x27;rc&#x27;],
+  description: &#x27;<span class="hl-type">Connect</span> <span class="hl-kw">this</span> terminal <span class="hl-kw">for</span> remote-control sessions&#x27;,
+  <span class="hl-cm">// ...</span>
+}</code></pre></figure>
+<p>核心逻辑在 <code>src/bridge/</code> 目录（详见 <a class="chref" href="../ch17/">ch.17</a> remote sessions）。<code>/session</code>（别名 <code>/remote</code>）在 <code>getIsRemoteMode()</code> 为真时才显示 QR（<code class="ref">src/commands/session/index.ts:1-14</code>）。</p></li>
+<li>从手机推回来的输入会经过 <code>isBridgeSafeCommand</code> 过滤：
+<figure class="codeblock"><figcaption><span class="file">src/commands.ts:672-676</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> isBridgeSafeCommand(cmd: <span class="hl-type">Command</span>): boolean {
+  <span class="hl-kw">if</span> (cmd.<span class="hl-kw">type</span> === &#x27;local-jsx&#x27;) <span class="hl-kw">return</span> <span class="hl-kw">false</span>
+  <span class="hl-kw">if</span> (cmd.<span class="hl-kw">type</span> === &#x27;prompt&#x27;) <span class="hl-kw">return</span> <span class="hl-kw">true</span>
+  <span class="hl-kw">return</span> <span class="hl-type">BRIDGE_SAFE_COMMANDS</span>.has(cmd)
+}</code></pre></figure>
+<p><code>local-jsx</code> 全部被静默丢弃（理由：它们渲染 Ink UI，在手机上无意义）；<code>local</code> 型命令要显式加入 <code>BRIDGE_SAFE_COMMANDS</code>（<code class="ref">src/commands.ts:651-660</code>）——目前只有 <code>/compact /clear /cost /summary /release-notes /files</code> 六条；<code>prompt</code>（skill）默认通过。</p></li>
+<li>Push 通道：当 <code>feature(&#x27;KAIROS&#x27;) || feature(&#x27;KAIROS_PUSH_NOTIFICATION&#x27;)</code> 时注册 <code>PushNotificationTool</code>（<a class="chref" href="../ch01/">ch.01</a> §1.5.2）。官方承诺："Claude decides when to push. It typically sends one when a long-running task finishes or when it needs a decision from you to continue. You can also request a push in your prompt, for example <code>notify me when the tests finish</code>"（<a href="https://code.claude.com/docs/en/remote-control" rel="noreferrer">https://code.claude.com/docs/en/remote-control</a>，访问于 2026-04-19）。</li>
+</ul>
+<p><strong>这个场景跑通是因为</strong>：三种 surface 不是 point-to-point 连接，而是"每种 surface 都把输入折叠成 REPL 的 prompt / tool_result"再入队。IDE 扩展其实只是自己跑了一个 MCP server（官方文档：the extension "runs a local MCP server that the CLI connects to automatically"，<a href="https://code.claude.com/docs/en/ide-integrations" rel="noreferrer">https://code.claude.com/docs/en/ide-integrations</a> 访问 2026-04-19），CLI 用 MCP notification 订阅选区；Remote Control 本质是"claude.ai 的输入流转发给本地 CLI 的 stdin"。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/commands.ts:672-676</code>）：手机上敲 <code>/model</code> 不会报错，也不会切换模型；它会被 <code>isBridgeSafeCommand</code> 静默吞掉（<code>local-jsx</code> 型命令不在任何白名单）。用户通常的反应是"没反应"。这条过滤规则在 PR #19134 是全量 block，后来才放宽到这个双层白名单。要从 mobile 添加一条安全命令，必须进 <code>BRIDGE_SAFE_COMMANDS</code> 显式加一行。</p></blockquote>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/hooks/useIdeSelection.ts:92-108</code>）：在 VS Code 里选区停在行首（<code>end.character === 0</code>），行数会被 <code>-1</code>。这是把 VS Code 原生 Range 语义（"选择到下一行的开头算选了下一行"）调成用户直觉语义（"我光标还在上一行末尾，下一行没选"）。对 IDE 侧 UI 无影响，但影响 <code>@file.ts#5-10</code> 这种 <code>#range</code> 里的 <code>10</code> 到底是哪个值。</p></blockquote>
+<h2>2.6 场景五：Web session → <code>/teleport</code> 回本地</h2>
+<p><strong>用户流程</strong>：</p>
+<ol>
+<li>下班前在终端：<code>claude --remote &quot;Run the migration rehearsal and report results&quot;</code>——云端 session 启动，clone repo、跑任务。</li>
+<li>第二天早上终端打开，<code>claude --teleport</code> 或在会话里 <code>/tp</code>。picker 里选中那个 session，本地 git 自动 fetch + checkout 对应分支，transcript 被还原。</li>
+<li>继续对话——Claude 没丢 context，但现在跑在本地机器上。</li>
+</ol>
+<p><strong>用户看到的节点</strong>：stash uncommitted changes 的提示（如有）；transcript 里出现 "Session resumed" 的 meta 消息；分支已切换。</p>
+<p><strong>内部怎么拼起来</strong>：</p>
+<ul>
+<li><code>--remote</code> 云端起 session（详见 <a class="chref" href="../ch17/">ch.17</a> remote sessions）：官方承诺 "This creates a new cloud session on claude.ai. The session clones your current directory's GitHub remote at your current branch, so push first if you have local commits"（<a href="https://code.claude.com/docs/en/claude-code-on-the-web" rel="noreferrer">https://code.claude.com/docs/en/claude-code-on-the-web</a>，访问于 2026-04-19）。这条路径在仓库里由 <code>teleportToRemote</code>（<code class="ref">src/utils/teleport.tsx</code>，供 <code>AgentTool(isolation:&#x27;remote&#x27;)</code> 和 <code>--remote</code> 共用，见 <code class="ref">src/tools/AgentTool/AgentTool.tsx:39</code> 的导入）支撑。</li>
+<li><code>--teleport</code> 拉回：核心函数
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/teleport.tsx:565 (signature)</span>
+<span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span> teleportFromSessionsAPI(
+  sessionId: string,
+  orgUUID: string,
+  accessToken: string,
+  onProgress?: <span class="hl-type">TeleportProgressCallback</span>,
+  sessionData?: <span class="hl-type">SessionResource</span>,
+): <span class="hl-type">Promise</span>&lt;<span class="hl-type">TeleportRemoteResponse</span>&gt;</code></pre></figure>
+<p>做三件事：fetch session logs（<code>/v1/sessions/{id}/events</code>）、拿 branch、本地 <code>git fetch &amp;&amp; git checkout</code>。完成后注入一条 meta 用户消息给模型：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/teleport.tsx:66-71</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">function</span> createTeleportResumeUserMessage() {
+  <span class="hl-kw">return</span> createUserMessage({
+    content: <span class="hl-str">`This session is being continued from another machine. Application state may have changed. The updated working directory is ${getOriginalCwd()}`</span>,
+    isMeta: <span class="hl-kw">true</span>,
+  })
+}</code></pre></figure></li>
+<li>Teleport 的前置条件（官方）："Clean git state ... Correct repository ... Branch available ... Same account"（同 URL）。其中 "clean git state" 触发 stash 提示；"branch available" 要求云端推过分支，不然本地 fetch 不到。</li>
+<li>仓库里的 <code>/teleport</code> 命令目录是 stub（<code class="ref">src/commands/teleport/index.js:1</code>，<code>export default { isEnabled: () =&gt; false, isHidden: true, name: &#x27;stub&#x27; }</code>）——真实行为走 CLI flag <code>--teleport</code> 与 <code class="ref">src/utils/teleport.tsx</code> 模块。这是 source-map 还原遗留的缺口（<a class="chref" href="../ch01/">ch.01</a> §1.11）。</li>
+</ul>
+<p><strong>这个场景跑通是因为</strong>：云端 session 和本地 session 用同一个 SDK message 格式（<code>src/entrypoints/sdk/</code>），transcript 可以在两个进程之间二进制转发。分支切换是 git 的事；context 延续是 transcript deserialize 的事；两件事由一个 CLI flag 串起来。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/teleport.tsx:1200-1222</code> 与调用点审计）：<code>archiveRemoteSession</code> 是"拉回本地 → 归档云端 session"的闭环关键，但它<strong>只在 <code>RemoteAgentTask</code> 完成</strong>（<code class="ref">src/tasks/RemoteAgentTask/RemoteAgentTask.tsx:841</code>）和 <code>ultraplan</code> 本地执行分支（<code class="ref">src/commands/ultraplan.tsx:157</code> 与 <code>395</code>）里被调用。<code>--teleport</code> / <code>/teleport</code> 的 pull-down 路径<strong>不调</strong>它。结果是：用户把云 session teleport 回本地继续干了，云端那份 session 在 claude.ai 仍然显示为 idle，并不自动归档；要么在 web UI 里手动 archive，要么用 ultraplan/RemoteAgent 路径进行生命周期管理。对用户的直接影响：cloud rate limit 额度持续被占，直到用户记得回去点 archive。</p></blockquote>
+<h2>2.7 横向看：这 5 个场景共同靠什么撑起来</h2>
+<p>归纳这 5 个场景的<strong>共同胶水</strong>，比逐个研究场景更有参考价值：</p>
+<ol>
+<li><strong>一条统一的命令队列是中枢</strong>。用户敲的 prompt、cron fire 的 prompt、task 完成通知、bridge 推下来的 <code>/compact</code>、teleport 拉回时注入的 meta 消息——全部统一成 queued command 排队进 REPL。模式字段区分用途（<code>&#x27;prompt&#x27;</code> / <code>&#x27;task-notification&#x27;</code> / <code>&#x27;queued_command&#x27;</code>，见 <code class="ref">src/utils/attachments.ts:543-559</code>、<code>1044</code>），priority 决定顺序（<code>&#x27;later&#x27;</code> vs. 默认）。任何新输入来源只要会自己 enqueue 一次，就自动享有 transcript、hooks、permission、token 计费的全部下游链路。</li>
+<li><strong>permission 机制是跨场景的统一守门员</strong>。plan mode 的 ExitPlanMode 是 permission 事件、sub-agent worktree 里的 PreToolUse hook 是 permission 事件、bridge 白名单也是 permission 决策（只是在 command 层）。没有为任何场景开特例通道。</li>
+<li><strong>feature flag 三层叠加</strong>决定"这台机器能看到什么"（<a class="chref" href="../ch01/">ch.01</a> §1.3）。showcase 里每个场景都踩到至少一层 gate：<code>AGENT_TRIGGERS</code>（cron）、<code>BRIDGE_MODE</code>（remote control）、<code>KAIROS</code> 族（push、sleep）。这是 Anthropic 把"未 GA 功能"和"私有/公共账户差异"统一塞进一个二进制的成本，阅读源码时必须时刻意识到。</li>
+<li><strong>还原仓库的缺口不是致命的</strong>。<code>/teleport</code> 命令本体是 stub（<code class="ref">src/commands/teleport/index.js:1</code>），但背后的 <code class="ref">teleport.tsx</code> 是完整的；用户照样能通过 <code>--teleport</code> CLI flag 走完全流程。写本章时用"CLI flag + 真实模块"的组合来还原行为，而不是在 stub 上编故事。</li>
+</ol>
+<p>如果只能带走一句：<strong>showcase 之所以能组合，是因为每个新入口都把自己降级成了"往队列里塞一个标了 priority 的输入"</strong>。没有任何 feature 自己开通道。</p>
+<hr>
+<blockquote><p>本章引用的官方 URL 全部于 2026-04-19 通过 WebFetch 实际访问。跨章引用已按 STATE.json 的 canonical 章号锚定：<a class="chref" href="../ch03/">ch.03</a> Agent Loop、<a class="chref" href="../ch04/">ch.04</a> sub-agents、<a class="chref" href="../ch05/">ch.05</a> plan mode、<a class="chref" href="../ch06/">ch.06</a> worktree、<a class="chref" href="../ch09/">ch.09</a> permissions、<a class="chref" href="../ch13/">ch.13</a> cron / <code>/schedule</code>、<a class="chref" href="../ch14/">ch.14</a> hooks、<a class="chref" href="../ch16/">ch.16</a> background tasks / 命令队列、<a class="chref" href="../ch17/">ch.17</a> remote sessions。</p></blockquote>
+  </div>
+</article>
+
+<nav class="chap-nav"><a class="nav-link prev" href="../ch01/"><span class="dir">← Ch.01 · prev</span><span class="t">Feature Inventory<span class="cn">功能全景清单</span></span></a><a class="nav-home" href="../">§ 目录</a><a class="nav-link next" href="../ch03/"><span class="dir">Ch.03 · next →</span><span class="t">Agent Loop<span class="cn">推理·工具循环主引擎</span></span></a></nav>
+
+<footer class="colophon">
+  <div class="left">Claude <span class="dot">&amp;</span> Code</div>
+  <div class="right">
+    set in EB garamond · albert sans · jetbrains mono · LXGW wenkai<br>
+    《Claude Code 源码解读》 · ch.02
+  </div>
+</footer>
+
+</body>
+</html>

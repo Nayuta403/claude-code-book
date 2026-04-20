@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.19 Buddy · 宠物系统 — Claude Code 源码解读</title>
+<meta name="description" content="《Claude Code 源码解读》第 19 章 —— 宠物系统（companion）">
+<meta property="og:title" content="Ch.19 Buddy · 宠物系统 — Claude Code 源码解读">
+<meta property="og:description" content="《Claude Code 源码解读》第 19 章 —— 宠物系统（companion）">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://nayuta403.github.io/claude-code-book/ch19/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,300;1,400;1,500&family=Albert+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<link rel="stylesheet" href="../assets/book.css">
+</head>
+<body>
+
+<nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
+
+<header class="chap-head">
+  <div>
+    <div class="crumb">
+      <a href="../">目录</a>
+      <span class="sep">/</span>
+      <span class="part-tag p4">Part IV · 交互与集成</span>
+    </div>
+    <div class="chap-num">Chapter · 19 / 23</div>
+    <h1 class="chap-title">Buddy<span class="cn">宠物系统</span></h1>
+  </div>
+  <aside class="chap-meta">
+    <div><div class="km">part</div><div class="vm">交互与集成（Interactions）</div></div>
+    <div><div class="km">topic</div><div class="vm m">companion</div></div>
+    <div><div class="km">reading</div><div class="vm">≈ 20 min</div></div>
+    <div><div class="km">source refs</div><div class="vm m">77</div></div>
+  </aside>
+</header>
+
+<article class="article">
+  <div class="prose">
+<h2>19.1 用户看到的是什么</h2>
+<p class="drop">Buddy 是 Claude Code 在 2026-04-01 释出的一个小玩意儿：终端输入框右下角蹲着一只 5 行高、12 列宽的 ASCII 小动物，缓慢扭动，偶尔眨眼。主 agent 回了一轮话后，动物上方会浮出一个 round-border 的气泡，它讲一句跟这轮对话有关的俏皮话，10 秒后自动退去；用户滚屏一下，气泡立刻消失。</p>
+<p>终端窄于 100 列时，整只动物折叠成一行——一张小脸加上自己的名字。首次启动 Claude Code v2.1.89+ 的那一周（2026-04-01 到 04-07 本地日），还没孵化 Buddy 的用户会在右下角看到一条彩虹色 <code>/buddy</code> 字样飘 15 秒——过了那一周永远不再提示。孵化之后，没有付费订阅的用户会被服务端拦下（Pro 要求，来源 <a href="https://claudefa.st/blog/guide/mechanics/claude-buddy" rel="noreferrer">https://claudefa.st/blog/guide/mechanics/claude-buddy</a>，访问于 2026-04-19）；本仓库的客户端代码没有 Pro 门禁，只看 <code>feature(&#x27;BUDDY&#x27;)</code> 编译时常量。</p>
+<p>随手记一句背景，好让技术细节不突兀：Buddy 的客户端源码比官方预告早了一步——<code>@anthropic-ai/claude-code@2.1.88</code> 的 npm 包误打了 59.8 MB 的 source map，社区几天内就拿到了实现（来源：<a href="https://claudefa.st/blog/guide/mechanics/claude-buddy" rel="noreferrer">https://claudefa.st/blog/guide/mechanics/claude-buddy</a>，访问于 2026-04-19）。本章讨论的还原仓库就来自那次泄漏。</p>
+<h2>19.2 为什么挑这个功能出来讲</h2>
+<p>严肃 CLI 工具里做情感化设计不是常见选择。把一个会扭动、会冒话的 widget 塞到一个工程师每天盯几小时的终端里，最大的风险是<strong>打扰</strong>：屏幕带宽被挤占、注意力被不相关的动画偷走、输入 wrap 因为它错位。Buddy 的代码里有一套足够小的"克制预算"可以抄——怎么用列预算换屏幕面积、怎么用默认关闭换入侵性、怎么用 prompt 注入避免主 agent 抢戏。本章要讲透的是这套预算，不是 Buddy 本身的观赏价值。</p>
+<h2>19.3 关键数据结构：bones / soul 分层</h2>
+<p>Buddy 的状态拆成两层。一层可派生、不落盘；一层用户可编辑（首次由模型生成）、进 config。类型定义在 <code class="ref">src/buddy/types.ts:101-124</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/types.ts:101-124</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">CompanionBones</span> = {
+  rarity: <span class="hl-type">Rarity</span>
+  species: <span class="hl-type">Species</span>
+  eye: <span class="hl-type">Eye</span>
+  hat: <span class="hl-type">Hat</span>
+  shiny: boolean
+  stats: <span class="hl-type">Record</span>&lt;<span class="hl-type">StatName</span>, number&gt;
+}
+
+<span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">CompanionSoul</span> = {
+  name: string
+  personality: string
+}
+
+<span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">Companion</span> = <span class="hl-type">CompanionBones</span> &amp; <span class="hl-type">CompanionSoul</span> &amp; { hatchedAt: number }
+
+<span class="hl-cm">// What actually persists in config. Bones are regenerated from hash(userId)</span>
+<span class="hl-cm">// on every read so species renames don&#x27;t break stored companions and users</span>
+<span class="hl-cm">// can&#x27;t edit their way to a legendary.</span>
+<span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">StoredCompanion</span> = <span class="hl-type">CompanionSoul</span> &amp; { hatchedAt: number }</code></pre></figure>
+<p><code>CompanionBones</code> 从用户 ID 派生（<code class="ref">src/buddy/companion.ts:107-113</code>），每次读配置时重算；<code>CompanionSoul</code>（名字 + 人设）由服务端模型生成，存在 <code>config.companion</code>（<code class="ref">src/utils/config.ts:269-271</code>）。设计意图作者自己写在 <code class="ref">types.ts:121-124</code> 注释里：species 重构不破坏老存档，用户改 config 也刷不到 legendary。</p>
+<p>合成路径见 <code class="ref">src/buddy/companion.ts:127-133</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/companion.ts:127-133</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> getCompanion(): <span class="hl-type">Companion</span> | <span class="hl-kw">undefined</span> {
+  <span class="hl-kw">const</span> stored = getGlobalConfig().companion
+  <span class="hl-kw">if</span> (!stored) <span class="hl-kw">return</span> <span class="hl-kw">undefined</span>
+  <span class="hl-kw">const</span> { bones } = roll(companionUserId())
+  <span class="hl-cm">// bones last so stale bones fields in old-format configs get overridden</span>
+  <span class="hl-kw">return</span> { ...stored, ...bones }
+}</code></pre></figure>
+<p><code>bones</code> 在后覆写 <code>stored</code>——老格式 config 里残留的 bones 字段会被清掉。这比"读 config 时做 migration"简单，相当于每次读都做无代价 migration。</p>
+<p>这套 bones/soul 分层的可迁移性不小。任何"用户 ID 决定某些属性、用户自己又能改某些属性"的场景（个性化头像、工作区偏好、只读身份 metadata）都能照搬：派生的不存，存的不派生，合并时派生的后覆盖。</p>
+<p>PRNG 的种子在 <code class="ref">src/buddy/companion.ts:84</code> 固定为 <code>const SALT = &#x27;friend-2026-401&#x27;</code>，<code>roll(userId)</code> 对 <code>userId + SALT</code> 做 <code>mulberry32(hashString(...))</code>（<code class="ref">companion.ts:107-113</code>）。没有时间、session、启动次数这些维度——同一个 account UUID 跨机器、跨时间、跨重装，hatch 出的 bones（物种、眼、帽、稀有度、shiny 位、stats 底数）完全一致。<code>rollFrom</code> 最后还掷一次 <code>Math.floor(rng() * 1e9)</code> 塞进 <code>inspirationSeed</code>（<code class="ref">companion.ts:101</code>），留给服务端 soul-gen 的 LLM 做确定性种子——同一个用户每次请求 soul 生成也是同一颗种子。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code>src/buddy/companion.ts:84, 98, 107-113</code>）：bones 的随机性只绑在 <code>userId + SALT</code>，不含时间或 session 维度。<code>shiny</code> 的 <code>rng() &lt; 0.01</code> 说的是"1% 的 account UUID 能出 shiny"，不是每次抽卡 1%——<strong>单个用户要么永远 shiny 要么永远不 shiny</strong>，换机器/重装/删 config 都改不了。用户想触发 shiny 的唯一办法是换 account UUID（比如 <code>any-buddy</code> 这种第三方工具靠改 config 绕过，但服务端 soul-gen 仍按真 UUID 走）。</p></blockquote>
+<h3>19.3.1 一个 bundle-hygiene 旁注</h3>
+<p><code class="ref">types.ts:10-52</code> 把 18 种 species 字面量全都用 <code>String.fromCharCode</code> 拼出来。注释原文（<code class="ref">types.ts:10-13</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/types.ts:10-13</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// One species name collides with a model-codename canary in excluded-strings.txt.</span>
+<span class="hl-cm">// The check greps build output (not source), so runtime-constructing the value keeps</span>
+<span class="hl-cm">// the literal out of the bundle while the check stays armed for the actual codename.</span></code></pre></figure>
+<p>18 种里有一个和内部模型 codename 撞词（具体哪个没说）。因为 build-output grep 是正则，需要保持字符串从 bundle 里消失；但又不能特例处理一个——特例处理就失去了对齐的风格，下次加新物种容易漏。全部走 <code>fromCharCode</code> 的代价是一行变多行，收益是扫描规则对代码无感。这种"整列统一写法换规则独立性"的 trick 值得留意。</p>
+<h2>19.4 Sprite 系统</h2>
+<h3>19.4.1 帧数据的组织</h3>
+<p><code class="ref">src/buddy/sprites.ts:26-441</code> 定义了 <code>BODIES: Record&lt;Species, string[][]&gt;</code>——18 种 species、每种 3 帧、每帧 5 行 × 12 列（<code>{E}</code> 替换成 1 字符 eye 后的宽度）。注释约定（<code class="ref">sprites.ts:23-26</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/sprites.ts:23-26</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// Each sprite is 5 lines tall, 12 wide (after {E}→1char substitution).</span>
+<span class="hl-cm">// Multiple frames per species for idle fidget animation.</span>
+<span class="hl-cm">// Line 0 is the hat slot — must be blank in frames 0-1; frame 2 may use it.</span></code></pre></figure>
+<p>典型形状，比如鸭子（<code class="ref">sprites.ts:27-49</code>）：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">            
+    __      
+  &lt;({E} )___  
+   (  ._&gt;   
+    `--´    </code></pre></figure>
+<p>第 0 行留空给帽子。第 4 行有时加个波浪 <code>~</code>（frame 1）表示尾巴扫动。这是一种 hand-authored 的低频序列帧动画，没试图做程序化动画——物种少、帧数少、内容可读，成本可控。</p>
+<p><code>HAT_LINES</code>（<code class="ref">sprites.ts:443-452</code>）是 8 种帽子对应的一行字符串：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/sprites.ts:443-452</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">HAT_LINES</span>: <span class="hl-type">Record</span>&lt;<span class="hl-type">Hat</span>, string&gt; = {
+  none: &#x27;&#x27;,
+  crown: &#x27;   \\^^^/    &#x27;,
+  tophat: &#x27;   [___]    &#x27;,
+  propeller: &#x27;    -+-     &#x27;,
+  halo: &#x27;   (   )    &#x27;,
+  wizard: &#x27;    /^\\     &#x27;,
+  beanie: &#x27;   (___)    &#x27;,
+  tinyduck: &#x27;    ,&gt;      &#x27;,
+}</code></pre></figure>
+<p><code>tinyduck</code> 是一个小鸭子站在头上——hat 系统和 species 系统正交，任何物种都能戴任何帽子（包括 duck 戴 tinyduck），靠 hat 和 species 的笛卡尔积撑出视觉多样性，比硬画 18 × 8 种带帽子精灵图省了非常多功夫。</p>
+<h3>19.4.2 渲染器</h3>
+<p><code>renderSprite</code>（<code class="ref">sprites.ts:454-469</code>）把 bones 转成行数组：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/sprites.ts:454-469</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> renderSprite(bones: <span class="hl-type">CompanionBones</span>, frame = <span class="hl-num">0</span>): string[] {
+  <span class="hl-kw">const</span> frames = <span class="hl-type">BODIES</span>[bones.species]
+  <span class="hl-kw">const</span> body = frames[frame % frames.length]!.map(line =&gt;
+    line.replaceAll(&#x27;{<span class="hl-type">E</span>}&#x27;, bones.eye),
+  )
+  <span class="hl-kw">const</span> lines = [...body]
+  <span class="hl-cm">// Only replace with hat if line 0 is empty (some fidget frames use it for smoke etc)</span>
+  <span class="hl-kw">if</span> (bones.hat !== &#x27;none&#x27; &amp;&amp; !lines[<span class="hl-num">0</span>]!.trim()) {
+    lines[<span class="hl-num">0</span>] = <span class="hl-type">HAT_LINES</span>[bones.hat]
+  }
+  <span class="hl-cm">// Drop blank hat slot — wastes a row in the Card and ambient sprite when</span>
+  <span class="hl-cm">// there&#x27;s no hat and the frame isn&#x27;t using it for smoke/antenna/etc.</span>
+  <span class="hl-cm">// Only safe when ALL frames have blank line 0; otherwise heights oscillate.</span>
+  <span class="hl-kw">if</span> (!lines[<span class="hl-num">0</span>]!.trim() &amp;&amp; frames.every(f =&gt; !f[<span class="hl-num">0</span>]!.trim())) lines.shift()
+  <span class="hl-kw">return</span> lines
+}</code></pre></figure>
+<p>两点值得拆开看。</p>
+<p>第一，<strong>帽子只占空行</strong>。frame 2（"fidget"）有时会用 line 0 放装饰元素——dragon frame 2 的 <code>   ~    ~   </code>（<code class="ref">sprites.ts:135</code>）、octopus frame 2 的 <code>     o      </code>（<code class="ref">sprites.ts:157</code>）、robot frame 2 的 <code>     *      </code>（<code class="ref">sprites.ts:364</code>）。这种帧里帽子让位。配戴 legendary 水晶王冠的 dragon fidget 瞬间短一下王冠，换来烟气效果。</p>
+<p>第二，<strong>整种都不占 line 0 的物种省掉那一行</strong>。如果物种的三帧 line 0 全都空且没戴帽子，<code>lines.shift()</code> 把那一行删掉，sprite 从 5 行变 4 行，在 card 视图里少占一格。但这里有一个反例：penguin frame 2（<code class="ref">sprites.ts:203-209</code>）整个向下跳了一格，line 0 被身体占据了：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">  .---.     
+  ({E}&gt;{E})     
+ /(   )\    
+  `---´     
+   ~ ~      </code></pre></figure>
+<p>所以 penguin 永远不 shift。这就是注释里 <code>frames.every(...)</code> 判断的存在理由——任何一帧用了 line 0，高度就要保留，否则物种会在 4 行和 5 行之间抖动。</p>
+<p><code>renderFace</code>（<code class="ref">sprites.ts:475-514</code>）是窄终端专用的单行脸。每个物种一条 <code>case</code>，手写简写：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/buddy/sprites.ts:475-514 (节选)</span>
+<span class="hl-kw">switch</span> (bones.species) {
+  <span class="hl-kw">case</span> duck:
+  <span class="hl-kw">case</span> goose:
+    <span class="hl-kw">return</span> <span class="hl-str">`(${eye}&gt;`</span>
+  <span class="hl-kw">case</span> cat:
+    <span class="hl-kw">return</span> <span class="hl-str">`=${eye}ω${eye}=`</span>
+  <span class="hl-kw">case</span> robot:
+    <span class="hl-kw">return</span> <span class="hl-str">`[${eye}${eye}]`</span>
+  <span class="hl-cm">// ...</span>
+}</code></pre></figure>
+<p>和 <code>renderSprite</code> 的复用关系是零——两套完全不同的表达。这是合理取舍：窄终端只给你 5-10 列预算，要的是"能一眼辨认"，不是"压缩缩放"。</p>
+<h3>19.4.3 动画节拍</h3>
+<p><code class="ref">src/buddy/CompanionSprite.tsx:16-23</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/CompanionSprite.tsx:16-23</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">TICK_MS</span> = <span class="hl-num">500</span>;
+<span class="hl-kw">const</span> <span class="hl-type">BUBBLE_SHOW</span> = <span class="hl-num">20</span>; <span class="hl-cm">// ticks → ~10s at 500ms</span>
+<span class="hl-kw">const</span> <span class="hl-type">FADE_WINDOW</span> = <span class="hl-num">6</span>; <span class="hl-cm">// last ~3s the bubble dims so you know it&#x27;s about to go</span>
+<span class="hl-kw">const</span> <span class="hl-type">PET_BURST_MS</span> = <span class="hl-num">2500</span>; <span class="hl-cm">// how long hearts float after /buddy pet</span>
+
+<span class="hl-cm">// Idle sequence: mostly rest (frame 0), occasional fidget (frames 1-2), rare blink.</span>
+<span class="hl-cm">// Sequence indices map to sprite frames; -1 means &quot;blink on frame 0&quot;.</span>
+<span class="hl-kw">const</span> <span class="hl-type">IDLE_SEQUENCE</span> = [<span class="hl-num">0</span>, <span class="hl-num">0</span>, <span class="hl-num">0</span>, <span class="hl-num">0</span>, <span class="hl-num">1</span>, <span class="hl-num">0</span>, <span class="hl-num">0</span>, <span class="hl-num">0</span>, -<span class="hl-num">1</span>, <span class="hl-num">0</span>, <span class="hl-num">0</span>, <span class="hl-num">2</span>, <span class="hl-num">0</span>, <span class="hl-num">0</span>, <span class="hl-num">0</span>];</code></pre></figure>
+<p>15 槽循环，每槽 500ms，一个周期 7.5 秒。frame 0 占 12 槽（rest），frame 1 和 2 各占 1 槽（fidget），<code>-1</code> 占 1 槽（blink：frame 0 + eye 全替换成 <code>-</code>）。这个分布是<strong>刻意的低频</strong>——大多数时间 sprite 纹丝不动；工程师读 transcript 时，视线不会被右下角的动物偷走。</p>
+<p>"被触发后加速"的策略见 <code class="ref">CompanionSprite.tsx:244-258</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/CompanionSprite.tsx:244-258</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (reaction || petting) {
+  <span class="hl-cm">// Excited: cycle all fidget frames fast</span>
+  spriteFrame = tick % frameCount;
+} <span class="hl-kw">else</span> {
+  <span class="hl-kw">const</span> step = <span class="hl-type">IDLE_SEQUENCE</span>[tick % <span class="hl-type">IDLE_SEQUENCE</span>.length]!;
+  <span class="hl-kw">if</span> (step === -<span class="hl-num">1</span>) {
+    spriteFrame = <span class="hl-num">0</span>;
+    blink = <span class="hl-kw">true</span>;
+  } <span class="hl-kw">else</span> {
+    spriteFrame = step % frameCount;
+  }
+}
+<span class="hl-kw">const</span> body = renderSprite(companion, spriteFrame)
+  .map(line =&gt; blink ? line.replaceAll(companion.eye, &#x27;-&#x27;) : line);</code></pre></figure>
+<p>气泡出现或用户刚 pet 时，绕开 <code>IDLE_SEQUENCE</code> 让 sprite 用 <code>tick % frameCount</code> 轮播全部帧——每 500ms 换一帧。相当于"我要说话了"/"你在撸我"的时候动得更多。之后自动回到 idle 节拍。</p>
+<h3>19.4.4 Pet 爱心</h3>
+<p><code class="ref">src/buddy/CompanionSprite.tsx:27</code> 定义了 5 帧爱心序列：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/CompanionSprite.tsx:27</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">PET_HEARTS</span> = [
+  <span class="hl-str">`   ${H}    ${H}   `</span>,
+  <span class="hl-str">`  ${H}  ${H}   ${H}  `</span>,
+  <span class="hl-str">` ${H}   ${H}  ${H}   `</span>,
+  <span class="hl-str">`${H}  ${H}      ${H} `</span>,
+  &#x27;·    ·   ·  &#x27;
+];</code></pre></figure>
+<p><code>H = figures.heart</code>（来自 <code>figures</code> 库的心形字符）。5 帧 × 500ms 正好 2.5 秒，和 <code>PET_BURST_MS</code> 对齐。最后一帧是 <code>·    ·   ·  </code>——爱心散成小点，暗示"淡出"而不是突然消失。</p>
+<p>触发流：<code>/buddy pet</code> 命令写 <code>AppState.companionPetAt = Date.now()</code>（<code class="ref">src/state/AppStateStore.ts:170-171</code>），组件在 render 里比较 <code>tick - petStartTick</code> 算 petting 状态。sync-during-render 的 trick 值得一提（<code class="ref">CompanionSprite.tsx:186-200</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/CompanionSprite.tsx:186-200</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// Sync-during-render (not useEffect) so the first post-pet render already</span>
+<span class="hl-cm">// has petStartTick=tick and petAge=0 — otherwise frame 0 is skipped.</span>
+<span class="hl-kw">const</span> [{
+  petStartTick,
+  forPetAt
+}, setPetStart] = useState({
+  petStartTick: <span class="hl-num">0</span>,
+  forPetAt: petAt
+});
+<span class="hl-kw">if</span> (petAt !== forPetAt) {
+  setPetStart({
+    petStartTick: tick,
+    forPetAt: petAt
+  });
+}</code></pre></figure>
+<p>用 <code>if (...) setState(...)</code> 在 render 里同步新 <code>petStartTick</code>——React 会丢掉当前 render 再重跑，保证第一次 petting render 看到的是 frame 0 而不是差 500ms 的 frame 1。用 <code>useEffect</code> 会慢一个 tick，第一帧被吞掉。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/buddy/CompanionSprite.tsx:186-200</code>）：这是 React 官方允许但文档里几乎不推荐的 "derived state during render" 模式——违反 "render 必须是纯函数"的直觉。常规做法是 <code>useEffect(() =&gt; setPetStart(...), [petAt])</code>，但 effect 在 render 提交后才跑，500ms 定时器的第一帧就会错过 <code>petStartTick=tick</code>，爱心动画第一帧被吞。这里用 render-phase <code>setState</code> 强制让新值立即可见，是 Ink 场景下用 500ms 格子做动画同步的一个局部正确解。</p></blockquote>
+<p>两个计时器其实共享同一个 <code>tick</code>：<code>bubbleAge = tick - lastSpokeTick</code> 和 <code>petAge = tick - petStartTick</code> 都用同一个 500ms <code>setInterval</code>（<code class="ref">CompanionSprite.tsx:201-214</code>）。相当于用 UI 层的共享 clock 做同步，不会出现两个独立 <code>setInterval</code> 漂移导致"爱心散完了气泡才开始淡"这种错位。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code>src/buddy/CompanionSprite.tsx:201-214, 220-223</code>）：爱心动画和气泡淡出<strong>共用一个 500ms <code>setInterval</code></strong>，差值法（<code>tick - lastSpokeTick</code> / <code>tick - petStartTick</code>）在同一个单调计数器上做差。如果用两个独立 <code>setInterval</code>——哪怕都是 500ms——clock drift 几分钟就能让两者相差半帧，视觉上表现为"爱心刚散，气泡还完整"或反过来。产品层看不到这种 drift，但一旦出现抖动，定位起来非常痛苦。"一个共享 tick + 差值法"是 Ink 场景下做多路时间动画同步的最低成本方案。</p></blockquote>
+<h2>19.5 状态机（弱）</h2>
+<p>Buddy 没有一个统一的 FSM。它的状态由两维正交量组合：</p>
+<p><strong>视觉节拍</strong>：</p>
+<ul>
+<li><code>idle</code> —— 默认走 <code>IDLE_SEQUENCE</code>。</li>
+<li><code>excited</code> —— 被 <code>reaction</code> 或 <code>petting</code> 激活时 cycle all frames。</li>
+<li><code>petting</code> —— 2.5 秒内叠加 heart 帧。</li>
+<li><code>blink</code> —— idle 序列里的 <code>-1</code> 槽。</li>
+</ul>
+<p><strong>对话气泡</strong>：</p>
+<ul>
+<li>无气泡（默认）。</li>
+<li><code>speaking</code> —— <code>companionReaction !== undefined</code>。</li>
+<li><code>fading</code> —— <code>bubbleAge &gt;= BUBBLE_SHOW - FADE_WINDOW</code>（最后 3 秒 dim 化，边框换成 <code>&#x27;inactive&#x27;</code>，提示即将消失）。</li>
+<li>立即清 —— 用户滚屏触发。</li>
+</ul>
+<p>两个维度独立演进。气泡淡出时 sprite 可以照常 excited（因为被 pet 的 burst 可能还没结束）；没气泡时照样能 fidget。</p>
+<p><code>companionReaction</code> 的生产侧只有一个：<code>fireCompanionObserver</code>，在每轮 agent query 结束后被调用（<code class="ref">src/screens/REPL.tsx:2836-2841</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/screens/REPL.tsx:2836-2841</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (feature(&#x27;<span class="hl-type">BUDDY</span>&#x27;)) {
+  <span class="hl-kw">void</span> fireCompanionObserver(messagesRef.current, reaction =&gt;
+    setAppState(prev =&gt; prev.companionReaction === reaction ? prev : {
+      ...prev,
+      companionReaction: reaction,
+    }));
+}</code></pre></figure>
+<p><code class="ref">AppStateStore.ts:168</code> 注释写这个 observer 来自 <code class="ref">src/buddy/observer.ts</code>，但该文件在当前还原仓库中缺失——REPL 里 <code>fireCompanionObserver</code> 甚至没有 <code>import</code> 语句。本章不能展开 observer 的具体实现（比如用什么模型、选词策略），只能确认它<strong>存在且每 agent turn 触发一次</strong>，异步产出 <code>reaction</code> 文本写回 AppState（本段落结论基于 <code class="ref">REPL.tsx:2836-2841</code> 调用点和 <code class="ref">AppStateStore.ts:168-169</code> 字段注释）。</p>
+<p>消费侧是 <code>CompanionSprite</code> 的 <code>useEffect</code>（<code class="ref">CompanionSprite.tsx:205-214</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/CompanionSprite.tsx:205-214</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">useEffect(() =&gt; {
+  <span class="hl-kw">if</span> (!reaction) <span class="hl-kw">return</span>;
+  lastSpokeTick.current = tick;
+  <span class="hl-kw">const</span> timer = setTimeout(setA =&gt; setA(prev =&gt;
+    prev.companionReaction === <span class="hl-kw">undefined</span>
+      ? prev
+      : { ...prev, companionReaction: <span class="hl-kw">undefined</span> }
+  ), <span class="hl-type">BUBBLE_SHOW</span> * <span class="hl-type">TICK_MS</span>, setAppState);
+  <span class="hl-kw">return</span> () =&gt; clearTimeout(timer);
+}, [reaction, setAppState]);</code></pre></figure>
+<p>收到 <code>reaction</code> 设 10 秒 timer，到点自动清；effect 的 cleanup <code>clearTimeout</code> 保证 reaction 期间再有新 reaction 来会重置 timer 而不是叠加。</p>
+<h2>19.6 Prompt 注入：不让主 agent 串戏</h2>
+<p>Buddy 要在用户对话里"旁白一句"，但不能让主 agent 把自己误认成 Buddy。方案是一段 system-reminder，在 Buddy 激活时注入一次。</p>
+<h3>19.6.1 Intro 文本</h3>
+<p><code class="ref">src/buddy/prompt.ts:7-13</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/prompt.ts:7-13</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> companionIntroText(name: string, species: string): string {
+  <span class="hl-kw">return</span> <span class="hl-str">`# Companion
+
+A small ${species} named ${name} sits beside the user&#x27;s input box and occasionally comments in a speech bubble. You&#x27;re not ${name} — it&#x27;s a separate watcher.
+
+When the user addresses ${name} directly (by name), its bubble will answer. Your job in that moment is to stay out of the way: respond in ONE line or less, or just answer any part of the message meant for you. Don&#x27;t explain that you&#x27;re not ${name} — they know. Don&#x27;t narrate what ${name} might say — the bubble handles that.`</span>
+}</code></pre></figure>
+<p>三件事：</p>
+<ol>
+<li>主 agent 不是 Buddy，Buddy 是另一个 watcher。</li>
+<li>用户叫 Buddy 名字时，主 agent <strong>压到一行以内</strong>（或只回答和自己相关的部分）。</li>
+<li>不要解释、不要替 Buddy 说话——气泡自己会处理。</li>
+</ol>
+<h3>19.6.2 注入路径</h3>
+<p><code class="ref">src/buddy/prompt.ts:15-36</code> 返回一个 attachment：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/prompt.ts:15-36</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> getCompanionIntroAttachment(
+  messages: <span class="hl-type">Message</span>[] | <span class="hl-kw">undefined</span>,
+): <span class="hl-type">Attachment</span>[] {
+  <span class="hl-kw">if</span> (!feature(&#x27;<span class="hl-type">BUDDY</span>&#x27;)) <span class="hl-kw">return</span> []
+  <span class="hl-kw">const</span> companion = getCompanion()
+  <span class="hl-kw">if</span> (!companion || getGlobalConfig().companionMuted) <span class="hl-kw">return</span> []
+
+  <span class="hl-cm">// Skip if already announced for this companion.</span>
+  <span class="hl-kw">for</span> (<span class="hl-kw">const</span> msg <span class="hl-kw">of</span> messages ?? []) {
+    <span class="hl-kw">if</span> (msg.<span class="hl-kw">type</span> !== &#x27;attachment&#x27;) <span class="hl-kw">continue</span>
+    <span class="hl-kw">if</span> (msg.attachment.<span class="hl-kw">type</span> !== &#x27;companion_intro&#x27;) <span class="hl-kw">continue</span>
+    <span class="hl-kw">if</span> (msg.attachment.name === companion.name) <span class="hl-kw">return</span> []
+  }
+
+  <span class="hl-kw">return</span> [
+    { <span class="hl-kw">type</span>: &#x27;companion_intro&#x27;, name: companion.name, species: companion.species },
+  ]
+}</code></pre></figure>
+<p><strong>只注入一次</strong>：扫历史消息，如果已经有同名的 <code>companion_intro</code> attachment 就返回空。改名重 hatch 会自动重注。</p>
+<p>收集器在 <code class="ref">src/utils/attachments.ts:864-870</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/attachments.ts:864-870</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">...(feature(&#x27;<span class="hl-type">BUDDY</span>&#x27;)
+  ? [
+      maybe(&#x27;companion_intro&#x27;, () =&gt;
+        <span class="hl-type">Promise</span>.resolve(getCompanionIntroAttachment(messages)),
+      ),
+    ]
+  : []),</code></pre></figure>
+<p>最终在 <code class="ref">src/utils/messages.ts:4232-4239</code> 被翻译成 user message：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/messages.ts:4232-4239</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">case</span> &#x27;companion_intro&#x27;: {
+  <span class="hl-kw">return</span> wrapMessagesInSystemReminder([
+    createUserMessage({
+      content: companionIntroText(attachment.name, attachment.species),
+      isMeta: <span class="hl-kw">true</span>,
+    }),
+  ])
+}</code></pre></figure>
+<p><code>isMeta: true</code> + <code>wrapMessagesInSystemReminder</code> 等于一段 <code>&lt;system-reminder&gt;</code> 包裹的 user message——主 agent 看得到，但用户看不到。具体地，<code>companion_intro</code> 进了 <code>NULL_RENDERING_TYPES</code> 列表（<code class="ref">src/components/messages/nullRenderingAttachments.ts:35</code>），UI 渲染直接跳过，也不算进 200-message 渲染预算。</p>
+<h3>19.6.3 为什么用 user-side system-reminder 而不是 system prompt</h3>
+<p>没有直接的源码注释解释这个选择，但可以从 API 设计推：system prompt 在一段会话里稳定不变；system-reminder 是插在对话流里的 user 消息，能随上下文漂移。Buddy 的 soul 可以改（改名、重 hatch），muted 开关可以翻，这些都比"一次设定、永不再变"的 system prompt 更适合走 reminder。另一个好处是 compaction 之后 reminder 也会被 strip 掉，下次需要时再注入一份新鲜的——<code>getCompanionIntroAttachment</code> 扫历史消息那一步天然就做了这件事。</p>
+<h2>19.7 通知集成：三条触发路径</h2>
+<p>Buddy 在不同场景用不同通道，每条都有明确的时限。</p>
+<h3>19.7.1 启动彩虹 teaser（时间窗口 + 本地日）</h3>
+<p><code class="ref">src/buddy/useBuddyNotification.tsx:12-21</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/useBuddyNotification.tsx:12-21</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// Local date, not UTC — 24h rolling wave across timezones. Sustained Twitter</span>
+<span class="hl-cm">// buzz instead of a single UTC-midnight spike, gentler on soul-gen load.</span>
+<span class="hl-cm">// Teaser window: April 1-7, 2026 only. Command stays live forever after.</span>
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> isBuddyTeaserWindow(): boolean {
+  <span class="hl-kw">if</span> (&quot;external&quot; === &#x27;ant&#x27;) <span class="hl-kw">return</span> <span class="hl-kw">true</span>;
+  <span class="hl-kw">const</span> d = <span class="hl-kw">new</span> <span class="hl-type">Date</span>();
+  <span class="hl-kw">return</span> d.getFullYear() === <span class="hl-num">2026</span> &amp;&amp; d.getMonth() === <span class="hl-num">3</span> &amp;&amp; d.getDate() &lt;= <span class="hl-num">7</span>;
+}</code></pre></figure>
+<p><code>&quot;external&quot; === &#x27;ant&#x27;</code> 是 bun 打包时字符串替换的 target 判断——Anthropic 内部构建这一条恒为 true，外部构建走日期判断。这套技巧在仓库里不止一处，本章不展开，只说内部构建相当于永久开启。</p>
+<p>注释里解释的是为什么<strong>不用 UTC 做日期判断</strong>：用本地日是"24 小时滚动曝光"——亚洲先早上进窗，美国晚几小时才进，Twitter 热度拉长，服务端 soul-gen 负载也被摊平。相当于不靠后端 rollout 排队，完全用时钟做流量分发。</p>
+<p>通知逻辑（<code class="ref">useBuddyNotification.tsx:43-77</code>）：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/buddy/useBuddyNotification.tsx:43-77 (简化)</span>
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> useBuddyNotification() {
+  <span class="hl-kw">const</span> { addNotification, removeNotification } = useNotifications();
+  useEffect(() =&gt; {
+    <span class="hl-kw">if</span> (!feature(&#x27;<span class="hl-type">BUDDY</span>&#x27;)) <span class="hl-kw">return</span>;
+    <span class="hl-kw">const</span> config = getGlobalConfig();
+    <span class="hl-kw">if</span> (config.companion || !isBuddyTeaserWindow()) <span class="hl-kw">return</span>;
+    addNotification({
+      key: &#x27;buddy-teaser&#x27;,
+      jsx: &lt;<span class="hl-type">RainbowText</span> text=&quot;/buddy&quot; /&gt;,
+      priority: &#x27;immediate&#x27;,
+      timeoutMs: <span class="hl-num">15_000</span>,
+    });
+    <span class="hl-kw">return</span> () =&gt; removeNotification(&#x27;buddy-teaser&#x27;);
+  }, [addNotification, removeNotification]);
+}</code></pre></figure>
+<p>三层条件：feature 开 + 没孵化 + 在时间窗口。满足时推一条 15 秒自动撤的 notification（<code>addNotification</code> / <code>useNotifications</code> 属于 Ink 终端 UI 的通知中心，实现见 <a class="chref" href="../ch21/">ch.21</a>）。注意这里是<strong>UI 层的通知</strong>，不会触发用户在 <code class="ref">settings.json</code> 里配的 Notification shell hook（见 <a class="chref" href="../ch14/">ch.14</a> §9.3：Notification 这个事件的发射器另有其人）。<code>priority: &#x27;immediate&#x27;</code> 让它插队显示。过了那一周，函数第一句 <code>if (!isBuddyTeaserWindow()) return</code> 直接退出，<strong>永远不再提示</strong>。</p>
+<h3>19.7.2 输入彩虹高亮</h3>
+<p><code class="ref">src/buddy/useBuddyNotification.tsx:79-97</code>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/useBuddyNotification.tsx:79-97</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> findBuddyTriggerPositions(text: string): <span class="hl-type">Array</span>&lt;{
+  start: number;
+  end: number;
+}&gt; {
+  <span class="hl-kw">if</span> (!feature(&#x27;<span class="hl-type">BUDDY</span>&#x27;)) <span class="hl-kw">return</span> [];
+  <span class="hl-kw">const</span> triggers: <span class="hl-type">Array</span>&lt;{ start: number; end: number }&gt; = [];
+  <span class="hl-kw">const</span> re = /\/buddy\b/g;
+  <span class="hl-kw">let</span> m: <span class="hl-type">RegExpExecArray</span> | <span class="hl-kw">null</span>;
+  <span class="hl-kw">while</span> ((m = re.exec(text)) !== <span class="hl-kw">null</span>) {
+    triggers.push({ start: m.index, end: m.index + m[<span class="hl-num">0</span>].length });
+  }
+  <span class="hl-kw">return</span> triggers;
+}</code></pre></figure>
+<p>被 <code class="ref">PromptInput.tsx:728-739</code> 消费，在用户输入里找 <code>/buddy</code>，把那几个字符染成彩虹。这是个视觉确认：你敲对了命令，Buddy 在等你敲完。</p>
+<h3>19.7.3 Agent turn 后的气泡</h3>
+<p><code class="ref">src/screens/REPL.tsx:2836-2841</code>（前面引过）。这是 Buddy 唯一主动说话的路径。和 Proactive（见 <a class="chref" href="../ch15/">ch.15</a> §15.3.1 的状态模块 + §15.4.8 的消费点）不同：</p>
+<ul>
+<li><strong>Proactive</strong> 观察<strong>空闲状态</strong>（用户久未响应），通过 <code>subscribeToProactiveChanges</code> 让各路消费者（progress bar、prompt suggestion、sub-agent 后台化……）订阅"该不该推"，主动给建议。</li>
+<li><strong>Buddy observer</strong> 在<strong>每 agent turn 结束</strong>触发，不看用户是否空闲，只写一个 <code>companionReaction</code> 字段。</li>
+</ul>
+<p>Proactive 的目标是"该推了就推"，Buddy 的目标是"陪一句就走"。两者共用了 <code>AppState</code> 但走不同的 effect、不同的订阅通道。</p>
+<h2>19.8 "不打扰"是怎么做到的</h2>
+<p>这是本章承诺要回答的问题，现在集中论证。</p>
+<h3>19.8.1 默认关闭</h3>
+<p>没 hatch 的用户，整个 UI 渲染在第二行就退出（<code class="ref">src/buddy/CompanionSprite.tsx:216-217</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/CompanionSprite.tsx:216-217</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> companion = getCompanion();
+<span class="hl-kw">if</span> (!companion || getGlobalConfig().companionMuted) <span class="hl-kw">return</span> <span class="hl-kw">null</span>;</code></pre></figure>
+<p><code>getCompanion()</code> 读 <code>config.companion</code>，空就返回 undefined。首次装 Claude Code 的人看不到任何 Buddy 元素，直到他主动敲 <code>/buddy</code>。这是<strong>第一层不打扰</strong>：不主动进入用户视野。</p>
+<h3>19.8.2 一次性、自限的 teaser</h3>
+<p>teaser 通知只在 4/1-4/7 本地日内出现、15 秒后自动撤、撤了再启动不再出（因为 effect dep 没变）。<code>isBuddyTeaserWindow</code> 在 4/8 起永远返回 false（<code class="ref">useBuddyNotification.tsx:15-16</code>）。相当于"你这一周见过了，之后靠自己主动敲"。</p>
+<p>对比一下常见的反模式——登录后弹 modal "要不要启用 Foo 功能"，每次都弹直到用户点 "Got it, don't show again"。Buddy 的 teaser 没有"关闭 forever"按钮，因为<strong>本来就是时间限定</strong>，代码里不需要那个按钮。</p>
+<h3>19.8.3 一键 mute 和多层短路</h3>
+<p><code>companionMuted: boolean</code> 是 config 里一个字段（<code class="ref">src/utils/config.ts:271</code>）。它在 4 个地方短路：</p>
+<div class="table-wrap"><table><thead><tr><th>位置</th><th>效果</th></tr></thead><tbody><tr><td><code class="ref">prompt.ts:20</code></td><td>不注入 system-reminder（主 agent 不知道 Buddy 存在）</td></tr>
+<tr><td><code class="ref">CompanionSprite.tsx:170</code></td><td><code>companionReservedColumns</code> 返回 0（输入框不让位）</td></tr>
+<tr><td><code class="ref">CompanionSprite.tsx:217</code></td><td>主 sprite 不渲染</td></tr>
+<tr><td><code class="ref">CompanionSprite.tsx:344</code></td><td>Floating bubble 不渲染</td></tr></tbody></table></div>
+<p>四处每一处都独立生效，不依赖其他三处——任何一处漏加检查，其他三处仍然兜底。这是<strong>故意的冗余</strong>：mute 是高频用户操作，必须绝对安静。</p>
+<h3>19.8.4 屏幕列预算显式返回</h3>
+<p><code class="ref">src/buddy/CompanionSprite.tsx:167-175</code> 暴露给 layout 一个精确的数值：</p>
+<figure class="codeblock"><figcaption><span class="file">src/buddy/CompanionSprite.tsx:167-175</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> companionReservedColumns(
+  terminalColumns: number,
+  speaking: boolean,
+): number {
+  <span class="hl-kw">if</span> (!feature(&#x27;<span class="hl-type">BUDDY</span>&#x27;)) <span class="hl-kw">return</span> <span class="hl-num">0</span>;
+  <span class="hl-kw">const</span> companion = getCompanion();
+  <span class="hl-kw">if</span> (!companion || getGlobalConfig().companionMuted) <span class="hl-kw">return</span> <span class="hl-num">0</span>;
+  <span class="hl-kw">if</span> (terminalColumns &lt; <span class="hl-type">MIN_COLS_FOR_FULL_SPRITE</span>) <span class="hl-kw">return</span> <span class="hl-num">0</span>;
+  <span class="hl-kw">const</span> nameWidth = stringWidth(companion.name);
+  <span class="hl-kw">const</span> bubble = speaking &amp;&amp; !isFullscreenActive() ? <span class="hl-type">BUBBLE_WIDTH</span> : <span class="hl-num">0</span>;
+  <span class="hl-kw">return</span> spriteColWidth(nameWidth) + <span class="hl-type">SPRITE_PADDING_X</span> + bubble;
+}</code></pre></figure>
+<p>被 <code class="ref">PromptInput.tsx:1991</code> 消费：</p>
+<figure class="codeblock"><figcaption><span class="file">src/components/PromptInput/PromptInput.tsx:1991</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> textInputColumns = columns - <span class="hl-num">3</span> - companionReservedColumns(columns, companionSpeaking);</code></pre></figure>
+<p>关键设计：<strong>widget 主动上报占用宽度</strong>，input 按减法 wrap 文本。layout 不用猜。如果 Buddy 在说话，返回 <code>spriteColWidth + padding + BUBBLE_WIDTH</code>（多让 36 列给气泡）；不说话就只让 sprite 宽度。窄终端（&lt;100 列）直接返回 0，这时 sprite 不渲染到角落，而是折叠成一行放在 footer 区。</p>
+<p>这一行代码消除了一整类 bug——如果用户输入的文本宽度计算和 sprite 渲染不自洽，轻则文本 wrap 错位，重则 Ink 重绘抖动。让 widget 自己承诺占多少列是最简单的契约。反过来想：如果让 layout 那边用 <code>measureElement</code> 去测 sprite 实际渲染宽，Ink 在并发模式 + Yoga commit 时序下的 double-draw 会让读到的值晚一帧（Ink 的 layout/commit 时序见 <a class="chref" href="../ch21/">ch.21</a> §21.5），输入 wrap 就会在每一次 speaking 切换时抖一下。Widget 报账把这个时序问题整个绕过去了。</p>
+<h3>19.8.5 让位用户操作</h3>
+<p>用户滚屏就清气泡（<code class="ref">src/screens/REPL.tsx:1331-1339</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/screens/REPL.tsx:1331-1339</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// Dismiss the companion bubble on scroll — it&#x27;s absolute-positioned</span>
+<span class="hl-cm">// at bottom-right and covers transcript content. Scrolling = user is</span>
+<span class="hl-cm">// trying to read something under it.</span>
+<span class="hl-kw">if</span> (feature(&#x27;<span class="hl-type">BUDDY</span>&#x27;)) {
+  setAppState(prev =&gt; prev.companionReaction === <span class="hl-kw">undefined</span> ? prev : {
+    ...prev,
+    companionReaction: <span class="hl-kw">undefined</span>,
+  });
+}</code></pre></figure>
+<p>注释说得很明白：气泡在 fullscreen 是 bottom-right 浮层，会盖住 transcript 内容；用户滚动意味着他在想读底下的东西。这是"显性意图夺回"的典型处理——不等超时，立刻让位。</p>
+<p>另外在 fullscreen 下，气泡被拆到 FullscreenLayout 的 <code>bottomFloat</code> slot（<code class="ref">REPL.tsx:4619</code>），不占用 bottom 的正常布局高度。<code class="ref">FullscreenLayout.tsx:39-43</code> 的注释说明这个 slot 的存在理由：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">Absolute-positioned content anchored at the bottom-right of the
+ScrollBox area, floating over scrollback. Rendered inside the flexGrow
+region (not the bottom slot) so the overflowY:hidden cap doesn&#x27;t clip
+it. Fullscreen only — used for the companion speech bubble.</code></pre></figure>
+<p>bottom slot 自己设了 <code>overflowY:hidden</code>，把 absolute 浮层放进去会被裁剪；放到 flexGrow 区才能正确浮出。非 fullscreen 模式气泡只能 inline——因为浮到 Ink 的 <code>Static</code> scrollback 里清不掉。这是工程现实决定的取舍。<code>bottomFloat</code> 这个 slot 本身就是 FullscreenLayout 为 Buddy 专门开的口子（全屏/inline 两套布局的对比见 <a class="chref" href="../ch21/">ch.21</a> §21.9）。</p>
+<h3>19.8.6 动画节拍刻意慢</h3>
+<p>前面 §19.4.3 讲过，15-slot idle sequence 里 frame 0 占 12 次、其余 3 次。换算成时间：每 7.5 秒只有 1.5 秒 sprite 在"动"，其余都在 rest frame。frame 之间的变化是单字符级（眼睛变 <code>-</code>、尾巴加 <code>~</code>），不会在外围视觉里形成强信号。</p>
+<h2>19.9 完整的消费图</h2>
+<p>把上面几节串起来，Buddy 和系统的耦合点一共这几个（用 <code>src/</code> 下相对路径）：</p>
+<div class="table-wrap"><table><thead><tr><th>方向</th><th>文件:行</th><th>作用</th></tr></thead><tbody><tr><td>Config read</td><td><code class="ref">utils/config.ts:269-271</code></td><td><code>companion</code>, <code>companionMuted</code></td></tr>
+<tr><td>AppState</td><td><code class="ref">state/AppStateStore.ts:168-171</code></td><td><code>companionReaction</code>, <code>companionPetAt</code></td></tr>
+<tr><td>System prompt attach</td><td><code class="ref">utils/attachments.ts:864-870</code> → <code class="ref">buddy/prompt.ts:15-36</code></td><td>按名字去重、只注入一次</td></tr>
+<tr><td>System prompt render</td><td><code class="ref">utils/messages.ts:4232-4239</code></td><td>attachment → user system-reminder</td></tr>
+<tr><td>Startup notification</td><td><code class="ref">buddy/useBuddyNotification.tsx:43-77</code></td><td>15 秒彩虹 teaser</td></tr>
+<tr><td>Input highlight</td><td><code class="ref">buddy/useBuddyNotification.tsx:79-97</code> → <code class="ref">PromptInput.tsx:728-739</code></td><td><code>/buddy</code> 染彩虹</td></tr>
+<tr><td>Footer pill</td><td><code>PromptInput.tsx:309-316, 1787-1793</code></td><td>选中后 Enter = <code>/buddy</code></td></tr>
+<tr><td>Observer fire</td><td><code class="ref">screens/REPL.tsx:2836-2841</code></td><td>每 turn 结束、异步写 reaction</td></tr>
+<tr><td>Scroll dismiss</td><td><code class="ref">screens/REPL.tsx:1331-1339</code></td><td>清 reaction</td></tr>
+<tr><td>UI render (wide)</td><td><code>screens/REPL.tsx:4619, 5049</code> → <code class="ref">CompanionSprite.tsx</code> + <code>CompanionFloatingBubble</code></td><td>sprite + 浮层气泡</td></tr>
+<tr><td>UI render (narrow)</td><td><code class="ref">screens/REPL.tsx:4644-4645</code> → 窄终端分支</td><td>单行脸</td></tr>
+<tr><td>Layout budget</td><td><code class="ref">CompanionSprite.tsx:167-175</code> → <code class="ref">PromptInput.tsx:1991</code></td><td>列宽报账</td></tr></tbody></table></div>
+<p>除此之外，<code>/buddy</code> 本身的子命令（<code>/buddy</code>、<code>/buddy pet</code>、<code>/buddy card</code>、<code>/buddy mute</code> / <code>unmute</code>、<code>/buddy off</code>）在本还原仓库里 <code class="ref">src/commands/buddy/index.ts</code> 不存在——只有 <code class="ref">src/commands.ts:118-122</code> 的 feature-gated 懒加载：</p>
+<figure class="codeblock"><figcaption><span class="file">src/commands.ts:118-122</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> buddy = feature(&#x27;<span class="hl-type">BUDDY</span>&#x27;)
+  ? (require(&#x27;./commands/buddy/index.js&#x27;) <span class="hl-kw">as</span> <span class="hl-kw">typeof</span> <span class="hl-kw">import</span>(&#x27;./commands/buddy/index.js&#x27;)).<span class="hl-kw">default</span>
+  : <span class="hl-kw">null</span></code></pre></figure>
+<p>子命令行为来自社区文档（<a href="https://claudefa.st/blog/guide/mechanics/claude-buddy" rel="noreferrer">https://claudefa.st/blog/guide/mechanics/claude-buddy</a>，访问于 2026-04-19）。源码侧对得上的是它们的副作用字段：<code>companionPetAt</code>（<code class="ref">AppStateStore.ts:171</code> 注释里写 <code>Timestamp of last /buddy pet</code>）、<code>companionMuted</code>、<code>companion</code>。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/commands.ts:118-122</code>）：<code>/buddy</code> 走同步 <code>require()</code> 懒加载，只有在 <code>feature(&#x27;BUDDY&#x27;)</code> 编译期常量为真时才进 import。外部构建里 <code>feature(&#x27;BUDDY&#x27;)</code> 为 false 时整段分支被 DCE 掉，<code>require</code> 不执行、模块不解析；为 true 但 <code class="ref">src/commands/buddy/index.js</code> 缺失（本还原仓库的情况）时，错误在<strong>模块加载时</strong>就抛（<code>require</code> 抛 <code>MODULE_NOT_FOUND</code>），而不是等到用户第一次敲 <code>/buddy</code> 才报错。这是 <code>feature</code> + <code>require</code> 组合的典型 fail-fast 行为。</p></blockquote>
+<h2>19.10 设计取舍</h2>
+<p>几个选择值得单独评一下。</p>
+<p><strong>为什么 bones 派生、soul 持久化，而不是全派生或全持久化？</strong> 全派生意味着 soul 每次重算——名字和人设会变，失去了"这是我的 Buddy"的持续性。全持久化意味着 users 能改 config 刷 legendary——外部工具 <code>any-buddy</code> 已经证明这个风险是实在的（<a href="https://github.com/cpaczek/any-buddy" rel="noreferrer">https://github.com/cpaczek/any-buddy</a>）。分层是折中：soul 能被改但不算作弊（你本来就可以起任何名字），bones 算作弊就用服务器逻辑阻止——因为服务端只认你的 account UUID。</p>
+<p><strong>为什么 idle 节拍这么慢（15 槽只 3 次扭动）？</strong> 加快一点会更有生命感，但代价是 draw 频率上升、终端视觉噪声上升。Buddy 设计师选了"低频但可辨"。对比一下游戏里常见的 4-frame loop 常驻动画——那适合 24fps 渲染的平滑性，不适合 Ink 的 terminal 重绘。</p>
+<p><strong>为什么 prompt 注入走 user-side system-reminder 而不是 system prompt？</strong> 前面说过，soul 可变 + compaction 可能清掉 + 只注入一次的去重扫描共同决定了这个选择。</p>
+<p>这个选择有一个反直觉的副作用值得单独说。</p>
+<p><code>companion_intro</code> 在 <code class="ref">src/utils/attachments.ts:824</code> 的 <code>allThreadAttachments</code> 组里——同组注释 821 行原文是 <code>// Thread-safe attachments available in sub-agents</code>——而不是 944-987 行 <code>isMainThread</code> 守卫的 <code>mainThreadAttachments</code>。也就是说，<strong>sub-agent 也会收到一份 <code>companion_intro</code></strong>。每个 sub-agent 开一轮对话时，它的 messages 历史是干净的（没有自己注入过的 <code>companion_intro</code>），<code>getCompanionIntroAttachment</code> 扫不到同名就再注入一次。</p>
+<p>产品层完全感知不到：sub-agent 里没 sprite、没气泡、没 observer——UI 全挂在主 REPL 上（sub-agent 的 UI 回调被刻意置 <code>undefined</code>，详见 <a class="chref" href="../ch04/">ch.04</a> §4.6 的"stub 成 no-op"条目）。但每个 sub-agent 每轮都付 ~120 tokens 的 system-reminder 开销。按 Buddy 的"隐形 watcher" 定位，这里更合理的归属本来是 <code>mainThreadAttachments</code>——但源码确实把它放在了共享组里。</p>
+<blockquote><p><strong>隐藏细节</strong>（<code>src/utils/attachments.ts:821-870, 944-987</code>）：<code>companion_intro</code> 在 <code>allThreadAttachments</code> 而不是 <code>mainThreadAttachments</code>。每个 sub-agent（含 Task/Explore/Plan 等内置 agent，见 <a class="chref" href="../ch04/">ch.04</a> §4.7）首轮都会被注入一份 <code>companion_intro</code> system-reminder，约 120 tokens。产品层无感（sub-agent 没 UI），但每个子任务每轮都付这点预算。和 <code>mainThreadAttachments</code> 里 <code>ide_selection</code>/<code>output_style</code>/<code>verify_plan_reminder</code> 的"只给主 agent"归属对照——<code>companion_intro</code> 按 Buddy 的隐形 watcher 定位本该同组，源码没那么归。</p></blockquote>
+<p><strong>为什么 teaser 用本地日不是 UTC？</strong> 注释给了答案：曝光波峰拉平、后端负载柔和。这种"用时钟做 rollout"省了后端的 feature-flag 队列。代价是跨时区的用户可能晚看到几小时，但对于彩蛋功能这不是问题。</p>
+<p><strong>为什么不把 <code>/buddy</code> 做成持续性交互（真 Tamagotchi）？</strong> 源码里没有任何"喂食"、"睡眠"、"病了"的状态字段。Buddy 的 stats 只装饰（<code class="ref">types.ts:91-97</code> 的 <code>DEBUGGING / PATIENCE / CHAOS / WISDOM / SNARK</code>），既不影响主 agent 也不随时间衰减。社区已经出了 feature request 要求按 token 使用量升级（<a href="https://github.com/anthropics/claude-code/issues/41684" rel="noreferrer">https://github.com/anthropics/claude-code/issues/41684</a>）。保持无状态的理由我只能推测：开发者工具用户对"后台进程消耗我注意力"的耐受度远低于游戏用户，一旦 Buddy 成了"要照顾的东西"，它就变成了负担。</p>
+<h2>19.11 可以带走的三个点</h2>
+<p><strong>一，widget 主动报账屏幕预算</strong>。任何塞进 CLI 布局的非主流元素，都应该暴露一个 <code>reservedColumns(context) → number</code> 的契约，让上游按减法 wrap。这比"widget 占多少我也不知道，你自己猜"省无数 bug。</p>
+<p><strong>二，派生 / 持久化分层</strong>。状态里"哪些可编辑、哪些不可"值得用类型系统分开。改名能改、稀有度不能改，分开存就可控；合并时"不能改的后覆盖"保证配置漂移不出问题。</p>
+<p><strong>三，时钟做 rollout</strong>。时间窗限定的 teaser 用本地日而非 UTC，配合 feature flag 两层开关（编译时 + 用户 muted），可以在不依赖服务端 flag 系统的情况下做"一周热度 + 永久可达"的发布节奏。teaser 期结束不用撤代码、不用发新版——时钟到了自己熄灯。</p>
+<h2>19.12 边界说明</h2>
+<ul>
+<li>Ink 终端 UI 的通用技巧（<code>Box</code>、<code>Text</code>、<code>Static</code>、<code>overflowY</code>、FullscreenLayout 的 <code>bottomFloat</code> slot）参见 <a class="chref" href="../ch21/">ch.21</a>，其中 §21.9 讲全屏/inline 两套布局、§21.5 讲 Yoga commit 时序。本章只用了 Buddy 需要的部分。</li>
+<li>Proactive 主动提示和 Buddy observer 的差别见 §19.7.3；Proactive 的完整机制（<code>subscribeToProactiveChanges</code> 状态模块、tick 批处理、terminal focus 订阅）见 <a class="chref" href="../ch15/">ch.15</a> §15.3.1 / §15.4。</li>
+<li>通知中心（<code>useNotifications</code>、<code>priority</code>、<code>timeoutMs</code>）是 Ink UI 的一部分，详见 <a class="chref" href="../ch21/">ch.21</a>；它和用户在 <code class="ref">settings.json</code> 配的 Notification shell hook 是两回事（后者见 <a class="chref" href="../ch14/">ch.14</a> §9.3）。本章只引用调用点。</li>
+<li>sub-agent 的上下文隔离（<code>setAppState</code> stub、UI 回调置 undefined、memdir 共享）见 <a class="chref" href="../ch04/">ch.04</a> §4.6；本章只用了"sub-agent 仍然拿得到 <code>allThreadAttachments</code>"这一条事实。</li>
+<li><code>feature(&#x27;BUDDY&#x27;)</code> 和 <code>&quot;external&quot; === &#x27;ant&#x27;</code> 这类 bun 编译时字符串替换属于打包与 feature flag 章节。</li>
+<li><code>/buddy</code> 斜杠命令的实现（<code class="ref">src/commands/buddy/index.ts</code>）在还原仓库中不存在；本章所有关于子命令行为的叙述来自 web 证据（<a href="https://claudefa.st/blog/guide/mechanics/claude-buddy" rel="noreferrer">https://claudefa.st/blog/guide/mechanics/claude-buddy</a>，访问于 2026-04-19）+ 源码里对应字段（<code>companionPetAt</code>、<code>companionMuted</code>、<code>companion</code>）。<code>fireCompanionObserver</code> 同样缺失，只能引用调用点。</li>
+</ul>
+  </div>
+</article>
+
+<nav class="chap-nav"><a class="nav-link prev" href="../ch18/"><span class="dir">← Ch.18 · prev</span><span class="t">Multi-host<span class="cn">IDE / Chrome / Computer Use</span></span></a><a class="nav-home" href="../">§ 目录</a><a class="nav-link next" href="../ch20/"><span class="dir">Ch.20 · next →</span><span class="t">Input<span class="cn">语音 / Vim / 键位</span></span></a></nav>
+
+<footer class="colophon">
+  <div class="left">Claude <span class="dot">&amp;</span> Code</div>
+  <div class="right">
+    set in EB garamond · albert sans · jetbrains mono · LXGW wenkai<br>
+    《Claude Code 源码解读》 · ch.19
+  </div>
+</footer>
+
+</body>
+</html>

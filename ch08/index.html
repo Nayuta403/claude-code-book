@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.08 Tools · Tool 接口与 ToolSearch — Claude Code 源码解读</title>
+<meta name="description" content="《Claude Code 源码解读》第 8 章 —— Tool 接口与 ToolSearch（deferred tools）">
+<meta property="og:title" content="Ch.08 Tools · Tool 接口与 ToolSearch — Claude Code 源码解读">
+<meta property="og:description" content="《Claude Code 源码解读》第 8 章 —— Tool 接口与 ToolSearch（deferred tools）">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://nayuta403.github.io/claude-code-book/ch08/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,300;1,400;1,500&family=Albert+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<link rel="stylesheet" href="../assets/book.css">
+</head>
+<body>
+
+<nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
+
+<header class="chap-head">
+  <div>
+    <div class="crumb">
+      <a href="../">目录</a>
+      <span class="sep">/</span>
+      <span class="part-tag p2">Part II · 核心引擎</span>
+    </div>
+    <div class="chap-num">Chapter · 08 / 23</div>
+    <h1 class="chap-title">Tools<span class="cn">Tool 接口与 ToolSearch</span></h1>
+  </div>
+  <aside class="chap-meta">
+    <div><div class="km">part</div><div class="vm">核心引擎（Core Engine）</div></div>
+    <div><div class="km">topic</div><div class="vm m">deferred tools</div></div>
+    <div><div class="km">reading</div><div class="vm">≈ 20 min</div></div>
+    <div><div class="km">source refs</div><div class="vm m">57</div></div>
+  </aside>
+</header>
+
+<article class="article">
+  <div class="prose">
+<h2>用户看到什么</h2>
+<p class="drop">启动 <code>claude</code>，第一次模型看到的工具清单不到 20 个——BashTool、FileReadTool、FileEditTool 这些天天用的在里面，但像 <code>mcp__slack__send_message</code>、<code>mcp__github__list_pulls</code> 这些 MCP 工具、或者 <code>NotebookEditTool</code>、<code>EnterWorktreeTool</code> 这些低频工具，<strong>都不在初始清单里</strong>。模型知道它们存在（有一个 <code>&lt;system-reminder&gt;</code> 列出名字），但想真正调用得先 <code>ToolSearch</code> 一下。</p>
+<p>接进 5 个 MCP server、总共 100+ 个工具之后，system prompt 的 tool definitions 段依然只长了一点点（多的是 ToolSearchTool 的一段说明 + deferred 工具的名字列表）。官方文档给的数字是传统 77K token 的工具定义缩到 8.7K（来源：<a href="https://www.anthropic.com/engineering/advanced-tool-use" rel="noreferrer">https://www.anthropic.com/engineering/advanced-tool-use</a>，访问于 2026-04-19）。</p>
+<p>这章要讲两件事：</p>
+<ol>
+<li>这 100+ 个异质工具（内置 / MCP / plugin / skill）是怎么沿着同一个 <code>Tool</code> 接口<strong>统一</strong>起来的；</li>
+<li>ToolSearch 这种"用一个工具发现其它工具"的懒加载模式在 Claude Code 里的<strong>具体实现</strong>——打分、回注、边界。</li>
+</ol>
+<h2>为什么挑这个设计出来讲</h2>
+<p>"大量可选工具 + 一个发现工具" 这个模式正在变成 agent 框架的标配做法。Claude Code 是这套模式的工业级落地样本之一——自己实现了一套 client-side 打分，没有依赖 Anthropic 服务端的 <code>tool_search_tool_regex_20251119</code> / <code>tool_search_tool_bm25_20251119</code> 两个变体（这两个变体的官方说明见 <a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool" rel="noreferrer">https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool</a>，访问于 2026-04-19）。代码量不大（<code class="ref">ToolSearchTool.ts</code> 约 470 行），但把 cache 稳定性、模型兼容性、第三方代理、MCP 动态连接 in-flight 几个角度都兜住了。读者读完能把这套搬到自己的 agent 栈上。</p>
+<blockquote><p>本章的外部引用只用三处 Anthropic 第一方来源（engineering 博客、platform.claude.com 的 tool-search-tool docs、claude-code 官方 GitHub issue）。关于 liteLLM、pydantic-ai 等第三方框架是否也用了类似两级暴露模式，留给读者自行对比——本章<strong>不</strong>把它们写进论据链。</p></blockquote>
+<hr>
+<h2>关键数据结构</h2>
+<h3>Tool 接口的七组职责</h3>
+<p>Tool 接口定义在 <code class="ref">src/Tool.ts:362-695</code>，一个接口装了 7 组职责：</p>
+<figure class="codeblock"><figcaption><span class="file">src/Tool.ts:362-378</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">Tool</span>&lt;
+  <span class="hl-type">Input</span> <span class="hl-kw">extends</span> <span class="hl-type">AnyObject</span> = <span class="hl-type">AnyObject</span>,
+  <span class="hl-type">Output</span> = <span class="hl-kw">unknown</span>,
+  <span class="hl-type">P</span> <span class="hl-kw">extends</span> <span class="hl-type">ToolProgressData</span> = <span class="hl-type">ToolProgressData</span>,
+&gt; = {
+  aliases?: string[]
+  searchHint?: string
+  <span class="hl-cm">// ...</span>
+}</code></pre></figure>
+<div class="table-wrap"><table><thead><tr><th>组</th><th>关键字段</th><th>位置</th></tr></thead><tbody><tr><td>身份与发现</td><td><code>name</code>, <code>aliases</code>, <code>searchHint</code>, <code>shouldDefer</code>, <code>alwaysLoad</code>, <code>mcpInfo</code>, <code>isMcp</code>, <code>isLsp</code></td><td><code class="ref">src/Tool.ts:371-456</code></td></tr>
+<tr><td>Schema</td><td><code>inputSchema</code> (Zod), <code>inputJSONSchema</code> (JSON Schema), <code>outputSchema</code>, <code>strict</code></td><td><code class="ref">src/Tool.ts:394-472</code></td></tr>
+<tr><td>变化率</td><td><code>isReadOnly</code>, <code>isConcurrencySafe</code>, <code>isDestructive</code>, <code>isOpenWorld</code>, <code>isEnabled</code>, <code>interruptBehavior</code></td><td><code class="ref">src/Tool.ts:402-434</code></td></tr>
+<tr><td>权限</td><td><code>validateInput</code>, <code>checkPermissions</code>, <code>preparePermissionMatcher</code>, <code>backfillObservableInput</code></td><td><code class="ref">src/Tool.ts:481-516</code></td></tr>
+<tr><td>执行</td><td><code>call(args, ctx, canUseTool, parent, onProgress?) → Promise&lt;ToolResult&lt;Output&gt;&gt;</code></td><td><code class="ref">src/Tool.ts:379-385</code></td></tr>
+<tr><td>UI 渲染</td><td><code>renderToolUseMessage</code>, <code>renderToolResultMessage</code>, <code>getActivityDescription</code>, <code>renderGroupedToolUse</code></td><td><code class="ref">src/Tool.ts:566-694</code></td></tr>
+<tr><td>分类与观测</td><td><code>toAutoClassifierInput</code>, <code>extractSearchText</code>, <code>maxResultSizeChars</code>, <code>isSearchOrReadCommand</code></td><td><code class="ref">src/Tool.ts:429-599</code></td></tr></tbody></table></div>
+<p>几个点值得展开：</p>
+<p><strong><code>searchHint</code></strong> @ <code class="ref">src/Tool.ts:372-378</code>：3–10 词的能力短语，专门给 ToolSearch 的关键词匹配用。注释直接点名："Prefer terms not already in the tool name (e.g. 'jupyter' for NotebookEdit)"。对应 <code class="ref">src/tools/NotebookEditTool/NotebookEditTool.ts:92</code> 实际写的就是 <code>&#x27;edit Jupyter notebook cells (.ipynb)&#x27;</code>——tool 名里没有 "jupyter"，hint 里补上，这样模型搜 "jupyter" 也能召回。</p>
+<p><strong>变化率字段</strong>：<code>isReadOnly</code> / <code>isConcurrencySafe</code> / <code>isDestructive</code> 这三个字段不是给权限用的（权限走 <code>checkPermissions</code>），而是给<strong>并发调度</strong>和 <strong>UI 折叠</strong>用。<code>isConcurrencySafe</code> 决定 Agent Loop 能否把多个 tool_use 块并行执行（细节 <a class="chref" href="../ch03/">ch.03</a>）。<code>isReadOnly</code> 的值有时随输入变——BashTool 里 <code>isReadOnly(input)</code> 要解析命令判定是不是 <code>grep</code>/<code>ls</code> 这种只读命令（<code class="ref">src/tools/BashTool/BashTool.tsx:437-441</code>）。</p>
+<p><strong><code>ToolResult&lt;T&gt;</code></strong> @ <code class="ref">src/Tool.ts:321-336</code>：工具不止返回数据，还能返回 <code>newMessages</code>（塞进对话历史）和 <code>contextModifier</code>（改 <code>ToolUseContext</code>）。后者只对非 concurrency-safe 工具生效——并行执行时谁修改 context 谁赢这种竞态不值得处理。</p>
+<h3>buildTool 的默认值</h3>
+<p>Tool 对象用 <code>buildTool()</code> 工厂构造：</p>
+<figure class="codeblock"><figcaption><span class="file">src/Tool.ts:757-769</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">TOOL_DEFAULTS</span> = {
+  isEnabled: () =&gt; <span class="hl-kw">true</span>,
+  isConcurrencySafe: (_input?: <span class="hl-kw">unknown</span>) =&gt; <span class="hl-kw">false</span>,   <span class="hl-cm">// 假设不安全</span>
+  isReadOnly: (_input?: <span class="hl-kw">unknown</span>) =&gt; <span class="hl-kw">false</span>,          <span class="hl-cm">// 假设会写</span>
+  isDestructive: (_input?: <span class="hl-kw">unknown</span>) =&gt; <span class="hl-kw">false</span>,
+  checkPermissions: (input, _ctx) =&gt;
+    <span class="hl-type">Promise</span>.resolve({ behavior: &#x27;allow&#x27;, updatedInput: input }),
+  toAutoClassifierInput: (_input?: <span class="hl-kw">unknown</span>) =&gt; &#x27;&#x27;,
+  userFacingName: (_input?: <span class="hl-kw">unknown</span>) =&gt; &#x27;&#x27;,
+}</code></pre></figure>
+<p>默认值是 <strong>fail-closed</strong>：作者忘记实现 <code>isReadOnly</code> 就当成 "会写"，不会默默让一个写操作被并行调度。<code>checkPermissions</code> 默认 allow 看起来矛盾——但注释说"defer to general permission system"，外层 <code class="ref">permissions.ts</code> 里还有一层 deny/ask/allow 的通用规则兜底。这层通用规则的完整语义（PermissionResult 的五种 behavior、classifier、plan/auto 模式对同一次 <code>checkPermissions</code> 返回值的再加工）详见 <a class="chref" href="../ch09/">ch.09</a>。</p>
+<h3>ToolUseContext</h3>
+<p><code class="ref">src/Tool.ts:158-300</code> 定义了 <code>ToolUseContext</code>——工具运行时能拿到的一切。包括：<code>options.tools</code>（当前可见工具集合，用于 ToolSearch）、<code>abortController</code>、<code>messages</code>、<code>setAppState</code>、<code>setToolJSX</code>、还有一堆 REPL / SDK / subagent 分别 wire 上的可选回调（<code>requestPrompt</code> 只在 REPL 里有、<code>agentId</code> 只在 subagent 里有）。</p>
+<p>这是把整个"运行时世界"打平成一个参数的做法。工具看到什么 → 工具能做什么，一眼清楚；代价是 <code>ToolUseContext</code> 字段多到要加分隔注释。本章不展开具体字段，留给 <a class="chref" href="../ch03/">ch.03</a> 讲 Agent Loop 时再说。</p>
+<hr>
+<h2>关键流程 1：四个来源如何汇聚成一个 Tools 数组</h2>
+<p>Claude Code 的工具来自四处：<strong>内置</strong> / <strong>MCP</strong> / <strong>plugin</strong> / <strong>skill</strong>。skill 和 plugin 走 SkillTool / 插件载入器封装成 Tool，本章不展开（<a class="chref" href="../ch10/">ch.10</a> / <a class="chref" href="../ch11/">ch.11</a>）。值得一提的是 <strong>skill 作为一种 prompt 层的 deferred 机制</strong>和本章的 ToolSearch 是对称的：skill 在 system prompt 里只登记名字 + 触发描述，真正的 skill 正文 body 要在模型调 <code>Skill</code> 工具时按需加载进对话——两条路子、同一个"延迟暴露"思路。skill 侧的完整机制见 <a class="chref" href="../ch10/">ch.10</a>。</p>
+<h3>内置：条件拼装</h3>
+<p><code>getAllBaseTools()</code> @ <code class="ref">src/tools.ts:193-251</code> 是一张"在当前环境里<strong>可能</strong>出现的全部内置工具"清单。不是一个纯常量数组——用 <code>feature()</code> flag、<code>process.env.USER_TYPE</code>、各种 <code>isXxxEnabled()</code> 做条件 spread：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools.ts:194-251（节选）</span>
+<span class="hl-kw">return</span> [
+  <span class="hl-type">AgentTool</span>,
+  <span class="hl-type">TaskOutputTool</span>,
+  <span class="hl-type">BashTool</span>,
+  ...(hasEmbeddedSearchTools() ? [] : [<span class="hl-type">GlobTool</span>, <span class="hl-type">GrepTool</span>]),
+  <span class="hl-type">ExitPlanModeV2Tool</span>,
+  <span class="hl-type">FileReadTool</span>, <span class="hl-type">FileEditTool</span>, <span class="hl-type">FileWriteTool</span>,
+  <span class="hl-type">NotebookEditTool</span>, <span class="hl-type">WebFetchTool</span>, <span class="hl-type">TodoWriteTool</span>, <span class="hl-type">WebSearchTool</span>,
+  <span class="hl-type">TaskStopTool</span>, <span class="hl-type">AskUserQuestionTool</span>, <span class="hl-type">SkillTool</span>, <span class="hl-type">EnterPlanModeTool</span>,
+  ...(process.env.<span class="hl-type">USER_TYPE</span> === &#x27;ant&#x27; ? [<span class="hl-type">ConfigTool</span>] : []),
+  ...(isTodoV2Enabled() ? [<span class="hl-type">TaskCreateTool</span>, <span class="hl-type">TaskGetTool</span>, <span class="hl-type">TaskUpdateTool</span>, <span class="hl-type">TaskListTool</span>] : []),
+  ...(isWorktreeModeEnabled() ? [<span class="hl-type">EnterWorktreeTool</span>, <span class="hl-type">ExitWorktreeTool</span>] : []),
+  <span class="hl-cm">// ...</span>
+  ...(isToolSearchEnabledOptimistic() ? [<span class="hl-type">ToolSearchTool</span>] : []),
+]</code></pre></figure>
+<p>注释 @ <code class="ref">src/tools.ts:190-192</code> 有一条硬约束：<strong>这个列表必须和 Statsig 的 <code>claude_code_global_system_caching</code> 配置保持一致</strong>。原因是跨用户的 system prompt cache 按"工具名集合"做 key，如果两个客户端算出的工具列表不一致，cache miss 就把跨用户共享的加速打没了。</p>
+<h3>MCP：协议工具包成 Tool</h3>
+<p>MCP client 拉到 server 的 <code>tool.list</code> 后，把每个条目包成 Tool 对象 @ <code class="ref">src/services/mcp/client.ts:1770</code> 附近：</p>
+<figure class="codeblock"><figcaption><span class="file">src/services/mcp/client.ts:1773-1785</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">name: skipPrefix ? tool.name : fullyQualifiedName,
+mcpInfo: { serverName: client.name, toolName: tool.name },
+isMcp: <span class="hl-kw">true</span>,
+searchHint:
+  <span class="hl-kw">typeof</span> tool._meta?.[&#x27;anthropic/searchHint&#x27;] === &#x27;string&#x27;
+    ? tool._meta[&#x27;anthropic/searchHint&#x27;].replace(/\s+/g, &#x27; &#x27;).trim() || <span class="hl-kw">undefined</span>
+    : <span class="hl-kw">undefined</span>,
+alwaysLoad: tool._meta?.[&#x27;anthropic/alwaysLoad&#x27;] === <span class="hl-kw">true</span>,
+<span class="hl-cm">// ...</span></code></pre></figure>
+<p>几个设计选择：</p>
+<ul>
+<li><strong>名字</strong>：默认是 <code>mcp__&lt;server&gt;__&lt;tool&gt;</code>。<code>CLAUDE_AGENT_SDK_MCP_NO_PREFIX</code> 模式下用原名——允许 MCP 工具覆盖内置（同名时内置胜出于合并阶段）。</li>
+<li><strong><code>_meta</code> 字段</strong>：MCP server 可以通过 <code>anthropic/searchHint</code> 和 <code>anthropic/alwaysLoad</code> 控制自己在 ToolSearch 里的行为。官方扩展点，MCP 协议细节见 <a class="chref" href="../ch12/">ch.12</a>。</li>
+<li><strong>变化率从 annotations 推断</strong>：<code>isReadOnly</code> / <code>isDestructive</code> / <code>isOpenWorld</code> 直接读 MCP annotations 的 <code>readOnlyHint</code> / <code>destructiveHint</code> / <code>openWorldHint</code>。<code>isConcurrencySafe</code> 复用 <code>readOnlyHint</code>——承担双重语义。</li>
+</ul>
+<h3>合并</h3>
+<p><code>assembleToolPool()</code> @ <code class="ref">src/tools.ts:345-367</code> 是 REPL 和 runAgent 共用的纯函数：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools.ts:362-366</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> byName = (a, b) =&gt; a.name.localeCompare(b.name)
+<span class="hl-kw">return</span> uniqBy(
+  [...builtInTools].sort(byName).concat(allowedMcpTools.sort(byName)),
+  &#x27;name&#x27;,
+)</code></pre></figure>
+<p>两个点：</p>
+<ol>
+<li><strong>内置在前 / MCP 在后的两段式排序</strong>。不是全局 <code>sort</code>。注释 @ <code class="ref">src/tools.ts:356-361</code> 解释：服务器的 <code>claude_code_system_cache_policy</code> 在<strong>内置工具段尾</strong>放了全局 cache breakpoint——如果 MCP 工具名按字母排序插进内置中间，所有下游 cache key 失效。分区排序保证内置段是一个连续 prefix。</li>
+<li><strong><code>uniqBy(&#x27;name&#x27;)</code> 保顺序</strong>。先出现的胜出——内置先 spread，所以同名 MCP 工具被过滤掉。</li>
+</ol>
+<p>React 层再叠一层：<code>useMergedTools()</code> @ <code class="ref">src/hooks/useMergedTools.ts:20-44</code> 把 <code>initialTools</code>（REPL 启动 props 传进来的额外工具）合并进去：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/toolPool.ts:64-70</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> [mcp, builtIn] = partition(
+  uniqBy([...initialTools, ...assembled], &#x27;name&#x27;),
+  isMcpTool,
+)
+<span class="hl-kw">const</span> byName = (a, b) =&gt; a.name.localeCompare(b.name)
+<span class="hl-kw">const</span> tools = [...builtIn.sort(byName), ...mcp.sort(byName)]</code></pre></figure>
+<p>同样两段式。coordinator mode 下再套一层 <code>applyCoordinatorToolFilter</code>（<code class="ref">src/utils/toolPool.ts:36-41</code>）只留 <code>COORDINATOR_MODE_ALLOWED_TOOLS</code>。</p>
+<h3>过滤链</h3>
+<p>到发 API 之前还有几道过滤：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">getAllBaseTools()             # 条件拼装全量
+  ↓
+getTools(permissionContext)   # src/tools.ts:271-327
+  ├─ CLAUDE_CODE_SIMPLE 短路 → 只留 Bash/Read/Edit
+  ├─ 剥掉 special tools (ListMcpResources 等只在特定位置加)
+  ├─ filterToolsByDenyRules  → permission context 的 deny 规则
+  ├─ REPL mode 时隐藏 REPL_ONLY_TOOLS
+  └─ isEnabled() 二次过滤
+  ↓
+assembleToolPool(ctx, mcpTools)  # 合并 MCP，两段式排序
+  ↓
+mergeAndFilterTools(initialTools, assembled, mode)  # 叠 initialTools，coordinator 过滤
+  ↓
+toolToAPISchema(tool, { deferLoading })  # 转 API schema，per-request overlay defer_loading</code></pre></figure>
+<p><code>filterToolsByDenyRules</code> @ <code class="ref">src/tools.ts:262-269</code> 处理"blanket deny"——<code>mcp__slack</code> 这种 server 级前缀 deny 规则会在这一层把整个 server 的工具剥光，<strong>不等到调用时再拒</strong>。这点重要，影响模型看到的世界。</p>
+<h3>Agent / Coordinator 可见清单</h3>
+<p>subagent 和 coordinator 另有一层白名单过滤，不在上面主流程里。声明集中在 <code class="ref">src/constants/tools.ts</code>：</p>
+<ul>
+<li><code>ALL_AGENT_DISALLOWED_TOOLS</code> @ <code class="ref">src/constants/tools.ts:36-46</code>：所有 subagent 都禁用（TaskOutput、EnterPlanMode、AskUserQuestion、TaskStop 等"main thread 专用"工具）</li>
+<li><code>ASYNC_AGENT_ALLOWED_TOOLS</code> @ <code class="ref">src/constants/tools.ts:55-71</code>：async agent 的正向白名单（File/Grep/Glob/Web/Shell/Skill/ToolSearch/Worktree）</li>
+<li><code>COORDINATOR_MODE_ALLOWED_TOOLS</code> @ <code class="ref">src/constants/tools.ts:107-112</code>：只 4 个——AgentTool、TaskStopTool、SendMessageTool、SyntheticOutputTool。coordinator 只做调度，不做实际工作。</li>
+</ul>
+<p>这些白名单由 AgentTool 在 spawn subagent 时应用；subagent 的 MCP 工具既可以<strong>继承</strong>父 context 的 clients，也可以在 frontmatter 里声明自己的 <code>mcpServers</code>（<code class="ref">src/tools/AgentTool/runAgent.ts:95-214</code>，"parent + agent-specific" 两路合并），插件里带的 MCP 工具会按"plugin-trusted"优先放行。多 agent 场景下工具集怎么跨层继承、worktree 隔离怎么与工具可见性互动，详见 <a class="chref" href="../ch04/">ch.04</a>。</p>
+<hr>
+<h2>关键流程 2：ToolSearch 懒加载</h2>
+<p>这部分是本章重点。按 "为什么 → 哪些工具 defer → 怎么搜 → 怎么回注 → 边界" 讲。</p>
+<h3>为什么 defer</h3>
+<p>Anthropic 官方 tool search 文档给的经验数据（<a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool" rel="noreferrer">https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool</a>，访问于 2026-04-19）：</p>
+<blockquote><p>A typical multi-server setup (GitHub, Slack, Sentry, Grafana, Splunk) can consume ~55k tokens in definitions before Claude does any actual work. Claude's ability to correctly pick the right tool degrades significantly once you exceed 30–50 available tools.</p></blockquote>
+<p>两个问题：<strong>token 成本</strong>和<strong>选错率</strong>。Claude Code 的自动阈值 @ <code class="ref">src/utils/toolSearch.ts:44-49</code> 设在 10% context window——超过就自动开启 defer：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/toolSearch.ts:44-49</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">DEFAULT_AUTO_TOOL_SEARCH_PERCENTAGE</span> = <span class="hl-num">10</span> <span class="hl-cm">// 10%</span></code></pre></figure>
+<blockquote><p><strong>选错率的数据侧注</strong>：Claude Code 没有跑独立的本地 evals 去证明 "客户端打分能把选错率压到和 server-side BM25 同一水平"——30–50 工具的拐点数字完全是援引官方 docs 的通用实验。线上侧，代码里埋了 <code>tengu_tool_search_outcome</code>（<code class="ref">ToolSearchTool.ts:346-355</code>）和 <code>tengu_tool_search_mode_decision</code>（<code class="ref">toolSearch.ts:401-416</code>）两个事件，收集召回数和 mode 决策分布——但这批数据在 Anthropic 内部，仓库里找不到公开结果。本章对选错率的论证到"引用 + 监控到位"为止，不做定量声明。</p></blockquote>
+<p>还有一条独立考虑：<strong>prompt cache 稳定性</strong>。MCP 工具是每用户动态发现的（每个用户连的 server 不一样），把它们塞进 system prompt 前缀会让跨用户 cache 共享失效。defer 让 MCP 工具<strong>不进 prompt 前缀</strong>，discovery 时作为 <code>tool_reference</code> 块追加在会话里——前缀不动，cache 保住（官方文档明说这点："Deferred tools are not included in the system-prompt prefix... The prefix is untouched, so prompt caching is preserved"）。</p>
+<h3>哪些工具会 defer</h3>
+<p>决策函数 <code>isDeferredTool()</code> @ <code class="ref">src/tools/ToolSearchTool/prompt.ts:62-108</code> 一个纯函数把 5 条规则编织起来：</p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/ToolSearchTool/prompt.ts:62-108（精简）</span>
+<span class="hl-kw">export</span> <span class="hl-kw">function</span> isDeferredTool(tool: <span class="hl-type">Tool</span>): boolean {
+  <span class="hl-kw">if</span> (tool.alwaysLoad === <span class="hl-kw">true</span>) <span class="hl-kw">return</span> <span class="hl-kw">false</span>                <span class="hl-cm">// 1. 显式 opt-out</span>
+  <span class="hl-kw">if</span> (tool.isMcp === <span class="hl-kw">true</span>) <span class="hl-kw">return</span> <span class="hl-kw">true</span>                      <span class="hl-cm">// 2. MCP 默认 defer</span>
+  <span class="hl-kw">if</span> (tool.name === <span class="hl-type">TOOL_SEARCH_TOOL_NAME</span>) <span class="hl-kw">return</span> <span class="hl-kw">false</span>     <span class="hl-cm">// 3. 自己不能 defer</span>
+  <span class="hl-kw">if</span> (feature(&#x27;<span class="hl-type">FORK_SUBAGENT</span>&#x27;) &amp;&amp; tool.name === <span class="hl-type">AGENT_TOOL_NAME</span>) {
+    <span class="hl-kw">if</span> (<span class="hl-cm">/* fork 子代理开启 */</span>) <span class="hl-kw">return</span> <span class="hl-kw">false</span>                 <span class="hl-cm">// 4. Agent 要 turn 1 可见</span>
+  }
+  <span class="hl-kw">if</span> ((feature(&#x27;<span class="hl-type">KAIROS</span>&#x27;) || feature(&#x27;<span class="hl-type">KAIROS_BRIEF</span>&#x27;)) &amp;&amp;
+      tool.name === <span class="hl-type">BRIEF_TOOL_NAME</span>) <span class="hl-kw">return</span> <span class="hl-kw">false</span>           <span class="hl-cm">// 5a. Brief 合同要求</span>
+  <span class="hl-kw">if</span> (feature(&#x27;<span class="hl-type">KAIROS</span>&#x27;) &amp;&amp; tool.name === <span class="hl-type">SEND_USER_FILE_TOOL_NAME</span>
+      &amp;&amp; isReplBridgeActive()) <span class="hl-kw">return</span> <span class="hl-kw">false</span>                 <span class="hl-cm">// 5b. SendUserFile 同理</span>
+  <span class="hl-kw">return</span> tool.shouldDefer === <span class="hl-kw">true</span>                          <span class="hl-cm">// 6. 兜底</span>
+}</code></pre></figure>
+<p>几条规则的用意：</p>
+<ul>
+<li><strong>规则 1 / 2</strong>：MCP 默认全部 defer，<code>alwaysLoad</code> 做个例外出口。MCP server 通过 <code>_meta[&#x27;anthropic/alwaysLoad&#x27;]</code> 表达"我这个工具真的 turn 1 就要"。</li>
+<li><strong>规则 3</strong>：ToolSearch 自己永不 defer——模型要能看到它才能发现别人。</li>
+<li><strong>规则 4–5</strong>：AgentTool、BriefTool、SendUserFileTool 在特定 feature flag 下硬写死不 defer。共同点是它们的 prompt 里包含模型必须 turn 1 看到的<strong>契约文本</strong>——比如 Brief 的 text-visibility contract。如果 defer 了就要先 ToolSearch 一次才能读到契约，显然不行。</li>
+<li><strong>规则 6</strong>：其它工具只要标了 <code>shouldDefer: true</code> 就 defer。</li>
+</ul>
+<p>仓库里哪些工具主动 opt-in <code>shouldDefer</code>？Grep 查到 27 个（完整列表见 <code class="ref">book/research/ch08/code-notes.md</code>）。都是<strong>workflow 型</strong>或<strong>低频</strong>：</p>
+<ul>
+<li>模式切换类：EnterPlanMode、ExitPlanModeV2、EnterWorktree、ExitWorktree</li>
+<li>Task v2：TaskCreate / Get / Update / List</li>
+<li>外部集成：WebFetch、WebSearch、LSPTool</li>
+<li>通信：SendMessage、AskUserQuestion、NotebookEdit</li>
+<li>时间轴：Cron 族、RemoteTrigger</li>
+</ul>
+<p><strong>Bash / FileRead / FileEdit / FileWrite 这些高频工具故意不 defer</strong>——符合官方建议的"Keep 3-5 most frequently used tools as non-deferred"。</p>
+<h3>怎么搜：打分算法</h3>
+<p>ToolSearchTool 接受两种查询形态（<code class="ref">src/tools/ToolSearchTool/ToolSearchTool.ts:304-471</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/ToolSearchTool/ToolSearchTool.ts:22-33</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">z.object({
+  query: z.string().describe(
+    &#x27;<span class="hl-type">Query</span> to find deferred tools. <span class="hl-type">Use</span> &quot;select:&lt;tool_name&gt;&quot; <span class="hl-kw">for</span> direct selection, or keywords to search.&#x27;,
+  ),
+  max_results: z.number().optional().<span class="hl-kw">default</span>(<span class="hl-num">5</span>),
+})</code></pre></figure>
+<p><strong>路径 1：<code>select:</code> 直选</strong> @ <code class="ref">src/tools/ToolSearchTool/ToolSearchTool.ts:363-406</code></p>
+<figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">select:Read,Edit,Grep</code></pre></figure>
+<p>逗号分隔、trim。一个设计细节：如果名字<strong>已经</strong>在非 defer 工具集里（"select 一个已经加载过的工具"），视作无害 no-op 返回——不报错（<code class="ref">src/tools/ToolSearchTool/ToolSearchTool.ts:373-376</code>）：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/ToolSearchTool/ToolSearchTool.ts:372-381</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> tool =
+  findToolByName(deferredTools, toolName) ??
+  findToolByName(tools, toolName)
+<span class="hl-kw">if</span> (tool) {
+  <span class="hl-kw">if</span> (!found.includes(tool.name)) found.push(tool.name)
+} <span class="hl-kw">else</span> {
+  missing.push(toolName)
+}</code></pre></figure>
+<p>注释说明原因："selecting an already-loaded tool is a harmless no-op that lets the model proceed without retry churn"。模型有时会把已加载工具名传给 ToolSearch（尤其 subagent / post-compaction 之后状态不对齐），fail-loud 会让它进入 retry 循环，fail-silent 更稳。</p>
+<p><strong>路径 2：关键词打分</strong> @ <code class="ref">src/tools/ToolSearchTool/ToolSearchTool.ts:186-302</code></p>
+<p>Fast paths 先走：</p>
+<ul>
+<li><strong>完整 name 精确匹配</strong>（小写不敏感）→ 直接返回 @ :199-204</li>
+<li><strong><code>mcp__server__</code> prefix 匹配</strong> → prefix 返回 @ :208-216</li>
+</ul>
+<p>常规路径：</p>
+<ol>
+<li>解析查询词：<code>+term</code> 为 required（必选），其它 optional</li>
+<li>Required 预过滤：每个 required 都要在 name parts / description / searchHint 里出现</li>
+<li>对通过预过滤的候选打分：</li>
+</ol>
+<figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/ToolSearchTool/ToolSearchTool.ts:267-291（简化）</span>
+<span class="hl-kw">for</span> (<span class="hl-kw">const</span> term <span class="hl-kw">of</span> allScoringTerms) {
+  <span class="hl-cm">// 名字 part 精确</span>
+  <span class="hl-kw">if</span> (parsed.parts.includes(term)) {
+    score += parsed.isMcp ? <span class="hl-num">12</span> : <span class="hl-num">10</span>
+  } <span class="hl-kw">else</span> <span class="hl-kw">if</span> (parsed.parts.some(part =&gt; part.includes(term))) {
+    score += parsed.isMcp ? <span class="hl-num">6</span> : <span class="hl-num">5</span>
+  }
+  <span class="hl-cm">// full name fallback（仅当其它都 0 分时）</span>
+  <span class="hl-kw">if</span> (parsed.full.includes(term) &amp;&amp; score === <span class="hl-num">0</span>) score += <span class="hl-num">3</span>
+  <span class="hl-cm">// searchHint 词边界命中</span>
+  <span class="hl-kw">if</span> (hintNormalized &amp;&amp; pattern.test(hintNormalized)) score += <span class="hl-num">4</span>
+  <span class="hl-cm">// description 词边界命中</span>
+  <span class="hl-kw">if</span> (pattern.test(descNormalized)) score += <span class="hl-num">2</span>
+}</code></pre></figure>
+<p>权重读法：</p>
+<ul>
+<li><strong>name 精确匹配最重</strong>（10/12）。用户搜 <code>slack</code> 命中 <code>mcp__slack__send_message</code> 的 part，立刻胜出。</li>
+<li><strong>MCP 工具再加成</strong>（10→12、5→6）。因为 MCP 工具名往往就是唯一的发现路径（<code>mcp__&lt;server&gt;__&lt;tool&gt;</code> 结构信息量高）。</li>
+<li><strong>searchHint &gt; description</strong>（4 vs 2）。hint 是手写的精炼描述，噪声低。</li>
+<li><strong><code>isMcp</code> 检测后</strong>，name 用 <code>__</code> 和 <code>_</code> 同时拆 @ <code class="ref">src/tools/ToolSearchTool/ToolSearchTool.ts:138-145</code>，<code>mcp__slack__send_message</code> → <code>[&#x27;slack&#x27;, &#x27;send&#x27;, &#x27;message&#x27;]</code>；regular 工具走 CamelCase 拆分，<code>NotebookEditTool</code> → <code>[&#x27;notebook&#x27;, &#x27;edit&#x27;, &#x27;tool&#x27;]</code>。</li>
+</ul>
+<p>词边界用 <code>\b</code> 正则保守匹配，避免 "read" 命中 "ready"。编译一次放 Map 重用 @ <code class="ref">src/tools/ToolSearchTool/ToolSearchTool.ts:167-175</code>——tools × terms 的双循环里不要每次 <code>new RegExp</code>。</p>
+<p><strong>打分不是 embedding</strong>——故意。本地查询、零延迟、零依赖，比 embedding 的预热/索引开销便宜。代价是 searchHint 写得不好时召回差，所以每个 <code>shouldDefer: true</code> 的工具都手写了 searchHint。</p>
+<h3>怎么回注：tool_reference 块</h3>
+<p>ToolSearch 返回的不是 schema，是<strong>引用</strong>：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/ToolSearchTool/ToolSearchTool.ts:462-469</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">return</span> {
+  <span class="hl-kw">type</span>: &#x27;tool_result&#x27;,
+  tool_use_id: toolUseID,
+  content: content.matches.map(name =&gt; ({
+    <span class="hl-kw">type</span>: &#x27;tool_reference&#x27; <span class="hl-kw">as</span> <span class="hl-kw">const</span>,
+    tool_name: name,
+  })),
+} <span class="hl-kw">as</span> <span class="hl-kw">unknown</span> <span class="hl-kw">as</span> <span class="hl-type">ToolResultBlockParam</span></code></pre></figure>
+<p>Anthropic API 拿到 <code>tool_reference</code> 块会<strong>自动展开</strong>成完整 tool schema 并追加进当前会话上下文——system prompt 前缀不动，cache 保住（官方文档第 "How deferral works internally" 一节：<a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool" rel="noreferrer">https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool</a>，访问于 2026-04-19）。展开是 server-side 行为，客户端看不到。</p>
+<p>下一轮请求前，Claude Code 还要扫历史找出"已经发现"的工具名：</p>
+<figure class="codeblock"><figcaption><span class="file">src/utils/toolSearch.ts:568-579</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">for</span> (<span class="hl-kw">const</span> block <span class="hl-kw">of</span> content) {
+  <span class="hl-kw">if</span> (isToolResultBlockWithContent(block)) {
+    <span class="hl-kw">for</span> (<span class="hl-kw">const</span> item <span class="hl-kw">of</span> block.content) {
+      <span class="hl-kw">if</span> (isToolReferenceWithName(item)) {
+        discoveredTools.add(item.tool_name)
+      }
+    }
+  }
+}</code></pre></figure>
+<p><code>extractDiscoveredToolNames()</code> @ <code class="ref">src/utils/toolSearch.ts:545-592</code> 返回的 Set 决定了下一轮哪些 MCP 工具要<strong>直接加载</strong>（<code>willDefer(t) = useToolSearch &amp;&amp; !discovered.has(t.name)</code> 语义），哪些仍然 defer。发现集合单调增长，discovered 一次就稳住。</p>
+<p><strong>compaction 边界问题</strong>：compact 会吃掉中间消息，<code>tool_reference</code> 一并消失。代码里 <code>compact_boundary</code> 系统消息携带 <code>compactMetadata.preCompactDiscoveredTools</code>——compaction 前把发现集合快照塞进去，下次 <code>extractDiscoveredToolNames</code> 再读回来（<code class="ref">src/utils/toolSearch.ts:550-561</code>）。没有这个兜底，每次 compact 之后模型都得重新 ToolSearch 一遍。</p>
+<h3>描述缓存</h3>
+<p>ToolSearch 每次打分要读每个候选的 description（<code>await tool.prompt({...})</code>）。这不便宜——prompt 函数可能读文件、跑 feature flag 查询。所以缓存：</p>
+<figure class="codeblock"><figcaption><span class="file">src/tools/ToolSearchTool/ToolSearchTool.ts:66-86</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> getToolDescriptionMemoized = memoize(
+  <span class="hl-kw">async</span> (toolName, tools) =&gt; {
+    <span class="hl-kw">const</span> tool = findToolByName(tools, toolName)
+    <span class="hl-kw">if</span> (!tool) <span class="hl-kw">return</span> &#x27;&#x27;
+    <span class="hl-kw">return</span> tool.prompt({
+      getToolPermissionContext: <span class="hl-kw">async</span> () =&gt; ({ <span class="hl-cm">/* empty */</span> }),
+      tools, agents: [],
+    })
+  },
+  (toolName) =&gt; toolName,
+)</code></pre></figure>
+<p>失效策略 @ <code class="ref">src/tools/ToolSearchTool/ToolSearchTool.ts:55-100</code>：把当前 deferred 工具名<strong>排序 join</strong> 作为集合 key，每次搜索前比一下，变了就 <code>cache.clear()</code>。粒度粗——任何一个 MCP server 重连都打破全部描述 cache——但实现简单、正确性容易论证。</p>
+<h3>边界</h3>
+<p>几个具体限制：</p>
+<ul>
+<li><strong>模型支持</strong>：Haiku 不支持 <code>tool_reference</code> block，ToolSearch 自动关（<code class="ref">src/utils/toolSearch.ts:239-252</code> 的 <code>modelSupportsToolReference</code>）。反向测试——名字匹配 <code>DEFAULT_UNSUPPORTED_MODEL_PATTERNS = [&#x27;haiku&#x27;]</code> 才判定不支持，其它模型默认支持。新模型不用改码。</li>
+<li><strong>第三方代理</strong>：<code>ANTHROPIC_BASE_URL</code> 指向非 Anthropic 主机时默认关（<code class="ref">src/utils/toolSearch.ts:299-311</code>）。理由写在注释里："tool_reference is a beta content type that third-party API gateways typically don't support"。liteLLM 等部分代理能转，所以"非第一方 + <code>ENABLE_TOOL_SEARCH</code> 未设"才关——用户显式设了就信任。</li>
+<li><strong>Kill switch</strong>：<code>CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS</code> 一开，任何 beta 字段都剥（<code class="ref">src/utils/toolSearch.ts:181-183</code> 和 <code class="ref">src/utils/api.ts:243-259</code>），tool search 强制 <code>standard</code> mode。</li>
+<li><strong>MCP server 连接中</strong>：ToolSearch 搜不到结果时，如果还有 MCP server 在 <code>pending</code> 状态，会把 pending server 名字塞进返回结果里，让模型等一下再搜（<code class="ref">src/tools/ToolSearchTool/ToolSearchTool.ts:334-339</code>、:451-454）。</li>
+<li><strong>Bedrock / Vertex</strong>：client-side <code>tool_reference</code> 展开可能不支持。代码注释留了 warning（<code class="ref">src/tools/ToolSearchTool/ToolSearchTool.ts:440-443</code>），issue tracker 里也有反馈：<a href="https://github.com/anthropics/claude-code/issues/25212" rel="noreferrer">https://github.com/anthropics/claude-code/issues/25212</a>（访问于 2026-04-19）。</li>
+</ul>
+<hr>
+<h2>设计取舍</h2>
+<h3>为什么 Tool 接口这么大</h3>
+<p><strong>7 组职责在一个接口</strong>，不是按职责分层（像"ExecutableTool + RenderableTool + ClassifiableTool"）。好处：一个 tool 文件读完就知道这个工具的全部行为；工具作者不用跨 3 个文件查 interface。代价：MCP 工具得在 wrap 时填很多默认方法（<code class="ref">src/services/mcp/client.ts</code> 那一大段），以及 Tool 类型本身是一个超长的 type。</p>
+<p>如果换成多接口组合，好处是每个接口职责纯；代价是每加一个工具都要写多个 class 或用 <code>satisfies A &amp; B &amp; C</code>，发生漏实现时是编译期 error 但报错位置不直观。<code>buildTool</code> + <code>TOOL_DEFAULTS</code> 是"单接口 + 默认值" 这条路线的折衷：保留单接口可读性，用默认值替代部分类型体操。</p>
+<h3>为什么 ToolSearch 用关键词打分而不是 server-side 或 embedding</h3>
+<p>三种备选：</p>
+<div class="table-wrap"><table><thead><tr><th>方案</th><th>成本</th><th>准确度</th><th>依赖</th></tr></thead><tbody><tr><td>Anthropic server-side <code>tool_search_tool_regex/bm25</code></td><td>要模型学 regex 或自然语言查询</td><td>官方提供</td><td>依赖 API beta + 变体选择</td></tr>
+<tr><td>客户端 embedding</td><td>预热 + 索引 + 一次向量比较</td><td>高</td><td>依赖 embedding 模型或本地库</td></tr>
+<tr><td><strong>客户端关键词 + 权重打分</strong>（Claude Code 选这个）</td><td>本地毫秒级</td><td>中，靠 searchHint 质量</td><td>无</td></tr></tbody></table></div>
+<p>Claude Code 选第三种的动机从代码上看是<strong>自主可控 + 零依赖</strong>。打分权重、<code>select:</code> 语法、<code>+required</code> 前缀、fast path（name 精确 / mcp__ 前缀 / full-pool fallback）都可以随需求调整，不用等服务端 API 变体。代价是 searchHint 写不好时召回差——这就是为什么代码里每个 <code>shouldDefer: true</code> 的工具都手写了 hint。</p>
+<h3>为什么 MCP 默认全部 defer</h3>
+<p>三层考虑叠加：</p>
+<ol>
+<li><strong>Workflow-specific</strong>：每用户连不同 MCP server，<code>github__*</code> 可能一个人有一个人没有，不 defer 就意味着 system prompt 因人而异。</li>
+<li><strong>Prompt cache</strong>：内置工具段要保持 "cross-user 共享的 contiguous prefix"（<code class="ref">src/tools.ts:356-361</code> 注释）。MCP 工具一进前缀就破坏共享 cache。</li>
+<li><strong>Token 成本</strong>：一个 Notion / GitHub / Slack 的 MCP server 轻松 20–30 个工具，55K token 的量级。</li>
+</ol>
+<p><code>alwaysLoad</code> 是反向出口：某个 MCP 工具 workflow 特别重要，server 侧能通过 <code>_meta[&#x27;anthropic/alwaysLoad&#x27;]</code> 让它回到非 defer 路径。</p>
+<hr>
+<h2>代码层隐藏细节</h2>
+<p>几个读一遍主流程不会注意到、但调试或改造时会被卡住的点。按"最容易踩"到"最容易忽略"排：</p>
+<h3>1. ToolSearch 的发现集合在 subagent 里<strong>不继承</strong></h3>
+<p>主 agent 调 ToolSearch 发现一个 MCP 工具之后，这次 discovery 只存在于主 agent 的 message 历史里——<code>tool_reference</code> 块在 user 消息的 <code>tool_result</code> 里。spawn 一个 subagent 时，subagent 拿到的是 AgentTool 组装出来的<strong>新 message 序列</strong>（<code class="ref">src/tools/AgentTool/runAgent.ts</code> 附近），不是父会话的原始历史。也就是说：</p>
+<ul>
+<li>subagent 要用同一个 MCP 工具，得<strong>自己再 ToolSearch 一次</strong>。</li>
+<li>主 agent 的 <code>discovered</code> Set 不会穿透给 subagent。</li>
+</ul>
+<p>这不是 bug——subagent 的 context 本来就是刻意新建的（token 预算、角色隔离）。但会出现一种"我在主线程里用 Slack 发过消息，subagent 说它找不到 <code>slack__send_message</code>"的奇怪错觉。对症解法：subagent prompt 里提前写上 <code>select:mcp__slack__send_message</code> 让它 turn 1 就把 schema 加载进来；或者工具标 <code>alwaysLoad</code> 回到非 defer 路径。代码里 AgentTool 自身不在 subagent 的 <code>ALL_AGENT_DISALLOWED_TOOLS</code> 里（<code>ant</code> 用户 USER_TYPE 才例外允许递归），ToolSearch 也在 <code>ASYNC_AGENT_ALLOWED_TOOLS</code> 白名单里（<code class="ref">src/constants/tools.ts:55-71</code>），所以重新发现是随时能做的。</p>
+<h3>2. <code>isReadOnly</code> / <code>isConcurrencySafe</code> 谁在消费</h3>
+<p>代码里这两个字段的真实消费点只有三处（Grep <code>isConcurrencySafe(</code> 定位到 5 个源文件、3 个实际消费者）：</p>
+<ul>
+<li><strong><code class="ref">src/services/tools/toolOrchestration.ts:96-114</code></strong>：把同一个 assistant 消息里的多个 tool_use 块按 <code>isConcurrencySafe</code> 分批——连续若干个都 safe 就打成一个 concurrent batch，遇到不 safe 的就单独一 batch。</li>
+<li><strong><code class="ref">src/services/tools/StreamingToolExecutor.ts:84-148</code></strong>：流式执行时动态决策"能不能并发加塞"，规则是当前执行中所有工具都 concurrency-safe 时才允许再加一个 safe 的工具进去。</li>
+<li><strong><code class="ref">src/tools/BashTool/BashTool.tsx</code></strong>：<code>isConcurrencySafe(input) = isReadOnly(input)</code>——BashTool 把这两个绑在一起，用 <code>checkReadOnlyConstraints</code> 解析命令。</li>
+</ul>
+<p>注意：<code>isReadOnly</code> <strong>除了并发调度</strong>还有一个 UI 用法——<code class="ref">collapseReadSearch.ts</code> 把连续的 read / search 工具调用折叠成一块（"Read × 5"）。<code>isDestructive</code> 在主代码里目前只有一个消费点：<code class="ref">permissions.ts</code> 的 safety classifier。</p>
+<p>Plan mode 下<strong>工具清单本身不缩</strong>——所有写工具仍然在 <code>options.tools</code> 里。plan mode 的实现方式是在 <code>checkPermissions</code> 里把非 <code>isReadOnly</code> 的工具拦在 <code>ask</code> 行为上，让用户在 ExitPlanMode 之前无法执行写操作（<code class="ref">src/utils/permissions/permissions.ts</code> 和 <code class="ref">permissionSetup.ts</code> 对 <code>mode === &#x27;plan&#x27;</code> 的分支多处处理）。所以 ToolSearch 和 plan mode 之间<strong>没有</strong>相互影响——defer 的集合跟 permission mode 独立计算。</p>
+<h3>3. merged tools 的覆盖优先级</h3>
+<p>同一个 tool name 出现多次时谁胜出，按出现位置不同，规则不同：</p>
+<div class="table-wrap"><table><thead><tr><th>合并阶段</th><th>先者优先方</th><th>代码位置</th></tr></thead><tbody><tr><td><code>assembleToolPool</code>：内置 vs MCP</td><td><strong>内置</strong>（spread 在前，<code>uniqBy(&#x27;name&#x27;)</code> 保留先出现的）</td><td><code class="ref">src/tools.ts:362-366</code></td></tr>
+<tr><td><code>mergeAndFilterTools</code>：initialTools vs assembled</td><td><strong>initialTools</strong>（同上机制）</td><td><code class="ref">src/utils/toolPool.ts:65-70</code></td></tr>
+<tr><td>MCP 内部：<code>CLAUDE_AGENT_SDK_MCP_NO_PREFIX</code> 下 MCP 用原名 vs 内置同名</td><td><strong>内置</strong> 仍然胜出（因为合并阶段内置 spread 在前）</td><td><code class="ref">src/services/mcp/client.ts:1773</code></td></tr>
+<tr><td>plugin MCP servers vs 用户 MCP servers</td><td>plugin 侧通过"plugin-trusted"分类享有更宽松的权限门禁，但<strong>名字冲突时仍是先到先得</strong>（合并阶段决定）</td><td><code class="ref">src/tools/AgentTool/runAgent.ts:112-127</code></td></tr></tbody></table></div>
+<p>一句话记法：<strong>先 spread 进去的名字胜出</strong>。不是按"plugin &gt; 内置 &gt; MCP &gt; skill"的静态分层——而是按四个来源在合并函数里的 spread 顺序。这解释了一个非直觉现象：<code>initialTools</code>（REPL 启动时从 SDK props 传进来的工具）能覆盖内置 Bash——因为 <code>uniqBy([...initialTools, ...assembled], &#x27;name&#x27;)</code> 里 initialTools 在前。SDK 用户想替换内置工具实现，就是走这条路。</p>
+<h3>4. <code>shared/</code> helper 的读写一致性假设</h3>
+<p>仓库里和工具相关的三个 "全局可变状态"：</p>
+<ul>
+<li><code>getToolDescriptionMemoized</code> 的 cache（<code class="ref">ToolSearchTool.ts:66</code>）—— <strong>进程级单例</strong>，按 toolName 做 key。假设同名工具的 description 在当前 deferred 集合不变时是稳定的。失效策略是"当前 deferred 工具名集合变了就 clear"，粒度粗但正确。</li>
+<li><code>getToolSchemaCache()</code>（<code class="ref">src/utils/api.ts:119</code> 附近）——按 <code>name</code> 或 <code>name + inputJSONSchema hash</code> 做 key 缓存 <code>toolToAPISchema</code> 输出。假设同名同 schema 的 API 描述在进程生命周期内不变。</li>
+<li><code>cachedDeferredToolNames: string | null</code> 作为失效检测的 sentinel。</li>
+</ul>
+<p>这些 cache 都是<strong>进程级单例</strong>，不按 session / agent 分片。意味着：<strong>两个并发的 subagent 如果同时访问同一个 tool name 的 memoized description，会共享同一个字符串</strong>。这在当前代码里没问题——描述不随 agent 身份变——但如果以后有人把工具描述写成"带 agent 信息的动态 prompt"，这层 cache 就得重写。买这笔简洁性的代价是"工具描述不依赖 ToolUseContext 的 agent 字段"这条隐式约束，文档里没明说，是从 memoize 的 key 推出来的。</p>
+<h3>5. <code>toolMatchesName</code> 的 aliases 双查</h3>
+<p><code>findToolByName</code> / <code>toolMatchesName</code> 在 <code class="ref">src/Tool.ts:348-360</code> 查工具时会同时比 <code>tool.name</code> 和 <code>tool.aliases[]</code>——但<strong>合并阶段的 <code>uniqBy(&#x27;name&#x27;)</code> 只去重 <code>name</code></strong>，不理 aliases。这意味着两个工具如果 name 不同但 aliases 重叠，都能进 pool，模型用 alias 调用时 <code>findToolByName</code> 返回的是数组里第一个匹配——分区排序之后就是<strong>字母序第一个</strong>。这个角落在代码里没显式处理，实际仓库里 aliases 重复的概率很低（每个工具 0-1 个 alias），所以不是问题；但如果有人给 MCP 工具加上 "和内置工具同名的 alias"，合并函数不会拦，<code>findToolByName</code> 返回谁取决于排序。写自己的 tool registry 时注意这条。</p>
+<hr>
+<h2>可迁移的点</h2>
+<p>这一章写完读者能拿走的四个点：</p>
+<ol>
+<li><strong>Tool 接口里装变化率元数据</strong>。<code>isReadOnly</code>、<code>isConcurrencySafe</code>、<code>isDestructive</code> 不是给权限用，是给<strong>并发调度</strong> + <strong>UI 折叠</strong> + <strong>安全分类器</strong>共用的。放进接口而不是外部 registry 的好处是作者写工具时就得面对这几个决策，不会漏。</li>
+<li><strong>两级工具暴露：一个 Search + 一堆 deferred</strong>。只要接口协议支持 <code>tool_reference</code> 块，这个模式不局限于 Anthropic。没有 server-side 支持时，客户端也可以自己基于"哪些工具这一轮要 defer"的集合为每个 tool schema 打上 <code>defer_loading: true</code>——Claude Code 的 <code>willDefer(t) = useToolSearch &amp;&amp; (deferredToolNames.has(t.name) || shouldDeferLspTool(t))</code> @ <code class="ref">src/services/api/claude.ts:1208-1209</code> 就是这个语义：<code>deferredToolNames</code> 是本轮判定为 defer 的集合（<code>isDeferredTool</code> 跑出来的），LSP 工具因为 server 初始化没完成也单独延后一次。真正决定"哪些 defer 工具在这一轮<strong>不再</strong> defer"的是上游的 <code>filteredTools</code> 过滤 @ <code class="ref">src/services/api/claude.ts:1160-1167</code>——<code>discoveredToolNames</code> 进去就不再走 defer 路径。两件事分开看：<code>willDefer</code> 打标签，filter 决定是否发送。</li>
+<li><strong>决策规则写成单个纯函数</strong>。<code>isDeferredTool()</code> 把 5 条规则叠进一个 return 链，测试点明确。如果散在各个工具的 <code>shouldDefer</code> / <code>alwaysLoad</code> / <code>isMcp</code> 自己判断，跨版本迭代时规则变化一次改 N 处。</li>
+<li><strong>cache key 用"当前 deferred 工具名排序 join"</strong>。粗粒度但正确——MCP 连接变动时一律失效。cache 的正确性比命中率好证明。</li>
+</ol>
+<hr>
+<h2>跨章引用</h2>
+<ul>
+<li>Tool 被 Agent Loop 调用的机制（并行调度、interrupt、stream 事件）—— 详见 <a class="chref" href="../ch03/">ch.03</a></li>
+<li>subagent 的工具集继承、MCP clients 合并、worktree 下的工具可见性 —— 详见 <a class="chref" href="../ch04/">ch.04</a></li>
+<li><code>checkPermissions</code> 和 PermissionResult 的完整语义（含 plan / auto / bypass 模式的叠加）—— 详见 <a class="chref" href="../ch09/">ch.09</a></li>
+<li>Skills 作为 prompt 层的 deferred 机制（与 ToolSearch 对称）—— 详见 <a class="chref" href="../ch10/">ch.10</a></li>
+<li>Plugins 如何把外部工具/命令打包进 Tool 池 —— 详见 <a class="chref" href="../ch11/">ch.11</a></li>
+<li>MCP 协议字段（<code>_meta</code>, annotations, elicitation）、server 连接生命周期 —— 详见 <a class="chref" href="../ch12/">ch.12</a></li>
+<li>Agent SDK 的 <code>tool()</code> 工厂与 <code>buildTool()</code> 的关系、自定义工具如何被嵌入主 Tool pool —— 详见 <a class="chref" href="../ch23/">ch.23</a></li>
+<li>AgentTool 的 subagent 白名单应用 —— 详见 <a class="chref" href="../ch03/">ch.03</a>（subagent 一节）</li>
+</ul>
+  </div>
+</article>
+
+<nav class="chap-nav"><a class="nav-link prev" href="../ch07/"><span class="dir">← Ch.07 · prev</span><span class="t">Context<span class="cn">上下文管理与记忆</span></span></a><a class="nav-home" href="../">§ 目录</a><a class="nav-link next" href="../ch09/"><span class="dir">Ch.09 · next →</span><span class="t">Permissions<span class="cn">每次都问却不烦</span></span></a></nav>
+
+<footer class="colophon">
+  <div class="left">Claude <span class="dot">&amp;</span> Code</div>
+  <div class="right">
+    set in EB garamond · albert sans · jetbrains mono · LXGW wenkai<br>
+    《Claude Code 源码解读》 · ch.08
+  </div>
+</footer>
+
+</body>
+</html>
