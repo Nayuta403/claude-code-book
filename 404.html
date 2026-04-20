@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>404 · Claude Code 源码解读</title>
+<meta name="description" content="这一页不在这本书里。">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/claude-code-book/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;1,300;1,400&family=Albert+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+<style>
+  :root {
+    --paper:    oklch(98% 0 0);
+    --cream:    oklch(96% 0.005 350);
+    --mist:     oklch(92% 0 0);
+    --ash:      oklch(55% 0 0);
+    --charcoal: oklch(25% 0 0);
+    --ink:      oklch(10% 0 0);
+    --rose:     oklch(60% 0.25 350);
+    --rose-dim: oklch(60% 0.25 350 / 0.15);
+    --rose-soft: oklch(60% 0.25 350 / 0.08);
+
+    --display:     "EB Garamond", "LXGW WenKai", "Noto Serif SC", Georgia, serif;
+    --body:        "Albert Sans", "LXGW WenKai", "Noto Sans SC", system-ui, sans-serif;
+    --mono:        "JetBrains Mono", ui-monospace, monospace;
+    --cjk-elegant: "LXGW WenKai", "Noto Serif SC", serif;
+  }
+  *,*::before,*::after { box-sizing: border-box; }
+  html, body { background: var(--paper); color: var(--ink); }
+  body {
+    margin: 0;
+    font-family: var(--body);
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--charcoal);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+  }
+
+  .wrap {
+    max-width: 1100px;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: 80px;
+    align-items: center;
+  }
+
+  .left { display: flex; flex-direction: column; gap: 28px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--rose);
+    font-weight: 500;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: clamp(2.4rem, 5vw, 3.4rem);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    margin: 0;
+    max-width: 18ch;
+  }
+  h1 .cn {
+    display: block;
+    font-family: var(--cjk-elegant);
+    font-style: normal;
+    font-size: 0.6em;
+    margin-top: 6px;
+    color: var(--charcoal);
+  }
+
+  .lead {
+    font-size: 1.05rem;
+    line-height: 1.65;
+    color: var(--charcoal);
+    max-width: 42ch;
+    margin: 0;
+  }
+  .lead em {
+    font-family: var(--display);
+    font-style: italic;
+    color: var(--ink);
+    font-size: 1.08em;
+  }
+  .lead code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    color: var(--rose);
+    background: var(--rose-soft);
+    padding: 0.08em 0.4em;
+    border-radius: 3px;
+  }
+
+  .ctas { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 22px;
+    font-family: var(--body);
+    font-weight: 500;
+    font-size: 14px;
+    border-radius: 999px;
+    text-decoration: none;
+    transition: transform .2s cubic-bezier(.16,1,.3,1), background .2s, border-color .2s, color .2s;
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  .btn-primary { background: var(--ink); color: var(--paper); }
+  .btn-primary:hover { background: var(--rose); transform: translateY(-1px); }
+  .btn-ghost { border-color: var(--mist); color: var(--charcoal); }
+  .btn-ghost:hover { border-color: var(--rose); color: var(--rose); }
+
+  .suggest {
+    margin-top: 12px;
+    padding-top: 20px;
+    border-top: 1px dashed var(--mist);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--ash);
+  }
+  .suggest .label {
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--rose);
+    margin-bottom: 10px;
+    font-weight: 500;
+  }
+  .suggest ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+  .suggest a {
+    color: var(--charcoal);
+    text-decoration: none;
+    display: inline-flex;
+    gap: 10px;
+    align-items: baseline;
+    transition: color .15s;
+  }
+  .suggest a:hover { color: var(--rose); }
+  .suggest .n { color: var(--rose); font-size: 10px; letter-spacing: 0.1em; min-width: 42px; }
+  .suggest .t {
+    font-family: var(--body);
+    font-size: 14px;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+  }
+  .suggest a:hover .t { color: var(--rose); }
+
+  /* right side — the big italic 404 composition */
+  .right {
+    position: relative;
+    aspect-ratio: 4 / 5;
+    background: var(--cream);
+    border-radius: 8px;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 32px 36px 28px;
+  }
+  .right::before {
+    content: "";
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(circle at 18% 15%, oklch(88% 0.04 350 / 0.4), transparent 60%),
+      radial-gradient(circle at 90% 90%, oklch(90% 0.03 40 / 0.45), transparent 60%);
+    pointer-events: none;
+  }
+  .rtop {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ash);
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--mist);
+    position: relative;
+  }
+  .rtop .k { color: var(--rose); font-weight: 500; }
+  .rcenter {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 0;
+    position: relative;
+  }
+  .rnum {
+    font-family: var(--display);
+    font-style: italic;
+    font-weight: 300;
+    font-size: clamp(9rem, 22vw, 16rem);
+    line-height: 0.82;
+    letter-spacing: -0.04em;
+    color: var(--ink);
+  }
+  .rnum .four { color: var(--ink); }
+  .rnum .zero { color: var(--rose); }
+  .rcap {
+    position: absolute;
+    top: 50%; right: 0;
+    transform: translateY(-50%) rotate(90deg);
+    transform-origin: right center;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--ash);
+    white-space: nowrap;
+  }
+  .rbottom {
+    padding-top: 14px;
+    border-top: 1px solid var(--mist);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    color: var(--ash);
+    position: relative;
+    text-align: center;
+    text-transform: uppercase;
+  }
+  .rbottom .k { color: var(--rose); font-weight: 500; }
+
+  @media (max-width: 820px) {
+    .wrap { grid-template-columns: 1fr; gap: 48px; }
+    .right { aspect-ratio: 5/3; order: -1; }
+  }
+  @media (max-width: 520px) {
+    body { padding: 32px 16px; }
+    .wrap { gap: 32px; }
+  }
+
+  ::selection { background: var(--rose-dim); color: var(--ink); }
+</style>
+</head>
+<body>
+
+<main class="wrap">
+  <div class="left">
+    <div class="eyebrow">404 · page not found</div>
+    <h1>这一页不在 <em>这本书</em> 里。<span class="cn">Page not found.</span></h1>
+    <p class="lead">URL 也许拼错了，或者是一条早期版本的链接。从下面的入口回到书里，或者按 <code>⌘</code> + <code>←</code> 返回上一页。</p>
+
+    <div class="ctas">
+      <a class="btn btn-primary" href="/claude-code-book/">回到首页 →</a>
+      <a class="btn btn-ghost" href="/claude-code-book/ch03/">第 3 章 · Agent Loop</a>
+    </div>
+
+    <div class="suggest">
+      <div class="label">也许你想去 ——</div>
+      <ul>
+        <li><a href="/claude-code-book/#catalogue"><span class="n">§ TOC</span><span class="t">目录 · 23 章</span></a></li>
+        <li><a href="/claude-code-book/ch01/"><span class="n">ch.01</span><span class="t">Feature Inventory · 功能全景清单</span></a></li>
+        <li><a href="/claude-code-book/ch08/"><span class="n">ch.08</span><span class="t">Tools · Tool 接口与 ToolSearch</span></a></li>
+        <li><a href="/claude-code-book/ch14/"><span class="n">ch.14</span><span class="t">Hooks · 可编程生命周期</span></a></li>
+        <li><a href="/claude-code-book/showcase.html"><span class="n">archive</span><span class="t">设计备选存档</span></a></li>
+      </ul>
+    </div>
+  </div>
+
+  <aside class="right">
+    <div class="rtop">
+      <span>Err · <span class="k">404</span></span>
+      <span>Page not found</span>
+    </div>
+    <div class="rcenter">
+      <div class="rnum"><span class="four">4</span><span class="zero">0</span><span class="four">4</span></div>
+      <span class="rcap">no such page in this book</span>
+    </div>
+    <div class="rbottom">
+      try <span class="k">⌘</span> + <span class="k">←</span> to go back
+    </div>
+  </aside>
+</main>
+
+</body>
+</html>
