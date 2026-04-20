@@ -68,7 +68,32 @@
       })(btn, pre);
       fig.appendChild(btn);
     }
+    initProgressBar();
     initTopBtn();
+  }
+
+  function initProgressBar() {
+    if (document.querySelector(".read-progress")) return;
+    var bar = document.createElement("div");
+    bar.className = "read-progress";
+    bar.setAttribute("aria-hidden", "true");
+    document.body.appendChild(bar);
+
+    var ticking = false;
+    function update() {
+      var max = document.documentElement.scrollHeight - window.innerHeight;
+      var pct = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
+      bar.style.transform = "scaleX(" + pct + ")";
+      ticking = false;
+    }
+    window.addEventListener("scroll", function () {
+      if (!ticking) {
+        window.requestAnimationFrame(update);
+        ticking = true;
+      }
+    }, { passive: true });
+    window.addEventListener("resize", update, { passive: true });
+    update();
   }
 
   function initTopBtn() {

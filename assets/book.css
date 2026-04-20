@@ -674,6 +674,22 @@ footer.colophon .right {
   footer.colophon .right { text-align: left; }
 }
 
+/* Reading progress bar — a thin rose line that grows with scroll */
+.read-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 2.5px;
+  width: 100%;
+  background: var(--rose);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  z-index: 60;  /* above sticky showcase-bar (z: 50) */
+  pointer-events: none;
+  will-change: transform;
+  transition: transform .08s linear;
+}
+
 /* Return-to-top button (JS-injected, visible after 600px scroll) */
 .to-top-btn {
   position: fixed;

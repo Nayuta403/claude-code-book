@@ -794,6 +794,18 @@
     .showcase-bar .switcher { gap: 14px; }
   }
 
+  /* Reading progress bar */
+  .read-progress {
+    position: fixed; top: 0; left: 0;
+    height: 2.5px; width: 100%;
+    background: var(--rose);
+    transform: scaleX(0); transform-origin: 0 50%;
+    z-index: 60;
+    pointer-events: none;
+    will-change: transform;
+    transition: transform .08s linear;
+  }
+
   /* Return-to-top button */
   .to-top-btn {
     position: fixed; right: 24px; bottom: 24px; z-index: 40;
