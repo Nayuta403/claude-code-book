@@ -686,6 +686,29 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
     page_title = f"Ch.{ch['id']:02d} {display_en} · {display_cn} — Claude Code 源码解读"
     og_desc    = f"《Claude Code 源码解读》第 {ch['id']} 章 —— {display_cn}（{ch['topic']}）"
 
+    chapter_url = f"https://nayuta403.github.io/claude-code-book/ch{ch['id']:02d}/"
+    book_url    = "https://nayuta403.github.io/claude-code-book/"
+    # JSON-LD Article schema (escape-safe: pre-build dict, json.dumps for safety)
+    import json as _json
+    jsonld = {
+        "@context": "https://schema.org",
+        "@type": "Article",
+        "headline": f"Ch.{ch['id']:02d} {display_en} · {display_cn}",
+        "description": og_desc,
+        "inLanguage": "zh-Hans",
+        "datePublished": "2026-04-20",
+        "author":    {"@type": "Person",       "name": "Nayuta"},
+        "publisher": {"@type": "Organization", "name": "Claude Code 源码解读"},
+        "isPartOf":  {"@type": "Book", "name": "Claude Code 源码解读", "url": book_url},
+        "mainEntityOfPage": chapter_url,
+        "position":  ch["id"],
+    }
+    jsonld_script = (
+        '<script type="application/ld+json">'
+        + _json.dumps(jsonld, ensure_ascii=False, separators=(",", ":"))
+        + '</script>'
+    )
+
     out = f"""<!DOCTYPE html>
 <html lang="zh-Hans">
 <head>
@@ -702,6 +725,7 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
 <link rel="icon" type="image/svg+xml" href="../favicon.svg">
 {FONTS_HEAD}
 <link rel="stylesheet" href="../assets/book.css">
+{jsonld_script}
 </head>
 <body>
 
