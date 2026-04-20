@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<blockquote><p><a class="chref" href="../ch01/">ch.01</a> 把能力清点完了。这一章换视角：挑 5 个端到端的真实场景，看这些能力<strong>怎么配合</strong>。本章不展开任何模块的实现，触到的地方一律标"（详见 ch0X）"；重点是"胶水"——哪段代码把几件事串成一件事。</p></blockquote>
+<details class="chap-outline"><summary>§ 本章目录 <span class="count">· 7 节</span></summary><ol><li><a href="#2-1-为什么单开一章讲场景">2.1 为什么单开一章讲场景</a></li><li><a href="#2-2-场景一-review-my-pr">2.2 场景一：Review my PR</a></li><li><a href="#2-3-场景二-overnight-task-with-cron">2.3 场景二：Overnight task with cron</a></li><li><a href="#2-4-场景三-plan-worktree-sub-agent-落地">2.4 场景三：Plan → Worktree sub-agent 落地</a></li><li><a href="#2-5-场景四-ide-cli-remote-control-手机-push">2.5 场景四：IDE → CLI → Remote Control → 手机 push</a></li><li><a href="#2-6-场景五-web-session-teleport-回本地">2.6 场景五：Web session → /teleport 回本地</a></li><li><a href="#2-7-横向看-这-5-个场景共同靠什么撑起来">2.7 横向看：这 5 个场景共同靠什么撑起来</a></li></ol></details><blockquote><p><a class="chref" href="../ch01/">ch.01</a> 把能力清点完了。这一章换视角：挑 5 个端到端的真实场景，看这些能力<strong>怎么配合</strong>。本章不展开任何模块的实现，触到的地方一律标"（详见 ch0X）"；重点是"胶水"——哪段代码把几件事串成一件事。</p></blockquote>
 <h2 id="2-1-为什么单开一章讲场景">2.1 为什么单开一章讲场景<a class="h-anchor" href="#2-1-为什么单开一章讲场景" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 单个能力拿出来讲不稀奇：开一个 TUI、实现 tool use、装个 git worktree。稀奇在于，同一个二进制要把"用户选中 VS Code 里几行代码"、"在终端让 sub-agent 去 worktree 实现功能"、"下班把 session 推到云上接着跑"、"明早九点 cron 拉 CI 状态提醒"这些事塞进同一条 Agent Loop。</p>
 <p>组装端的代码体量很小，但位置讲究。每个场景里真正值得抄的不是某个工具本身，而是某一条"跨模块的粘合路径"——例如"cron fire 把 prompt 扔进同一条命令队列，用 <code>isMeta:true</code> 把它藏起来"。这类粘合层在单章里最容易被忽略，所以把 showcase 单独拎一章。</p>

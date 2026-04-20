@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2 id="用户看到什么">用户看到什么<a class="h-anchor" href="#用户看到什么" aria-label="permalink">¶</a></h2>
+<details class="chap-outline"><summary>§ 本章目录 <span class="count">· 9 节</span></summary><ol><li><a href="#用户看到什么">用户看到什么</a></li><li><a href="#为什么挑这个设计出来讲">为什么挑这个设计出来讲</a></li><li><a href="#关键数据结构">关键数据结构</a></li><li><a href="#关键流程-1-四个来源如何汇聚成一个-tools-数组">关键流程 1：四个来源如何汇聚成一个 Tools 数组</a></li><li><a href="#关键流程-2-toolsearch-懒加载">关键流程 2：ToolSearch 懒加载</a></li><li><a href="#设计取舍">设计取舍</a></li><li><a href="#代码层隐藏细节">代码层隐藏细节</a></li><li><a href="#可迁移的点">可迁移的点</a></li><li><a href="#跨章引用">跨章引用</a></li></ol></details><h2 id="用户看到什么">用户看到什么<a class="h-anchor" href="#用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">启动 <code>claude</code>，第一次模型看到的工具清单不到 20 个——BashTool、FileReadTool、FileEditTool 这些天天用的在里面，但像 <code>mcp__slack__send_message</code>、<code>mcp__github__list_pulls</code> 这些 MCP 工具、或者 <code>NotebookEditTool</code>、<code>EnterWorktreeTool</code> 这些低频工具，<strong>都不在初始清单里</strong>。模型知道它们存在（有一个 <code>&lt;system-reminder&gt;</code> 列出名字），但想真正调用得先 <code>ToolSearch</code> 一下。</p>
 <p>接进 5 个 MCP server、总共 100+ 个工具之后，system prompt 的 tool definitions 段依然只长了一点点（多的是 ToolSearchTool 的一段说明 + deferred 工具的名字列表）。官方文档给的数字是传统 77K token 的工具定义缩到 8.7K（来源：<a href="https://www.anthropic.com/engineering/advanced-tool-use" rel="noreferrer">https://www.anthropic.com/engineering/advanced-tool-use</a>，访问于 2026-04-19）。</p>
 <p>这章要讲两件事：</p>

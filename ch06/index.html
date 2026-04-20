@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2 id="6-1-用户看到什么">6.1 用户看到什么<a class="h-anchor" href="#6-1-用户看到什么" aria-label="permalink">¶</a></h2>
+<details class="chap-outline"><summary>§ 本章目录 <span class="count">· 9 节</span></summary><ol><li><a href="#6-1-用户看到什么">6.1 用户看到什么</a></li><li><a href="#6-2-为什么挑这个设计出来讲">6.2 为什么挑这个设计出来讲</a></li><li><a href="#6-3-关键数据结构">6.3 关键数据结构</a></li><li><a href="#6-4-关键流程">6.4 关键流程</a></li><li><a href="#6-5-两条并行路径-session-与-agent">6.5 两条并行路径：session 与 agent</a></li><li><a href="#6-6-hook-作为-vcs-抽象">6.6 Hook 作为 VCS 抽象</a></li><li><a href="#6-7-设计取舍">6.7 设计取舍</a></li><li><a href="#6-8-可迁移的点">6.8 可迁移的点</a></li><li><a href="#6-9-边界-交叉引用">6.9 边界（交叉引用）</a></li></ol></details><h2 id="6-1-用户看到什么">6.1 用户看到什么<a class="h-anchor" href="#6-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 提供三条进入 worktree 的路径，底层共用同一套机制。</p>
 <p><strong>路径 A：CLI 启动标志。</strong> 在仓库根目录运行 <code>claude --worktree feat-auth</code>（或 <code>-w feat-auth</code>），Claude 启动时就把会话落进 <code>&lt;repo&gt;/.claude/worktrees/feat-auth</code>，分支名 <code>worktree-feat-auth</code>，以 <code>origin/HEAD</code> 为 base。没给名字就随机生成一个 <code>bright-running-fox</code> 形式的 slug。</p>
 <p><strong>路径 B：会话中的 <code>EnterWorktree</code> 工具。</strong> 用户对 Claude 说"帮我开个 worktree 做这个重构"，LLM 主动调 <code>EnterWorktree</code>，当前会话的 cwd 被切到新 worktree。工具 prompt 硬性限定：</p>

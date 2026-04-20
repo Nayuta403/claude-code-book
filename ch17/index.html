@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2 id="17-1-用户看到什么">17.1 用户看到什么<a class="h-anchor" href="#17-1-用户看到什么" aria-label="permalink">¶</a></h2>
+<details class="chap-outline"><summary>§ 本章目录 <span class="count">· 13 节</span></summary><ol><li><a href="#17-1-用户看到什么">17.1 用户看到什么</a></li><li><a href="#17-2-为什么挑这个设计出来讲">17.2 为什么挑这个设计出来讲</a></li><li><a href="#17-3-remote-session-的四种形态-先把概念对齐">17.3 Remote session 的四种形态（先把概念对齐）</a></li><li><a href="#17-4-关键数据结构">17.4 关键数据结构</a></li><li><a href="#17-5-关键流程之一-remote-session-的主干">17.5 关键流程之一：Remote session 的主干</a></li><li><a href="#17-6-关键流程之二-permission-反向回路-本章核心">17.6 关键流程之二：permission 反向回路（本章核心）</a></li><li><a href="#17-7-teleport-的确切语义">17.7 Teleport 的确切语义</a></li><li><a href="#17-8-关键流程之三-断线重连与-transport-抽象">17.8 关键流程之三：断线重连与 transport 抽象</a></li><li><a href="#17-9-bridge-本地跑-agent-远端-ui-的另一面">17.9 Bridge：本地跑 agent、远端 UI 的另一面</a></li><li><a href="#17-10-directconnect-与-ssh-两个简化版本">17.10 DirectConnect 与 SSH：两个简化版本</a></li><li><a href="#17-11-设计取舍总结">17.11 设计取舍总结</a></li><li><a href="#17-12-可迁移的点">17.12 可迁移的点</a></li><li><a href="#17-13-延伸阅读">17.13 延伸阅读</a></li></ol></details><h2 id="17-1-用户看到什么">17.1 用户看到什么<a class="h-anchor" href="#17-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 里"跨机器"有四个入口，用户感知不同：</p>
 <ol>
 <li><code>claude --remote &quot;fix the auth bug&quot;</code>。本地 CLI 里按回车，终端里打一条 "Created remote session ... View: https://claude.ai/code/&lt;id&gt; ... Resume with: claude --teleport &lt;id&gt;"（<code class="ref">src/main.tsx:3444-3446</code>），然后如果 TUI 特性门是关的，claude 进程直接退出；如果打开的话则进入一个<strong>只做前端</strong>的本地 REPL，真正跑 agent 的是 Anthropic 云里的沙箱容器。你在本地按 Ctrl+C 发出去的是一个 interrupt 信号，本地不跑任何工具。本书把这条路径叫 <strong>CCR 云 session</strong>。</li>

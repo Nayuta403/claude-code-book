@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2 id="1-用户看到什么">1. 用户看到什么<a class="h-anchor" href="#1-用户看到什么" aria-label="permalink">¶</a></h2>
+<details class="chap-outline"><summary>§ 本章目录 <span class="count">· 17 节</span></summary><ol><li><a href="#1-用户看到什么">1. 用户看到什么</a></li><li><a href="#2-为什么挑这个设计出来讲">2. 为什么挑这个设计出来讲</a></li><li><a href="#3-三层定时能力的划分">3. 三层定时能力的划分</a></li><li><a href="#4-数据结构">4. 数据结构</a></li><li><a href="#5-cron-表达式-自研-5-field-解析器">5. Cron 表达式：自研 5-field 解析器</a></li><li><a href="#6-调度器主循环">6. 调度器主循环</a></li><li><a href="#7-jitter-一行哈希的错峰">7. Jitter：一行哈希的错峰</a></li><li><a href="#8-触发后-prompt-怎么被注入">8. 触发后：prompt 怎么被注入</a></li><li><a href="#9-loop-是一层-skill-壳">9. /loop 是一层 skill 壳</a></li><li><a href="#10-missed-task-重启后怎么追补">10. Missed task：重启后怎么追补</a></li><li><a href="#11-repl-的空闲检测">11. REPL 的空闲检测</a></li><li><a href="#12-远端-trigger-本地发起侧">12. 远端 trigger：本地发起侧</a></li><li><a href="#13-共享-scheduler-repl-和--p-模式">13. 共享 scheduler：REPL 和 -p 模式</a></li><li><a href="#14-两层-feature-gate">14. 两层 feature gate</a></li><li><a href="#15-设计取舍">15. 设计取舍</a></li><li><a href="#16-可迁移的点">16. 可迁移的点</a></li><li><a href="#附-版本脉络">附：版本脉络</a></li></ol></details><h2 id="1-用户看到什么">1. 用户看到什么<a class="h-anchor" href="#1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 里有一层"定时"能力可以让一个长时间运行的 REPL 自己给自己派活。用户可以这么用：</p>
 <ul>
 <li>直接跟 Claude 说"每 5 分钟检查一下部署"。Claude 会调 <code>CronCreate</code> 工具，落下一条 cron。</li>

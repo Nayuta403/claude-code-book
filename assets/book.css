@@ -186,6 +186,86 @@ h1.chap-title .cn {
 .article .prose > *:first-child { margin-top: 0; }
 .article .prose > *:last-child  { margin-bottom: 0; }
 
+/* 本章目录 — collapsible outline at the top of every long chapter */
+.article .prose .chap-outline {
+  margin: 0 0 var(--xl) 0;
+  padding: 14px 20px;
+  background: var(--cream);
+  border-radius: 6px;
+  font-family: var(--body);
+}
+.article .prose .chap-outline summary {
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--rose);
+  font-weight: 500;
+  padding: 2px 0;
+  list-style: none;
+  user-select: none;
+}
+.article .prose .chap-outline summary::-webkit-details-marker { display: none; }
+.article .prose .chap-outline summary::before {
+  content: "▸";
+  margin-right: 10px;
+  display: inline-block;
+  transition: transform .2s var(--ease-out);
+  color: var(--rose);
+  transform-origin: 45% 55%;
+  font-size: 0.95em;
+}
+.article .prose .chap-outline[open] summary::before { transform: rotate(90deg); }
+.article .prose .chap-outline .count {
+  color: var(--ash);
+  letter-spacing: 0.06em;
+  margin-left: 4px;
+  text-transform: none;
+  font-weight: 400;
+}
+.article .prose .chap-outline ol {
+  margin: 14px 0 2px 0;
+  padding: 0;
+  list-style: none;
+  columns: 2;
+  column-gap: 32px;
+  counter-reset: otl;
+}
+.article .prose .chap-outline li {
+  margin: 0 0 7px 0;
+  break-inside: avoid;
+  font-size: 14.5px;
+  line-height: 1.5;
+  counter-increment: otl;
+  padding-left: 28px;
+  position: relative;
+}
+.article .prose .chap-outline li::before {
+  content: counter(otl, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ash);
+  top: 2px;
+}
+.article .prose .chap-outline a {
+  color: var(--charcoal);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  padding-bottom: 1px;
+  transition: color .15s, border-color .15s;
+}
+.article .prose .chap-outline a:hover {
+  color: var(--rose);
+  border-bottom-color: var(--rose-dim);
+}
+@media (max-width: 720px) {
+  .article .prose .chap-outline ol { columns: 1; }
+}
+
 .article .prose p {
   margin: 0 0 var(--md) 0;
 }

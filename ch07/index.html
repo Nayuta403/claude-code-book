@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2 id="7-1-本章要讲的核心设计">7.1 本章要讲的核心设计<a class="h-anchor" href="#7-1-本章要讲的核心设计" aria-label="permalink">¶</a></h2>
+<details class="chap-outline"><summary>§ 本章目录 <span class="count">· 8 节</span></summary><ol><li><a href="#7-1-本章要讲的核心设计">7.1 本章要讲的核心设计</a></li><li><a href="#7-2-三层记忆的边界">7.2 三层记忆的边界</a></li><li><a href="#7-3-memdir-文件系统作为-memory">7.3 memdir：文件系统作为 memory</a></li><li><a href="#7-4-compact-上下文快满时的拯救">7.4 Compact：上下文快满时的拯救</a></li><li><a href="#7-5-context-把上面一切可视化">7.5 /context：把上面一切可视化</a></li><li><a href="#7-6-token-估算的两层">7.6 Token 估算的两层</a></li><li><a href="#7-7-设计取舍-可迁移的点">7.7 设计取舍 &amp;amp; 可迁移的点</a></li><li><a href="#7-8-本章边界">7.8 本章边界</a></li></ol></details><h2 id="7-1-本章要讲的核心设计">7.1 本章要讲的核心设计<a class="h-anchor" href="#7-1-本章要讲的核心设计" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 的记忆系统真正值得拆开讲的是一个点：<strong>memdir —— 把"跨会话记忆"从对话缓冲里搬到普通的文件系统，用 <code class="ref">MEMORY.md</code> 当索引、用 YAML frontmatter 做类型约束，让模型自己维护它。</strong></p>
 <p>围绕这个核心，有三层周边设计：</p>
 <ul>

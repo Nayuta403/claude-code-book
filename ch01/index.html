@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<blockquote><p>本章是全书索引。目标不是深入任何一个能力，而是把 Claude Code 面向用户的所有能力清点一遍，给每一项一个 canonical 名称 + 源码入口 + 官方文档坐标。后续 22 章会反复回引这里。</p></blockquote>
+<details class="chap-outline"><summary>§ 本章目录 <span class="count">· 12 节</span></summary><ol><li><a href="#1-1-为什么专门开一章做清单">1.1 为什么专门开一章做清单</a></li><li><a href="#1-2-入口-从-bootstrap-entry-到斜杠命令">1.2 入口：从 bootstrap-entry 到斜杠命令</a></li><li><a href="#1-3-feature-flag-growthbook-与-shim-读代码前的地图">1.3 Feature flag、GrowthBook 与 shim：读代码前的地图</a></li><li><a href="#1-4-核心-agent-能力">1.4 核心 Agent 能力</a></li><li><a href="#1-5-工具系统与扩展">1.5 工具系统与扩展</a></li><li><a href="#1-6-异步与自动化">1.6 异步与自动化</a></li><li><a href="#1-7-协作与远程">1.7 协作与远程</a></li><li><a href="#1-8-交互">1.8 交互</a></li><li><a href="#1-9-工程支撑">1.9 工程支撑</a></li><li><a href="#1-10-与后续章节的对应关系">1.10 与后续章节的对应关系</a></li><li><a href="#1-11-还原仓库的-shim-降级清单">1.11 还原仓库的 shim / 降级清单</a></li><li><a href="#1-12-怎么读这个仓库">1.12 怎么读这个仓库</a></li></ol></details><blockquote><p>本章是全书索引。目标不是深入任何一个能力，而是把 Claude Code 面向用户的所有能力清点一遍，给每一项一个 canonical 名称 + 源码入口 + 官方文档坐标。后续 22 章会反复回引这里。</p></blockquote>
 <h2 id="1-1-为什么专门开一章做清单">1.1 为什么专门开一章做清单<a class="h-anchor" href="#1-1-为什么专门开一章做清单" aria-label="permalink">¶</a></h2>
 <p class="drop">很多开源项目可以用一句话概括 —— "这是一个 X"。Claude Code 不行。它同时是：一个终端 TUI、一个 MCP server、一个远程会话 broker、一个 cron 调度器、一个 git worktree 管理器、一个 plugin 宿主、一个多设备 handoff 协议实现、一个浏览器扩展伙伴、一个桌面 app 启动器，外加几十个模型可以直接调的工具。</p>
 <p>这种体量带来两个麻烦。第一，从"功能"跳到"代码"需要先知道功能叫什么。第二，同一件事在官方文档里叫 A、在代码里叫 B、在 bundled skill 里又叫 C；不对齐名称后面的章节写起来就散。</p>

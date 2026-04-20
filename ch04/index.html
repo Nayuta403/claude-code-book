@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2 id="4-1-用户看到什么">4.1　用户看到什么<a class="h-anchor" href="#4-1-用户看到什么" aria-label="permalink">¶</a></h2>
+<details class="chap-outline"><summary>§ 本章目录 <span class="count">· 12 节</span></summary><ol><li><a href="#4-1-用户看到什么">4.1　用户看到什么</a></li><li><a href="#4-2-为什么挑这个设计出来讲">4.2　为什么挑这个设计出来讲</a></li><li><a href="#4-3-两种形态-agenttool-同步-异步-vs-task-家族">4.3　两种形态：AgentTool 同步/异步 vs. Task 家族</a></li><li><a href="#4-4-关键数据结构">4.4　关键数据结构</a></li><li><a href="#4-5-关键流程-一次-sub-agent-跑完一生">4.5　关键流程：一次 sub-agent 跑完一生</a></li><li><a href="#4-6-上下文隔离的落地">4.6　上下文隔离的落地</a></li><li><a href="#4-7-task-家族的-6-个工具">4.7　Task 家族的 6 个工具</a></li><li><a href="#4-8-fork-最大化-prompt-cache-共享的-sub-agent-变体">4.8　Fork：最大化 prompt cache 共享的 sub-agent 变体</a></li><li><a href="#4-9-coordinator-与-swarm-sub-agent-之上再加一层">4.9　Coordinator 与 Swarm：sub-agent 之上再加一层</a></li><li><a href="#4-10-权限回传-sub-agent-怎么问父-用户">4.10　权限回传：sub-agent 怎么问父/用户</a></li><li><a href="#4-11-设计取舍">4.11　设计取舍</a></li><li><a href="#4-12-可迁移的点">4.12　可迁移的点</a></li></ol></details><h2 id="4-1-用户看到什么">4.1　用户看到什么<a class="h-anchor" href="#4-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">在 Claude Code 的交互里，sub-agent 有两种观感。</p>
 <p><strong>同步 sub-agent</strong>。主 agent 在一轮回答里调一次 <code>Agent</code> 工具，终端上那条 tool 调用会挂十几秒到几分钟，显示一个转圈加"Running task"的进度行，超过 2 秒后多出一条"可以 Ctrl+B 移到后台"的提示。等它结束，主 agent 立刻拿到一条 <code>tool_result</code>，看起来就像一次普通的工具调用返回——只不过这条返回内容是"一段文字"，里面是 sub-agent 的最后一段陈述。</p>
 <p><strong>异步 sub-agent</strong>。主 agent 调 <code>Agent</code> 时带了 <code>run_in_background: true</code>，或者在 coordinator 模式下（下面会讲），调用<strong>立刻</strong>返回：</p>

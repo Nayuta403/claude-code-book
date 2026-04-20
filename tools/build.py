@@ -674,6 +674,8 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
     read_min = estimate_reading_minutes(src)
     showcase_bar = build_showcase_bar()
     chap_nav = build_prev_next_nav(ch)
+    outline_entries = extract_h2_outline(body_html)
+    outline_html = render_outline(outline_entries)
     part_tag_class = f"p{ch['part']}"
 
     # English display title.  Prefer the config "en" (clean) then fall back to
@@ -725,7 +727,7 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
 
 <article class="article">
   <div class="prose">
-{body_html}
+{outline_html}{body_html}
   </div>
 </article>
 
@@ -747,6 +749,33 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
 # ------------------------------------------------------------------
 # Main
 # ------------------------------------------------------------------
+
+def extract_h2_outline(body_html: str) -> list[tuple[str, str]]:
+    """Return [(slug, text)] for each top-level h2 in the rendered body."""
+    entries: list[tuple[str, str]] = []
+    for m in re.finditer(r'<h2 id="([^"]+)">([\s\S]+?)</h2>', body_html):
+        slug = m.group(1)
+        inner = m.group(2)
+        inner = re.sub(r'<a class="h-anchor"[\s\S]*?</a>', '', inner)
+        text = re.sub(r'<[^>]+>', '', inner).strip()
+        if text:
+            entries.append((slug, text))
+    return entries
+
+def render_outline(entries: list[tuple[str, str]]) -> str:
+    """Render a collapsible 本章目录 block. Skip if chapter has <3 h2s."""
+    if len(entries) < 3:
+        return ""
+    items = "".join(
+        f'<li><a href="#{slug}">{html.escape(text, quote=False)}</a></li>'
+        for slug, text in entries
+    )
+    return (
+        '<details class="chap-outline">'
+        f'<summary>§ 本章目录 <span class="count">· {len(entries)} 节</span></summary>'
+        f'<ol>{items}</ol>'
+        '</details>'
+    )
 
 def build_chapter(ch: dict) -> Path:
     src_path = SRC_DIR / f"{ch['slug']}.md"
