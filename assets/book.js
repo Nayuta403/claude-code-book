@@ -68,6 +68,39 @@
       })(btn, pre);
       fig.appendChild(btn);
     }
+    initTopBtn();
+  }
+
+  function initTopBtn() {
+    if (document.querySelector(".to-top-btn")) return;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "to-top-btn";
+    btn.setAttribute("aria-label", "回到顶部");
+    btn.innerHTML = '<span class="arr" aria-hidden="true">↑</span><span class="lbl">顶</span>';
+    document.body.appendChild(btn);
+
+    btn.addEventListener("click", function () {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+
+    var visible = false;
+    var ticking = false;
+    function update() {
+      var show = window.scrollY > 600;
+      if (show !== visible) {
+        visible = show;
+        btn.classList.toggle("visible", show);
+      }
+      ticking = false;
+    }
+    window.addEventListener("scroll", function () {
+      if (!ticking) {
+        window.requestAnimationFrame(update);
+        ticking = true;
+      }
+    }, { passive: true });
+    update();
   }
 
   if (document.readyState === "loading") {

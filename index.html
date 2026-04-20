@@ -794,6 +794,36 @@
     .showcase-bar .switcher { gap: 14px; }
   }
 
+  /* Return-to-top button */
+  .to-top-btn {
+    position: fixed; right: 24px; bottom: 24px; z-index: 40;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px;
+    background: var(--paper);
+    border: 1px solid var(--mist);
+    border-radius: 999px;
+    font-family: var(--mono);
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--ash); cursor: pointer;
+    box-shadow: 0 6px 18px -8px oklch(20% 0.005 350 / 0.18),
+                0 2px 4px -2px oklch(20% 0.005 350 / 0.08);
+    opacity: 0; transform: translateY(12px); pointer-events: none;
+    transition: opacity .22s var(--ease-out), transform .22s var(--ease-out),
+                color .15s, border-color .15s;
+  }
+  .to-top-btn.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  .to-top-btn:hover { border-color: var(--rose); color: var(--rose); }
+  .to-top-btn:hover .arr { color: var(--rose); transform: translateY(-2px); }
+  .to-top-btn .arr {
+    font-family: var(--display); font-style: italic; font-size: 14px;
+    color: var(--rose); line-height: 1;
+    transition: transform .18s var(--ease-out), color .15s;
+  }
+  @media (max-width: 600px) {
+    .to-top-btn { right: 14px; bottom: 14px; padding: 8px 12px; }
+    .to-top-btn .lbl { display: none; }
+  }
+
   ::selection { background: var(--rose-dim); color: var(--ink); }
 </style>
 </head>
