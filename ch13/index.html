@@ -155,7 +155,7 @@ start() {
 </ul>
 <p>为什么要探 flag 而不是直接永远启动？因为 chokidar file watcher 有启动成本，大多数 session 从不创建任务。标志位让冷启动成本只在需要时付。</p>
 <h3>6.2 enable() 抢锁</h3>
-<p><code>enable()</code> 的第一件事是抢 <code>.claude/scheduled_tasks.lock</code>（路径由 <code>LOCK_FILE_REL = join(&#x27;.claude&#x27;, &#x27;scheduled_tasks.lock&#x27;)</code> 给出，<code class="ref">src/utils/cronTasksLock.ts:23</code>；跟 JSON 任务文件同目录，便于一起 <code>.gitignore</code>）：</p>
+<p><code>enable()</code> 的第一件事是抢 <code class="ref">.claude/scheduled_tasks.lock</code>（路径由 <code>LOCK_FILE_REL = join(&#x27;.claude&#x27;, &#x27;scheduled_tasks.lock&#x27;)</code> 给出，<code class="ref">src/utils/cronTasksLock.ts:23</code>；跟 JSON 任务文件同目录，便于一起 <code>.gitignore</code>）：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/cronScheduler.ts:409</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">isOwner = <span class="hl-kw">await</span> tryAcquireSchedulerLock(lockOpts).<span class="hl-kw">catch</span>(() =&gt; <span class="hl-kw">false</span>)</code></pre></figure>
 <p><code>tryAcquireSchedulerLock</code>（<code class="ref">src/utils/cronTasksLock.ts:111-173</code>）的核心是一行 POSIX <code>O_EXCL</code>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/cronTasksLock.ts:71</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">await</span> writeFile(path, body, { flag: &#x27;wx&#x27; })</code></pre></figure>
@@ -165,7 +165,7 @@ start() {
 <li>不同 sessionId 且 PID 还活着 → 返回 false（<code>:149-157</code>）</li>
 <li>PID 死了 → 这是 stale lock，unlink 一次再 retry O_EXCL（<code>:160-171</code>）</li>
 </ul>
-<blockquote><p><strong>Callout / 锁文件路径与格式</strong>：<code>.claude/scheduled_tasks.lock</code>（相对 project root）。内容 JSON <code>{ sessionId, pid, acquiredAt }</code>，由 <code>schedulerLockSchema</code> Zod 校验。<code>O_EXCL</code> 原子创建失败后的仲裁全靠读这三字段——PID liveness probe 判死活、sessionId 匹配 <code>--resume</code> 换 PID。这个格式是跨进程协调的最小必要状态。</p></blockquote>
+<blockquote><p><strong>Callout / 锁文件路径与格式</strong>：<code class="ref">.claude/scheduled_tasks.lock</code>（相对 project root）。内容 JSON <code>{ sessionId, pid, acquiredAt }</code>，由 <code>schedulerLockSchema</code> Zod 校验。<code>O_EXCL</code> 原子创建失败后的仲裁全靠读这三字段——PID liveness probe 判死活、sessionId 匹配 <code>--resume</code> 换 PID。这个格式是跨进程协调的最小必要状态。</p></blockquote>
 <p>不抢到锁的 passive session 每 5 秒 <code>LOCK_PROBE_INTERVAL_MS</code> 探一次（<code>src/utils/cronScheduler.ts:44, :418-434</code>），等 owner 死了无缝接管。注意 passive session <strong>仍然处理自己的 sessionCronTasks</strong>——那是进程私有的，另一个 session 看不到，无双发风险；锁只挡磁盘任务。</p>
 <p>这把锁的模式来自 <code class="ref">computerUseLock.ts</code>，是仓库的一个复用设计（<code class="ref">src/utils/cronTasksLock.ts:8</code> 注释标了）。跨进程协调<strong>不开独立进程</strong>、不用 inotify 锁文件描述符、不用 sqlite 事务——就一个 O_EXCL + PID liveness probe，简单到几乎不会出错。</p>
 <h3>6.3 check() 每秒一次</h3>

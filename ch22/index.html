@@ -264,7 +264,7 @@ getTokenCounter()?.add(usage.cache_creation_input_tokens ?? <span class="hl-num"
     }]
   },
 }</code></pre></figure>
-<p>它做的事是：派一个 <code>statusline-setup</code> sub-agent，用户说"我想要 model + 分支 + context %"，sub-agent 去读用户 shell 的 PS1、生成一段 shell 命令、写到 <code>~/.claude/settings.json</code> 的 <code>statusLine</code> 字段。真正 runtime 的逻辑在别处。</p>
+<p>它做的事是：派一个 <code>statusline-setup</code> sub-agent，用户说"我想要 model + 分支 + context %"，sub-agent 去读用户 shell 的 PS1、生成一段 shell 命令、写到 <code class="ref">~/.claude/settings.json</code> 的 <code>statusLine</code> 字段。真正 runtime 的逻辑在别处。</p>
 <h3>22.7.2 运行模型：JSON 到 stdin，stdout 到屏幕</h3>
 <p>用户在 <code class="ref">settings.json</code> 里配的是这样一段：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">json</span></figcaption><pre><code class="language-json">{

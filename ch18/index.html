@@ -390,7 +390,7 @@ mcpClient.client.setNotificationHandler(
 <li><strong>Tool 层</strong>：所有 <code>mcp__computer-use__*</code> 工具被塞进 <code>allowedTools</code>，绕过 <a class="chref" href="../ch09/">ch.09</a> §9.4 讲的 per-tool 权限对话框（<code class="ref">src/utils/computerUse/setup.ts:27-30</code>）</li>
 <li><strong>会话层</strong>：所有工具的实际执行都要先经过 <code>request_access</code>；<code>request_access</code> 在 CLI 里渲染 <code>ComputerUseApproval</code> 对话框，用户勾选要授权的 app</li>
 <li><strong>OS 层</strong>：macOS TCC 的 Accessibility + Screen Recording，两个都必须授予，否则整个系统不工作</li>
-<li><strong>机器层</strong>：整台机器同时只允许一个 CU session——靠 <code>~/.claude/computer-use.lock</code>（<code>src/utils/computerUse/computerUseLock.ts:10,44-45</code>），超时 / 崩溃靠 signal 0 PID probe 复活释放（<code class="ref">computerUseLock.ts:58-71</code>）</li>
+<li><strong>机器层</strong>：整台机器同时只允许一个 CU session——靠 <code class="ref">~/.claude/computer-use.lock</code>（<code>src/utils/computerUse/computerUseLock.ts:10,44-45</code>），超时 / 崩溃靠 signal 0 PID probe 复活释放（<code class="ref">computerUseLock.ts:58-71</code>）</li>
 </ol>
 <p>然后还有一堆<strong>运行时保护</strong>：CGEventTap 级别拦截 Esc、终端窗口被排除在截屏外、其他 app 在 CU 期间自动隐藏等。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/computerUse/executor.ts:399-418</code>）：Computer Use 截屏并<strong>不做后处理 sanitize</strong>（没有打码、没有 OCR 过滤、没有字符串黑名单）。"敏感内容不出现"靠的是<strong>截屏前的 allowlist 约束</strong>：Swift 侧调的是 <code>cu.screenshot.captureExcluding(withoutTerminal(opts.allowedBundleIds), ...)</code>——利用 macOS <code>SCContentFilter</code> 在合成帧之前就把终端窗口和任何不在 <code>allowedBundleIds</code> 里的 app 排除。返回的 JPEG 里压根没有那些像素，因此无需事后 sanitize。<strong>代价</strong>：allowlist 是按 bundleId 的，同一个 app 内部的多个文档（比如 Finder 同时开了公司和私人目录）没法再细分；一旦 Finder 被授权，整个 Finder 的内容都会被截到。</p></blockquote>

@@ -42,7 +42,7 @@
 <h2>20.1 用户看到什么</h2>
 <p class="drop">Claude Code 的输入框表面上是一个普通的终端 prompt，但它背后有三套平行的"输入翻译层"：</p>
 <ul>
-<li>按 <code>Ctrl+T</code> 显示 todo，按 <code>Ctrl+O</code> 切换 transcript —— 走的是<strong>键位系统</strong>。在 <code>~/.claude/keybindings.json</code> 改一行就能换键。</li>
+<li>按 <code>Ctrl+T</code> 显示 todo，按 <code>Ctrl+O</code> 切换 transcript —— 走的是<strong>键位系统</strong>。在 <code class="ref">~/.claude/keybindings.json</code> 改一行就能换键。</li>
 <li><code>/vim</code> 打开后，按 <code>Esc</code> 进入 NORMAL 模式，<code>dw</code> 删一个词，<code>i</code> 回到 INSERT —— 走的是 <strong>vim 状态机</strong>，完全在 text buffer 层内部。</li>
 <li><code>/voice</code> 打开后，按住 <code>Space</code> 说话，一小段波形在 footer 亮起，松开后文字插到光标处 —— 走的是 <strong>voice 通路</strong>：音频采集 → voice_stream WebSocket STT → 写回输入框。</li>
 </ul>
@@ -83,7 +83,7 @@
 <p><code class="ref">defaultBindings.ts</code> 里另有一个 <code>Scroll</code> block（<code class="ref">src/keybindings/defaultBindings.ts:196-213</code>），schema 没列。官方文档列了 20 个（加 <code>Scroll</code> 和 <code>Doctor</code>）[^2]。这是常见的"代码、schema、文档三方轻微漂移"现象，工程上不影响运行（硬编码的 Scroll block 照样生效），但提醒读者 schema 不是权威。</p>
 <p>[^2]: <a href="https://code.claude.com/docs/en/keybindings" rel="noreferrer">https://code.claude.com/docs/en/keybindings</a>，访问于 2026-04-19。</p>
 <h3>20.3.3 默认绑定 + 用户覆盖的合并规则</h3>
-<p>默认绑定写死在代码里（<code class="ref">src/keybindings/defaultBindings.ts</code>，340 行，按 context 分块）。用户绑定从 <code>~/.claude/keybindings.json</code> 读。合并规则只有一行：</p>
+<p>默认绑定写死在代码里（<code class="ref">src/keybindings/defaultBindings.ts</code>，340 行，按 context 分块）。用户绑定从 <code class="ref">~/.claude/keybindings.json</code> 读。合并规则只有一行：</p>
 <figure class="codeblock"><figcaption><span class="file">src/keybindings/loadUserBindings.ts:196-197</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// User bindings come after defaults, so they override</span>
 <span class="hl-kw">const</span> mergedBindings = [...defaultBindings, ...userParsed]</code></pre></figure>
 <p>然后 <code class="ref">resolver.ts:66-76</code> 用 <code>findLast</code> 找匹配 —— 后者胜。</p>

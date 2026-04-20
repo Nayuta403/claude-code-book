@@ -48,7 +48,7 @@
   1. Yes (once)
   2. Yes, don&#x27;t ask again for rm commands in this project
   3. No, and tell Claude what to do differently</code></pre></figure>
-<p>选第 2 项，下次再让它 <code>rm</code> 就不问了。状态栏右下角显示 <code>default</code>。按一下 <code>Shift+Tab</code>，变成 <code>⏵⏵ accept edits on</code>；再按，变成 <code>Plan Mode</code>。用 <code>/permissions</code> 打开一个全屏 UI，能看到刚才那条 <code>Bash(rm:*)</code> 已经躺在 <code class="ref">.claude/settings.local.json</code> 里的 <code>permissions.allow</code> 数组。在一个干净的 <code>~/.claude/settings.json</code> 里手写：</p>
+<p>选第 2 项，下次再让它 <code>rm</code> 就不问了。状态栏右下角显示 <code>default</code>。按一下 <code>Shift+Tab</code>，变成 <code>⏵⏵ accept edits on</code>；再按，变成 <code>Plan Mode</code>。用 <code>/permissions</code> 打开一个全屏 UI，能看到刚才那条 <code>Bash(rm:*)</code> 已经躺在 <code class="ref">.claude/settings.local.json</code> 里的 <code>permissions.allow</code> 数组。在一个干净的 <code class="ref">~/.claude/settings.json</code> 里手写：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">json</span></figcaption><pre><code class="language-json">{
   &quot;permissions&quot;: {
     &quot;allow&quot;: [&quot;Bash(npm run *)&quot;, &quot;Read(./docs/**)&quot;],

@@ -70,7 +70,7 @@
 <p>实现在 <code>getMemoryFiles</code> (<code class="ref">src/utils/claudemd.ts:790-1075</code>)。核心动作：</p>
 <ol>
 <li>先取 Managed（policy 级，组织统一强制的）。</li>
-<li>取 User（<code>~/.claude/CLAUDE.md</code>）。</li>
+<li>取 User（<code class="ref">~/.claude/CLAUDE.md</code>）。</li>
 <li>从 CWD 向上走到 fs 根，收集每一层目录（<code class="ref">src/utils/claudemd.ts:854-857</code>）。</li>
 <li><strong>反转列表</strong>（<code class="ref">src/utils/claudemd.ts:878</code>），从根向 CWD 方向处理 —— 越靠近 CWD 的越晚加入，下游拼接时离对话越近。</li>
 <li>每层检查 <code class="ref">CLAUDE.md</code> / <code class="ref">.claude/CLAUDE.md</code> / <code>.claude/rules/*.md</code> / <code class="ref">CLAUDE.local.md</code>。</li>
@@ -362,7 +362,7 @@ ask you to save a PR list or activity summary, ask what was *surprising* or
 <p><code>getUserContext</code> 是 memoized 的（<code class="ref">src/context.ts:155</code> <code>memoize</code>），清缓存后下次读会重新走 <code>getMemoryFiles</code> → 重新读磁盘上的 CLAUDE.md 和 <code class="ref">MEMORY.md</code>。官方文档对应的描述：</p>
 <blockquote><p>Project-root CLAUDE.md survives compaction: after <code>/compact</code>, Claude re-reads it from disk and re-injects it into the session. （来源：<a href="https://code.claude.com/docs/en/memory" rel="noreferrer">https://code.claude.com/docs/en/memory</a>，访问于 2026-04-19）</p></blockquote>
 <p>子目录里的嵌套 CLAUDE.md 不自动重读 —— 它们靠"Claude 读那目录下的文件时"按需加载，compact 清了这个状态，下次读才触发。</p>
-<blockquote><p><strong>隐藏细节</strong>（<code>src/commands/compact/compact.ts:63, 117, 203</code>）：<code>getUserContext.cache.clear?.()</code> 在 <strong>三条</strong> compact 路径上都调一次（session memory / 传统 / reactive），而且用的是 <strong><code>?.()</code> 带可选链</strong> —— 说明 cache 可能未挂（shim 或某种 memoize 实现）。<strong>被清的不是 MEMORY.md 文件本身，是 <code>getUserContext</code> 这个函数的 memoize 结果</strong>：CLAUDE.md、<code class="ref">MEMORY.md</code> 索引、以及拼接后的整段 user context 全部<strong>下次调用再重读</strong>。因此 <code>/compact</code> 之后 CLAUDE.md 的 <strong>任何文件系统变更</strong>（你在另一个窗口改了 <code>~/.claude/CLAUDE.md</code>）会立刻生效 —— 这是一个没写在官方文档里的副作用。话题文件本来就不在 <code>getUserContext</code> 缓存里（按需召回），所以不受影响。</p></blockquote>
+<blockquote><p><strong>隐藏细节</strong>（<code>src/commands/compact/compact.ts:63, 117, 203</code>）：<code>getUserContext.cache.clear?.()</code> 在 <strong>三条</strong> compact 路径上都调一次（session memory / 传统 / reactive），而且用的是 <strong><code>?.()</code> 带可选链</strong> —— 说明 cache 可能未挂（shim 或某种 memoize 实现）。<strong>被清的不是 MEMORY.md 文件本身，是 <code>getUserContext</code> 这个函数的 memoize 结果</strong>：CLAUDE.md、<code class="ref">MEMORY.md</code> 索引、以及拼接后的整段 user context 全部<strong>下次调用再重读</strong>。因此 <code>/compact</code> 之后 CLAUDE.md 的 <strong>任何文件系统变更</strong>（你在另一个窗口改了 <code class="ref">~/.claude/CLAUDE.md</code>）会立刻生效 —— 这是一个没写在官方文档里的副作用。话题文件本来就不在 <code>getUserContext</code> 缓存里（按需召回），所以不受影响。</p></blockquote>
 <h3>7.4.7 microcompact：只清 tool result，保留缓存</h3>
 <p>完整 compact 成本很高（要跑一次 summary API 调用）。<code class="ref">src/services/compact/microCompact.ts</code> 提供一条轻量路径：<strong>只删老的 tool result</strong>，不改对话结构。</p>
 <p><code>COMPACTABLE_TOOLS</code>（<code class="ref">src/services/compact/microCompact.ts:41-50</code>）限定在 FileRead / Shell / Grep / Glob / WebSearch / WebFetch / FileEdit / FileWrite —— 这些工具的结果可以重新执行得到，删了不会丢信息（模型可以重读）。</p>

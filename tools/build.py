@@ -168,7 +168,7 @@ def highlight(code: str, lang: str) -> str:
 
 # Detect file:line citations (inside an already-extracted code span).
 FILE_LINE_RE = re.compile(
-    r"^([A-Za-z0-9_./@-]+\.(?:ts|tsx|js|jsx|json|jsonc|md|mdx|css|sh|py|yaml|yml|toml))"
+    r"^([A-Za-z0-9_./@~-]+\.(?:ts|tsx|js|jsx|json|jsonc|md|mdx|css|sh|py|yaml|yml|toml|lock|env))"
     r"(:\d+(?:[-–]\d+)?)?$"
 )
 
