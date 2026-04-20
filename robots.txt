@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://nayuta403.github.io/claude-code-book/sitemap.xml
