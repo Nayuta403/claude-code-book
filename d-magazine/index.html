@@ -976,7 +976,7 @@
 
         <p>屏幕上看到的这条"tool_use → tool_result → assistant → tool_use → …"，在 Anthropic 官方文档里是 5 行伪码；在 Claude Code 里共同处理<em>伪码没告诉你</em>的那些问题：流式工具执行、模型 fallback、上下文超限、输出被截断、stop hook 反复拦截、用户提前打断、权限请求等待。</p>
 
-        <p>Claude Code 把一条 agent 会话拆成两层 —— 外层 <a href="#" class="cite">QueryEngine</a> 是 session 级对象，每 conversation 一个，持有跨 turn 不变的东西；内层 <code>query()</code> 是一个纯 async generator，只管消息进、消息出，不接 UI 状态、不管 session 存储。</p>
+        <p>Claude Code 把一条 agent 会话拆成两层 —— 外层 <a href="../ch03/" class="cite">QueryEngine</a> 是 session 级对象，每 conversation 一个，持有跨 turn 不变的东西；内层 <code>query()</code> 是一个纯 async generator，只管消息进、消息出，不接 UI 状态、不管 session 存储。</p>
 
         <figure class="codeblock">
           <figcaption>
