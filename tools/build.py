@@ -244,11 +244,32 @@ LIST_RE_ORD = re.compile(r"^(\s*)(\d+)\.\s+(.*)$")
 LIST_RE_UL  = re.compile(r"^(\s*)([-*])\s+(.*)$")
 HR_RE       = re.compile(r"^-{3,}\s*$|^_{3,}\s*$|^\*{3,}\s*$")
 
+_SLUG_STRIP_RE = re.compile(r"[^A-Za-z0-9\u3400-\u9fff\-_]+")
+
+def slugify(text: str, used: dict[str, int]) -> str:
+    """Turn heading text into a URL-fragment-safe slug.
+
+    Keep ASCII alphanumerics, CJK chars, `-`, `_`. Drop HTML tags first,
+    then replace runs of anything-else with `-`. Ensure uniqueness within
+    a chapter via the ``used`` counter dict."""
+    bare = re.sub(r"<[^>]+>", "", text)          # strip any HTML
+    bare = bare.replace("&amp;", "&")             # decode a couple common entities
+    bare = bare.replace("&#x27;", "'")
+    bare = bare.replace("&quot;", '"')
+    # Replace non-slug chars with hyphen, strip edges
+    slug = _SLUG_STRIP_RE.sub("-", bare).strip("-").lower()
+    if not slug:
+        slug = "section"
+    n = used.get(slug, 0)
+    used[slug] = n + 1
+    return slug if n == 0 else f"{slug}-{n + 1}"
+
 def parse_blocks(src: str) -> str:
     lines = src.splitlines()
     n = len(lines)
     out: list[str] = []
     i = 0
+    slug_used: dict[str, int] = {}
     # Skip the leading h1 (handled separately as the chapter title).
     while i < n:
         if lines[i].strip().startswith("# "):
@@ -289,7 +310,12 @@ def parse_blocks(src: str) -> str:
         if hm:
             lvl = len(hm.group(1))
             content = render_inline(hm.group(2))
-            out.append(f"<h{lvl}>{content}</h{lvl}>")
+            slug = slugify(hm.group(2), slug_used)
+            out.append(
+                f'<h{lvl} id="{slug}">{content}'
+                f'<a class="h-anchor" href="#{slug}" aria-label="permalink">¶</a>'
+                f'</h{lvl}>'
+            )
             i += 1
             continue
 

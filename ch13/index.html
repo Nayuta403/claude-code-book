@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2>1. 用户看到什么</h2>
+<h2 id="1-用户看到什么">1. 用户看到什么<a class="h-anchor" href="#1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 里有一层"定时"能力可以让一个长时间运行的 REPL 自己给自己派活。用户可以这么用：</p>
 <ul>
 <li>直接跟 Claude 说"每 5 分钟检查一下部署"。Claude 会调 <code>CronCreate</code> 工具，落下一条 cron。</li>
@@ -47,7 +47,7 @@
 <li>打 <code>/schedule</code> 让 Claude 帮你配一个<strong>远端</strong> trigger——那是 Anthropic 云上跑的 isolated 会话，不受你机器关机影响。远端执行的 session 启动细节详见 <a class="chref" href="../ch17/">ch.17</a>。</li>
 </ul>
 <p>无论哪种入口，本地触发时用户会看到一条 dimmed 的系统消息 <code>Running scheduled task (Apr 19 3:07pm)</code>，紧跟着 Claude 开始处理那条 prompt。这条 prompt 不是用户敲的，来自前面某个 <code>CronCreate</code> 调用里存下来的文本。官方文档把这类功能的落地版本定为 Claude Code v2.1.71（来源：<a href="https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md" rel="noreferrer">https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md</a>，访问于 2026-04-19——"Added <code>/loop</code> command … Added cron scheduling tools for recurring prompts within a session"）。</p>
-<h2>2. 为什么挑这个设计出来讲</h2>
+<h2 id="2-为什么挑这个设计出来讲">2. 为什么挑这个设计出来讲<a class="h-anchor" href="#2-为什么挑这个设计出来讲" aria-label="permalink">¶</a></h2>
 <p>Cron 本身是 1975 年就存在的老技术。这里值得挑出来讲的不是"cron 本身"，而是<strong>把 cron 塞进一个 interactive REPL 的工程选择</strong>。</p>
 <p>独立的 cron 守护进程有自己的进程空间、自己的用户、自己的生命周期。Claude Code 的 cron 活在 REPL 进程里：</p>
 <ul>
@@ -57,7 +57,7 @@
 <li>REPL 关了要不要保留任务？保留多久？没跑成的任务要不要补？</li>
 </ul>
 <p>后面几节把这四件事对应的代码拎出来看。最后一节讲可迁移的点。</p>
-<h2>3. 三层定时能力的划分</h2>
+<h2 id="3-三层定时能力的划分">3. 三层定时能力的划分<a class="h-anchor" href="#3-三层定时能力的划分" aria-label="permalink">¶</a></h2>
 <p>在开始看代码之前，先把"定时"这事在 Claude Code 里分成三层。这是后面所有讨论的坐标系。</p>
 <div class="table-wrap"><table><thead><tr><th>层</th><th>触发</th><th>存储</th><th>生命周期</th><th>入口工具</th></tr></thead><tbody><tr><td>本地 session-only</td><td>REPL 进程自己</td><td><code>STATE.sessionCronTasks</code>（内存）</td><td>REPL 退出即丢</td><td><code>CronCreate({durable:false})</code></td></tr>
 <tr><td>本地 durable</td><td>REPL 进程自己</td><td><code class="ref">.claude/scheduled_tasks.json</code></td><td>跨 session，7 天过期</td><td><code>CronCreate({durable:true})</code></td></tr>
@@ -70,7 +70,7 @@
 <p>官方文档用的三分法一致（来源：<a href="https://code.claude.com/docs/en/scheduled-tasks" rel="noreferrer">https://code.claude.com/docs/en/scheduled-tasks</a>，访问于 2026-04-19）：Cloud / Desktop / <code>/loop</code>——其中 Desktop 是 Claude Desktop 应用的独立 scheduler，不走 Claude Code CLI 这条代码路径，本章不展开。</p>
 <p>本章后面 70% 的内容都在讲第一层和第二层（它们共享一个 <code>CronScheduler</code>）。第三层（远端 scheduled agent）只讲<strong>本地如何把任务发给远端</strong>这一边界，云端执行在 <a class="chref" href="../ch17/">ch.17</a> 远端 session 一章。<code>/loop</code> 与 proactive 模式的触发协同见 <a class="chref" href="../ch15/">ch.15</a>；cron fire 触发的 prompt 走完一轮 turn 后如果形成新的 sub-agent 任务回流，走的是 <a class="chref" href="../ch16/">ch.16</a> background tasks 通道。</p>
 <p><strong>上游注记</strong>：本章以仓库里恢复出来的 shim 为基线。官方文档承诺的 <code>/loop</code> dynamic 模式（无 interval、模型自选周期、Esc 取消 pending wakeup）在仓库源码里搜不到完整实现，§9.1 单独拎出来讨论。正文每处给出的行号都对应仓库里的真实代码；跨章节交叉引用同样按章节号而非页码给出。</p>
-<h2>4. 数据结构</h2>
+<h2 id="4-数据结构">4. 数据结构<a class="h-anchor" href="#4-数据结构" aria-label="permalink">¶</a></h2>
 <p>最核心的两个类型。</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/cronTasks.ts:30-70</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">CronTask</span> = {
   id: string
@@ -106,7 +106,7 @@
   recurringMaxAgeMs: <span class="hl-num">7</span> * <span class="hl-num">24</span> * <span class="hl-num">60</span> * <span class="hl-num">60</span> * <span class="hl-num">1000</span>,
 }</code></pre></figure>
 <p>这组配置不是 hard-code 常量：<code class="ref">src/utils/cronJitterConfig.ts:67-75</code> 会从 GrowthBook 的 <code>tengu_kairos_cron_config</code> 每 60 秒刷一次，用 Zod 校验——任一字段越界或字段间 <code>floor &gt; max</code> 的 refine 失败，整个对象 fallback 到默认。这让运维在 <code>:00</code> 出现 load spike 时可以推配置把 jitter 窗口临时拉大（比如 <code>{oneShotMinuteMod: 15, oneShotMaxMs: 300000, oneShotFloorMs: 30000}</code>），不等客户端重启。</p>
-<h2>5. Cron 表达式：自研 5-field 解析器</h2>
+<h2 id="5-cron-表达式-自研-5-field-解析器">5. Cron 表达式：自研 5-field 解析器<a class="h-anchor" href="#5-cron-表达式-自研-5-field-解析器" aria-label="permalink">¶</a></h2>
 <p>仓库用的是<strong>标准 5 字段</strong>，没有 6 字段秒级 cron。</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/cron.ts:20-26</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">FIELD_RANGES</span>: <span class="hl-type">FieldRange</span>[] = [
   { min: <span class="hl-num">0</span>, max: <span class="hl-num">59</span> }, <span class="hl-cm">// minute</span>
@@ -135,9 +135,9 @@
 </ol>
 <p>代价小，收益实在。这是"写比引"合理的场景。</p>
 <p>人类可读翻译 <code>cronToHuman</code>（<code class="ref">src/utils/cron.ts:218-308</code>）故意写得保守：只覆盖 "Every N minutes" / "Every hour" / "Daily at H:MM" / "Every Monday at H:MM" / "Weekdays at H:MM" 这几个常见模式，其他直接 fall through 返原字符串。带一个 <code>utc?: boolean</code> 选项——远端 trigger 的 cron 在 UTC 执行，展示时要翻译成用户本地时区，要多走一点 midnight-crossing 的补偿逻辑。</p>
-<h2>6. 调度器主循环</h2>
+<h2 id="6-调度器主循环">6. 调度器主循环<a class="h-anchor" href="#6-调度器主循环" aria-label="permalink">¶</a></h2>
 <p>整个调度器被抽成一个与 REPL 解耦的 <code>createCronScheduler(options)</code>，放在 <code class="ref">src/utils/cronScheduler.ts</code>。REPL 用它（通过 <code>useScheduledTasks</code> hook），<code>-p</code> / SDK 模式也用它（<code class="ref">src/cli/print.ts:2702-2734</code>）。差异只在 options 里的几个回调。</p>
-<h3>6.1 start() 的两条启动路径</h3>
+<h3 id="6-1-start-的两条启动路径">6.1 start() 的两条启动路径<a class="h-anchor" href="#6-1-start-的两条启动路径" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/cronScheduler.ts:463-498（节选结构）</span>
 start() {
   stopped = <span class="hl-kw">false</span>
@@ -154,7 +154,7 @@ start() {
 <li><strong>REPL path</strong>：先看磁盘有没有任务——有就直接启。没有就 setInterval 1 秒探一次那个"enable"标志位，等 <code>CronCreate.call()</code> 在运行中翻标志（<code class="ref">CronCreateTool.ts:133</code> 会 <code>setScheduledTasksEnabled(true)</code>）。</li>
 </ul>
 <p>为什么要探 flag 而不是直接永远启动？因为 chokidar file watcher 有启动成本，大多数 session 从不创建任务。标志位让冷启动成本只在需要时付。</p>
-<h3>6.2 enable() 抢锁</h3>
+<h3 id="6-2-enable-抢锁">6.2 enable() 抢锁<a class="h-anchor" href="#6-2-enable-抢锁" aria-label="permalink">¶</a></h3>
 <p><code>enable()</code> 的第一件事是抢 <code class="ref">.claude/scheduled_tasks.lock</code>（路径由 <code>LOCK_FILE_REL = join(&#x27;.claude&#x27;, &#x27;scheduled_tasks.lock&#x27;)</code> 给出，<code class="ref">src/utils/cronTasksLock.ts:23</code>；跟 JSON 任务文件同目录，便于一起 <code>.gitignore</code>）：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/cronScheduler.ts:409</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">isOwner = <span class="hl-kw">await</span> tryAcquireSchedulerLock(lockOpts).<span class="hl-kw">catch</span>(() =&gt; <span class="hl-kw">false</span>)</code></pre></figure>
 <p><code>tryAcquireSchedulerLock</code>（<code class="ref">src/utils/cronTasksLock.ts:111-173</code>）的核心是一行 POSIX <code>O_EXCL</code>：</p>
@@ -168,7 +168,7 @@ start() {
 <blockquote><p><strong>Callout / 锁文件路径与格式</strong>：<code class="ref">.claude/scheduled_tasks.lock</code>（相对 project root）。内容 JSON <code>{ sessionId, pid, acquiredAt }</code>，由 <code>schedulerLockSchema</code> Zod 校验。<code>O_EXCL</code> 原子创建失败后的仲裁全靠读这三字段——PID liveness probe 判死活、sessionId 匹配 <code>--resume</code> 换 PID。这个格式是跨进程协调的最小必要状态。</p></blockquote>
 <p>不抢到锁的 passive session 每 5 秒 <code>LOCK_PROBE_INTERVAL_MS</code> 探一次（<code>src/utils/cronScheduler.ts:44, :418-434</code>），等 owner 死了无缝接管。注意 passive session <strong>仍然处理自己的 sessionCronTasks</strong>——那是进程私有的，另一个 session 看不到，无双发风险；锁只挡磁盘任务。</p>
 <p>这把锁的模式来自 <code class="ref">computerUseLock.ts</code>，是仓库的一个复用设计（<code class="ref">src/utils/cronTasksLock.ts:8</code> 注释标了）。跨进程协调<strong>不开独立进程</strong>、不用 inotify 锁文件描述符、不用 sqlite 事务——就一个 O_EXCL + PID liveness probe，简单到几乎不会出错。</p>
-<h3>6.3 check() 每秒一次</h3>
+<h3 id="6-3-check-每秒一次">6.3 check() 每秒一次<a class="h-anchor" href="#6-3-check-每秒一次" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/utils/cronScheduler.ts:456-459</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">checkTimer = setInterval(check, <span class="hl-type">CHECK_INTERVAL_MS</span>)
 checkTimer.unref?.()</code></pre></figure>
 <p><code>unref()</code> 让这个 timer 不再阻止进程退出——<code>-p</code> 模式跑完一轮就该退，不能因为 cron 挂着。</p>
@@ -201,7 +201,7 @@ checkTimer.unref?.()</code></pre></figure>
   .<span class="hl-kw">catch</span>(...)
   .<span class="hl-kw">finally</span>(() =&gt; inFlight.<span class="hl-kw">delete</span>(t.id))</code></pre></figure>
 <p>这是整个调度器里处理并发最有意思的一点：<strong>异步文件操作 + 文件 watcher 自己回调自己</strong>形成的竞态，用一个 in-memory Set 做了反射屏障。</p>
-<h3>6.4 isRecurringTaskAged</h3>
+<h3 id="6-4-isrecurringtaskaged">6.4 isRecurringTaskAged<a class="h-anchor" href="#6-4-isrecurringtaskaged" aria-label="permalink">¶</a></h3>
 <p>7 天过期这条规则被抽出来单测：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/cronScheduler.ts:53-60</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> isRecurringTaskAged(
   t: <span class="hl-type">CronTask</span>, nowMs: number, maxAgeMs: number,
@@ -211,7 +211,7 @@ checkTimer.unref?.()</code></pre></figure>
 }</code></pre></figure>
 <p>注释给的理由直白（<code class="ref">src/utils/cronTasks.ts:339-345</code>）：cron 是 session p99 时长从 61 分钟涨到 53 小时的主要驱动，unbounded recurrence 会让 tier-1 内存泄漏不断累积。7 天覆盖"这周每小时看一下我的 PR"这种典型工作流，同时把最坏 session 寿命卡住。<code>permanent: true</code> 是 assistant mode 几个内置任务（catch-up / morning-checkin / dream）的 escape hatch，只有 <code class="ref">src/assistant/install.ts</code> 能直接写 JSON 设置。</p>
 <blockquote><p><strong>Callout / 7 天过期由谁执行</strong>：不是 <code>CronCreate</code> 写盘时打时间戳、也不是单独的 cleanup job，而是 <strong>scheduler 每次 fire 时就地判定</strong>。<code>process()</code> 在 fire 完后跑一次 <code>isRecurringTaskAged(t, now, maxAgeMs)</code>（<code class="ref">src/utils/cronScheduler.ts:302</code>）：如果判 aged，这次 fire 就当"最后一次"——prompt 照样入队，但 fire 完不再排下一次，走跟 one-shot 同一条 cleanup 路径（<code class="ref">src/utils/cronScheduler.ts:315-344</code>，<code>isSession ? removeSessionCronTasks : inFlight + removeCronTasks</code>），同时打一条 <code>tengu_scheduled_task_expired</code> analytics。也就是说：一个 10 天没打开过的任务，下次 Claude 启动时 <code>check()</code> 第一个 tick 就发现它 aged，最后 fire 一次再删。过期窗口 <code>recurringMaxAgeMs</code>（默认 7 天）由 <code>CronJitterConfig</code> 控制，GrowthBook 能下发覆盖——"7 天"这个数字<strong>运维可以在事故里临时改</strong>，不是 hard-code。</p></blockquote>
-<h2>7. Jitter：一行哈希的错峰</h2>
+<h2 id="7-jitter-一行哈希的错峰">7. Jitter：一行哈希的错峰<a class="h-anchor" href="#7-jitter-一行哈希的错峰" aria-label="permalink">¶</a></h2>
 <figure class="codeblock"><figcaption><span class="file">src/utils/cronTasks.ts:362-365</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">function</span> jitterFrac(taskId: string): number {
   <span class="hl-kw">const</span> frac = parseInt(taskId.slice(<span class="hl-num">0</span>, <span class="hl-num">8</span>), <span class="hl-num">16</span>) / 0x1_0000_0000
   <span class="hl-kw">return</span> <span class="hl-type">Number</span>.isFinite(frac) ? frac : <span class="hl-num">0</span>
@@ -240,7 +240,7 @@ checkTimer.unref?.()</code></pre></figure>
 <p>这是 prompt 工程替代服务端限流：让模型一开始就别把所有请求打到同一秒，胜过事后抖动。事后抖动是防御深度。</p>
 <p>GrowthBook push 下发 <code>tengu_kairos_cron_config</code> 可以在事故中临时把窗口拉大（详见注释 <code class="ref">src/utils/cronTasks.ts:410-414</code>）：</p>
 <blockquote><p><code>{oneShotMinuteMod: 15, oneShotMaxMs: 300000, oneShotFloorMs: 30000}</code> 会把 :00/:15/:30/:45 触发散到 [t-5min, t-30s] 的窗口，每个任务至少提前 30 秒，没人精确落在整点。</p></blockquote>
-<h2>8. 触发后：prompt 怎么被注入</h2>
+<h2 id="8-触发后-prompt-怎么被注入">8. 触发后：prompt 怎么被注入<a class="h-anchor" href="#8-触发后-prompt-怎么被注入" aria-label="permalink">¶</a></h2>
 <p>先立个结论：<strong>cron 触发不开新会话</strong>。新 prompt 塞进当前 REPL 的命令队列，和用户手敲的 prompt 走一样的 drain 路径。</p>
 <p><code>useScheduledTasks</code> hook（<code class="ref">src/hooks/useScheduledTasks.ts</code>）是 REPL 侧的 thin wrapper。核心就是构造一个 scheduler 并把 fire 回调接到队列：</p>
 <figure class="codeblock"><figcaption><span class="file">src/hooks/useScheduledTasks.ts:71-82</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> enqueueForLead = (prompt: string) =&gt;
@@ -257,7 +257,7 @@ checkTimer.unref?.()</code></pre></figure>
 <p><strong><code>workload: WORKLOAD_CRON</code></strong>。这是 <code>&#x27;cron&#x27;</code> 字符串（<code class="ref">src/utils/workloadContext.ts:26</code>），通过 <code>AsyncLocalStorage</code> 传到 API 请求的 attribution header 里作为 <code>cc_workload=cron</code>。服务端可以据此给 cron 请求 lower QoS——没人在等这个响应。ALS 用 <code>.run(...)</code> 建 boundary 防止 context 在上一 turn 留下后被下一轮 turn 的 scheduling chain 捕获（<code class="ref">src/utils/workloadContext.ts:36-50</code> 大段注释写了为什么直接 return fn() 会 leak）。</p>
 <p>对 team lead（没有 teammate 上下文），fire 时除了入队 prompt 还打一条 scheduled_task_fire 系统消息（<code class="ref">src/hooks/useScheduledTasks.ts:110-113</code>）——这是 <code>## 2.1.85</code> 版本加的"timestamp markers in transcripts"（来源：<a href="https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md" rel="noreferrer">https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md</a>，访问于 2026-04-19）。</p>
 <p>这条 fire 后的 SessionStart hook 触发路径与 <a class="chref" href="../ch14/">ch.14</a> Hooks 一章交叉：cron 触发不开新 session，所以 <code>SessionStart</code> hook <strong>不</strong>会因 cron fire 再跑一次——只有 <code>--resume</code> 或首次启动走 hook 路径。</p>
-<h3>8.1 Teammate 路由</h3>
+<h3 id="8-1-teammate-路由">8.1 Teammate 路由<a class="h-anchor" href="#8-1-teammate-路由" aria-label="permalink">¶</a></h3>
 <p>如果 task 带 <code>agentId</code>（sub-agent 创建的），fire 不走主队列：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/useScheduledTasks.ts:91-108（节选）</span>
 onFireTask: task =&gt; {
@@ -273,7 +273,7 @@ onFireTask: task =&gt; {
   ...
 }</code></pre></figure>
 <p>orphan 清理是<strong>懒的</strong>：teammate 已经不在了（被 TaskDelete 或自然结束），下一次 cron 要 fire 时发现归属者不在才删。多 agent 里的 cron 生命周期更细节见 <a class="chref" href="../ch04/">ch.04</a>。teammate 收到注入 prompt 后 spawn 出来的长跑任务会走 <a class="chref" href="../ch16/">ch.16</a> background tasks 的 <code>&lt;task-notification&gt;</code> 回流路径。</p>
-<h2>9. <code>/loop</code> 是一层 skill 壳</h2>
+<h2 id="9-loop-是一层-skill-壳">9. <code>/loop</code> 是一层 skill 壳<a class="h-anchor" href="#9-loop-是一层-skill-壳" aria-label="permalink">¶</a></h2>
 <p><code>/loop</code> 不是一个独立的定时机制。它是一个 skill（<code class="ref">src/skills/bundled/loop.ts</code>），让模型把自然语言 interval 翻译成 cron 表达式后调 <code>CronCreate</code>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/skills/bundled/loop.ts:25-67（截取关键 prompt 段）</span>
 <span class="hl-cm">// 解析规则（按优先级）：</span>
@@ -289,7 +289,7 @@ onFireTask: task =&gt; {
 <span class="hl-cm">//   Ns           → ceil(N/60)m      （cron 最小粒度 1 分钟）</span></code></pre></figure>
 <p>Skill prompt 里还写了一个要求："schedule 完后立即先执行一次 prompt"（<code class="ref">src/skills/bundled/loop.ts:67</code>）——不等第一次 cron fire，保证"用户说完马上就见到第一次结果"的体感。</p>
 <p><code>isEnabled: isKairosCronEnabled</code>（<code class="ref">src/skills/bundled/loop.ts:83</code>）让 skill 和底层工具共享 gate。<code>CLAUDE_CODE_DISABLE_CRON=1</code> 一关，skill 也在 UI 里消失。</p>
-<h3>9.1 Dynamic 模式（文档承诺，仓库恢复期 shim 未完整体现）</h3>
+<h3 id="9-1-dynamic-模式-文档承诺-仓库恢复期-shim-未完整体现">9.1 Dynamic 模式（文档承诺，仓库恢复期 shim 未完整体现）<a class="h-anchor" href="#9-1-dynamic-模式-文档承诺-仓库恢复期-shim-未完整体现" aria-label="permalink">¶</a></h3>
 <p>官方文档（<a href="https://code.claude.com/docs/en/scheduled-tasks" rel="noreferrer">https://code.claude.com/docs/en/scheduled-tasks</a>，访问于 2026-04-19）提到第二种用法：</p>
 <blockquote><p>When you omit the interval, Claude chooses one dynamically instead of running on a fixed cron schedule. After each iteration it picks a delay between one minute and one hour based on what it observed.</p></blockquote>
 <p>和：</p>
@@ -305,7 +305,7 @@ onFireTask: task =&gt; {
 </ol>
 <p>本章下文只讨论 fixed-interval 路径，因为它有源码支撑。</p></blockquote>
 <p>保守结论：本章只讲 fixed-interval 路径。dynamic 模式的完整落地可能存在于 shim 未含的更新版 skill prompt 里，详见 <code class="ref">book/research/ch13/open-questions.md</code>。Agent SDK 对应的 <code>watchScheduledTasks</code> 入口在 <a class="chref" href="../ch23/">ch.23</a> 讲，那里会再把三种 store 和 scheduled agent 的观测路径串一遍。</p>
-<h2>10. Missed task：重启后怎么追补</h2>
+<h2 id="10-missed-task-重启后怎么追补">10. Missed task：重启后怎么追补<a class="h-anchor" href="#10-missed-task-重启后怎么追补" aria-label="permalink">¶</a></h2>
 <p>用户在 <code>0 9 * * *</code> 上创建了一个 one-shot 提醒 "remind me at 9am to push release"。8:59 关掉 Claude，10:00 才回来——这个任务的 fire 时间已经过了。怎么处理？</p>
 <p>调度器只在 <code>load(initial=true)</code> 时处理这类 missed task（<code class="ref">src/utils/cronScheduler.ts:179-228</code>）：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/cronScheduler.ts:194-196</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> missed = findMissedTasks(next, now).filter(
@@ -343,13 +343,13 @@ onFireTask: task =&gt; {
 <li><strong>任务已经从磁盘删除</strong>：即使模型或用户后来决定不执行，下次启动也不会再被当 missed 出来。</li>
 </ul>
 <p>Recurring task 不走这条路的理由写在 <code>:187-191</code>：chokidar-triggered reload 不重新 surface 老的 overdue——只有 initial load 会。这避免了"missed while Claude was not running"对中途刚产生 overdue 的任务变成误导性提示。</p>
-<h2>11. REPL 的空闲检测</h2>
+<h2 id="11-repl-的空闲检测">11. REPL 的空闲检测<a class="h-anchor" href="#11-repl-的空闲检测" aria-label="permalink">¶</a></h2>
 <p><code>isLoading</code> 是 REPL 里每个 turn 之间的 true/false 状态。<code>useScheduledTasks</code> 不直接把它闭进 scheduler，因为 effect 只挂一次，闭包会拿到过时值：</p>
 <figure class="codeblock"><figcaption><span class="file">src/hooks/useScheduledTasks.ts:47-48</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> isLoadingRef = useRef(isLoading)
 isLoadingRef.current = isLoading</code></pre></figure>
 <p>Ref 每次 render 更新，scheduler 从 <code>isLoading: () =&gt; isLoadingRef.current</code> 拉最新值（<code>:116</code>）。这是 React hook 里处理"长生命周期回调 + 频繁变化的外部状态"的标准写法。</p>
 <p><code>assistantMode</code> 走 bypass（<code class="ref">src/utils/cronScheduler.ts:232</code>）。注释（<code class="ref">src/hooks/useScheduledTasks.ts:18-28</code>）讲了历史：assistant mode 以前 force 住 <code>--proactive</code>，isLoading 几乎不降，所以必须 bypass；后来 #20425 之后 assistant mode 也在 turn 间 idle，bypass 退化成 "latency nicety"——反正 prompt 以 <code>&#x27;later&#x27;</code> 入队，turn 之间都会 drain。</p>
-<h2>12. 远端 trigger：本地发起侧</h2>
+<h2 id="12-远端-trigger-本地发起侧">12. 远端 trigger：本地发起侧<a class="h-anchor" href="#12-远端-trigger-本地发起侧" aria-label="permalink">¶</a></h2>
 <p>当用户说"每天早上 9 点帮我跑这个"并且希望笔记本关掉也能跑时，走的不是 <code>CronCreate</code>，是 <code>RemoteTrigger</code>。</p>
 <p>入口是 <code>/schedule</code> skill（<code class="ref">src/skills/bundled/scheduleRemoteAgents.ts</code>），<code>isEnabled</code> 要求：</p>
 <figure class="codeblock"><figcaption><span class="file">src/skills/bundled/scheduleRemoteAgents.ts:332-334</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">isEnabled: () =&gt;
@@ -376,7 +376,7 @@ isLoadingRef.current = isLoading</code></pre></figure>
 <p><strong>Minimum interval 1 hour</strong>（<code>src/skills/bundled/scheduleRemoteAgents.ts:251, :277</code>）：<code>*/30 * * * *</code> 会被服务端拒绝。本地 cron 是 1 分钟粒度。</p>
 <p><strong>Cron 在 UTC 执行</strong>（<code>:269</code>）：skill prompt 里明确让模型"把用户本地时区转 UTC 再显式确认"。<code>cronToHuman(cron, { utc: true })</code> 的 midnight-crossing 补偿就是为这个路径存在的。</p>
 <p>远端执行的架构细节（CCR 怎么 spawn 一个 isolated session、sources 怎么 clone、sandbox 的权限模型）见 <a class="chref" href="../ch17/">ch.17</a>。本章到"请求打出去了"就停。</p>
-<h2>13. 共享 scheduler：REPL 和 -p 模式</h2>
+<h2 id="13-共享-scheduler-repl-和--p-模式">13. 共享 scheduler：REPL 和 -p 模式<a class="h-anchor" href="#13-共享-scheduler-repl-和--p-模式" aria-label="permalink">¶</a></h2>
 <p><code>-p</code> / SDK 模式没有 React，用自己的一套 streaming loop，但复用同一个 scheduler：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/cli/print.ts:2702-2734（核心结构）</span>
 cronScheduler = cronSchedulerModule.createCronScheduler({
@@ -393,7 +393,7 @@ cronScheduler = cronSchedulerModule.createCronScheduler({
 <p>差别在 <code>void run()</code>：REPL 有 <code>useSyncExternalStore</code> 订阅队列变化触发 drain，<code>-p</code> 模式没有，必须显式踢 runner。原注释（<code class="ref">src/cli/print.ts:2698-2701</code>）：</p>
 <blockquote><p>The run() mutex makes this safe during an active turn: the call no-ops and the post-run recheck at the end of run() picks up the queued command.</p></blockquote>
 <p>这就是把"驱动层"和"调度层"分开抽象的收益：<code>createCronScheduler</code> 接 onFire 回调，接口不关心底下是 React hook 还是 async generator loop。</p>
-<h2>14. 两层 feature gate</h2>
+<h2 id="14-两层-feature-gate">14. 两层 feature gate<a class="h-anchor" href="#14-两层-feature-gate" aria-label="permalink">¶</a></h2>
 <p>调度器入口有两层 gate，一编译时一运行时：</p>
 <figure class="codeblock"><figcaption><span class="file">src/screens/REPL.tsx:199</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> useScheduledTasks = feature(&#x27;<span class="hl-type">AGENT_TRIGGERS</span>&#x27;)
   ? require(&#x27;../hooks/useScheduledTasks.js&#x27;).useScheduledTasks : <span class="hl-kw">null</span>;</code></pre></figure>
@@ -411,7 +411,7 @@ cronScheduler = cronSchedulerModule.createCronScheduler({
 </ul>
 <p>这个 flag 不是 effect 依赖。<code>useScheduledTasks</code> 只依赖 <code>assistantMode</code>（<code class="ref">src/hooks/useScheduledTasks.ts:126</code>），不会因为 flag 翻转 re-mount。scheduler 怎么响应 flag 变化？<strong>每 tick 查一次 <code>isKilled()</code></strong>（<code class="ref">src/utils/cronScheduler.ts:231</code>）。flag 从 true 翻 false，运行中的 scheduler 下一秒自己退。这比"react 到 flag 变化重新挂载"简单，代价可忽略（一次 feature cache read）。</p>
 <p>类似的 <code>isDurableCronEnabled()</code>（<code class="ref">src/tools/ScheduleCronTool/prompt.ts:56-62</code>）是 durable 的独立 kill switch，关了之后 <code>CronCreate.call()</code> 会强制 <code>effectiveDurable = false</code>（<code class="ref">src/tools/ScheduleCronTool/CronCreateTool.ts:120</code>），但 schema 保持稳定不让模型拿到 validation error。细粒度 kill 的好处是可以在事故中只砍磁盘路径（有 I/O 问题），保留内存 cron（健康）。</p>
-<h2>15. 设计取舍</h2>
+<h2 id="15-设计取舍">15. 设计取舍<a class="h-anchor" href="#15-设计取舍" aria-label="permalink">¶</a></h2>
 <p>把前面看到的几个选择列出来做对照。</p>
 <p><strong>自研 cron 解析 vs 引库</strong>。只支持 5-field 常见子集，代价是表达力窄。收益：包小、DST 行为自己掌控、<code>cronToHuman</code> 和翻译逻辑跟解析共享 field 约定。在 agent 场景下这层抽象够用——用户不会写 <code>L</code> 或 <code>MON</code>。</p>
 <p><strong>每秒轮询 vs 精确 setTimeout</strong>。精确 timer 在 chokidar 触发 reload 时要全部清掉重建，还要在 <code>jitter</code> 变化时重算；1 秒轮询则是"算一下 now &gt;= next"。代价是每秒一次空转，收益是状态机简单——任何 flag 或配置变更都在下一秒生效。</p>
@@ -423,7 +423,7 @@ cronScheduler = cronSchedulerModule.createCronScheduler({
 </ul>
 <p>代价：同一个 task id 永远落在同一个相对偏移上——但在 fleet 级别看，task id 本身就是 UUID 均匀分布，全局无 hotspot。</p>
 <p><strong>7 天硬过期 vs 用户显式取消</strong>。源码注释说得直接（<code class="ref">src/utils/cronTasks.ts:339-345</code>）：cron 把 p99 session 时长从 61 分钟拉到 53 小时，内存泄漏压力跟着放大。7 天覆盖最常见的"这周帮我"工作流，同时给长跑任务一个兜底。想持续用就每周 recreate，或者切 durable routine / Desktop tasks。</p>
-<h2>16. 可迁移的点</h2>
+<h2 id="16-可迁移的点">16. 可迁移的点<a class="h-anchor" href="#16-可迁移的点" aria-label="permalink">¶</a></h2>
 <ol>
 <li><strong>把"定时任务"建模成一个存储层差异</strong>。<code>{cron, prompt, durable}</code> 三元组，durable 只控制存到内存还是磁盘；调度层对两种 store 走一样的流程，仅在 fire 之后的清理路径（<code>isSession</code> 分支）区分。让新加"第三种存储后端"只动一个 <code>process(t, isX)</code> 分支。</li>
 <li><strong>跨进程文件锁</strong>：<code>O_EXCL</code> 原子创建 + PID liveness probe + <code>--resume</code> 时刷 PID 保留所有权。这组模式处理绝大多数跨进程协调不需要引 redis / sqlite / zmq。仓库里 <code class="ref">computerUseLock.ts</code> 和 <code class="ref">cronTasksLock.ts</code> 共享这个模式。</li>
@@ -433,7 +433,7 @@ cronScheduler = cronSchedulerModule.createCronScheduler({
 <li><strong>Reinjection 防注入</strong>：当系统拼一段"用户原始文本"重新喂给模型时，用 CommonMark fence 包起来，fence 长度自适应是"原文最长反引号串 + 1"——这是一行就能实现的可靠防御。<code class="ref">src/utils/cronScheduler.ts:556-560</code> 的 <code>buildMissedTaskNotification</code> 是可直接搬的例子。</li>
 <li><strong>调度层与驱动层解耦</strong>：<code>createCronScheduler</code> 接 <code>onFire(prompt)</code> 回调，不关心是 React hook 还是 <code>-p</code> 流式 loop。加一个新运行模式就加一个 factory 调用，不改 scheduler 内部。</li>
 </ol>
-<h2>附：版本脉络</h2>
+<h2 id="附-版本脉络">附：版本脉络<a class="h-anchor" href="#附-版本脉络" aria-label="permalink">¶</a></h2>
 <p>从 changelog（来源：<a href="https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md" rel="noreferrer">https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md</a>，访问于 2026-04-19）看本章涉及能力的上线顺序：</p>
 <ul>
 <li><strong>v2.1.71</strong> <code>/loop</code> 斜杠命令与 cron 工具 GA——changelog 原文 "Added <code>/loop</code> command to run a prompt or slash command on a recurring interval" 以及 "Added cron scheduling tools for recurring prompts within a session"。官方文档的 "Scheduled tasks require v2.1.72 or later" 是要求版本，GA 落地在 v2.1.71。</li>

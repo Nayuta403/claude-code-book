@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2>术语先对齐 —— Claude Code 里有两个"后台"</h2>
+<h2 id="术语先对齐-claude-code-里有两个-后台">术语先对齐 —— Claude Code 里有两个"后台"<a class="h-anchor" href="#术语先对齐-claude-code-里有两个-后台" aria-label="permalink">¶</a></h2>
 <p class="drop">本章要写的"后台"在 Claude Code 里至少分两层。它们不是同一种抽象，只是共用了一部分基础设施和同一个按键。Owner 先把这两层分清楚，正文再逐层讲：</p>
 <ol>
 <li><strong>进程级后台（foreground ↔ background bash）</strong>：长跑的 bash 命令不再阻塞 agent 的 tool call；子进程脱钩继续跑，agent 得到一个 <code>backgroundTaskId</code> 后立刻回到主循环。</li>
@@ -52,7 +52,7 @@
 <li>BashTool 本身的接口设计（<code>command</code> / <code>timeout</code> / <code>run_in_background</code> 等字段）见 <a class="chref" href="../ch08/">ch.08</a> §2，本章只讲 <code>run_in_background</code> 字段<strong>触发</strong>的后台流水线。</li>
 <li>定时任务 / cron trigger 把任务拉起后落到本章同一套后台基础设施上，见 <a class="chref" href="../ch13/">ch.13</a> §4（cron 触发后的执行路径）。主动通知 UI（<code>task-notification</code> 怎么渲染到主对话）见 <a class="chref" href="../ch15/">ch.15</a> §3。远程 / SSH session 下的后台行为见 <a class="chref" href="../ch17/">ch.17</a> §2，IDE 里长跑任务的挂靠方式见 <a class="chref" href="../ch18/">ch.18</a> §3。Ink 渲染见 <a class="chref" href="../ch21/">ch.21</a>。</li>
 </ul>
-<h3>两个 stub 提前澄清</h3>
+<h3 id="两个-stub-提前澄清">两个 stub 提前澄清<a class="h-anchor" href="#两个-stub-提前澄清" aria-label="permalink">¶</a></h3>
 <p>在深挖前把两个容易误导的符号说清楚：</p>
 <ul>
 <li><code class="ref">src/jobs/classifier.ts:1-3</code> 的 <code>runClassifier()</code> 是 <code>return null</code> 的占位：
@@ -63,7 +63,7 @@
 <li><code class="ref">src/tools/MonitorTool/MonitorTool.ts:1</code> 也是 stub（<code>export const MonitorTool = null</code>）。MonitorTool 在内部构建里对应"持续流式"的后台命令，但 external 包里是空的 —— 本章提到时只作对照，不当做事实描述。</li>
 </ul>
 <p>本章还原的是 external bundle 能跑通的那条路径：<code>run_in_background</code> 参数 + Ctrl+B + <code>&lt;task-notification&gt;</code> 回灌。</p>
-<h2>值得借鉴的一点</h2>
+<h2 id="值得借鉴的一点">值得借鉴的一点<a class="h-anchor" href="#值得借鉴的一点" aria-label="permalink">¶</a></h2>
 <p>把"后台进程"按下面这套组合来做：<strong>子进程 stdout/stderr 焊到磁盘文件 fd；共享的每秒 1 次 poller tail 文件尾驱动所有 UI 进度；size watchdog 每 5 秒检查文件大小；完成时把 XML <code>&lt;task-notification&gt;</code> 推进 agent 的消息队列</strong>。这个组合同时满足四个相互掐架的要求：</p>
 <ul>
 <li>长跑（小时级）不阻塞 agent 主循环；</li>
@@ -72,8 +72,8 @@
 <li>完成事件不污染 agent 的串行推理上下文。</li>
 </ul>
 <p>后面用源码把这四条分别兑现。</p>
-<h2>进程级后台 —— 五个角色</h2>
-<h3>角色 1：<code>ShellCommand</code> —— 子进程状态机</h3>
+<h2 id="进程级后台-五个角色">进程级后台 —— 五个角色<a class="h-anchor" href="#进程级后台-五个角色" aria-label="permalink">¶</a></h2>
+<h3 id="角色-1-shellcommand-子进程状态机">角色 1：<code>ShellCommand</code> —— 子进程状态机<a class="h-anchor" href="#角色-1-shellcommand-子进程状态机" aria-label="permalink">¶</a></h3>
 <p>进程级后台的主类型在 <code class="ref">src/utils/ShellCommand.ts:32-47</code>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/ShellCommand.ts:32-47</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">ShellCommand</span> = {
   background: (backgroundTaskId: string) =&gt; boolean
@@ -103,7 +103,7 @@
   ? <span class="hl-kw">new</span> <span class="hl-type">StreamWrapper</span>(childProcess.stdout, taskOutput, <span class="hl-kw">false</span>)
   : <span class="hl-kw">null</span></code></pre></figure>
 <p>这个区分是后面所有设计的地基：<strong>JS 不参与数据搬运</strong>，长跑命令的吞吐不再受 Node event loop 调度影响，几 GB 的 stdout 不会撑爆 V8 堆。</p>
-<h3>角色 2：<code>TaskOutput</code> —— 唯一输出源</h3>
+<h3 id="角色-2-taskoutput-唯一输出源">角色 2：<code>TaskOutput</code> —— 唯一输出源<a class="h-anchor" href="#角色-2-taskoutput-唯一输出源" aria-label="permalink">¶</a></h3>
 <p>每个命令有一个 <code>TaskOutput</code> 实例，拥有 <code>taskId</code>、文件路径、内存 buffer、磁盘 spill、<code>CircularBuffer</code>（保存最近 1000 行）、onProgress 回调。</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/task/TaskOutput.ts:32-48（省略部分注释）</span>
 <span class="hl-kw">export</span> <span class="hl-kw">class</span> <span class="hl-type">TaskOutput</span> {
@@ -134,7 +134,7 @@
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/task/diskOutput.ts:49-55</code>）：<code>_taskOutputDir</code> 是模块级变量，<strong>首次调用 memoize</strong>。即使之后 <code>/clear</code> 触发 <code>regenerateSessionId()</code>，已经注册过的 <code>TaskOutput</code> 仍然写入旧 session id 路径下的那个文件；新创建的任务才会进入新 session id 的目录。产品层面你只感到"<code>/clear</code> 之后旧会话的后台任务还在跑"，源码层面这行为的地基是"路径 memoize 在第一次调用"这一个赋值。这也是"后台 bash 穿越 /clear"语义的底层约束。</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/task/TaskOutput.ts:329-334</code>）：file 模式下 <code>getStderr()</code> 无条件返回空串；子进程的 stderr 在 spawn 时就被重定向到<strong>和 stdout 同一个</strong> fd（file 模式下两者合并写入 <code>&lt;taskId&gt;.output</code>）。产品层面看到的 <code>ExecResult.stdout</code> / <code>ExecResult.stderr</code> 看起来是两路，实际落盘时 stderr 不可单独分离 —— 只有 pipe 模式（hooks 执行命令）下 <code>#stderrBuffer</code> 才真正有值。影响场景：想从后台任务 tail 里 grep stderr 只看错误是做不到的。</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/ShellCommand.ts:269-272</code>）：监听的是子进程 <code>&#x27;exit&#x27;</code> 事件而非 <code>&#x27;close&#x27;</code>。<code>&#x27;close&#x27;</code> 会等待所有继承 stdio fd 的 grandchild 也 exit —— 典型如 <code>sleep 30 &amp;</code> 这种用户显式派生的后台子进程。用 <code>&#x27;exit&#x27;</code> 让 shell 自身退出就能立刻返回控制权，grandchild 留给系统自生自灭。用户层面你不感知，但这直接决定"后台命令'跑完'的瞬间"到底怎么算。</p></blockquote>
-<h3>角色 3：共享 poller —— 进程级单例</h3>
+<h3 id="角色-3-共享-poller-进程级单例">角色 3：共享 poller —— 进程级单例<a class="h-anchor" href="#角色-3-共享-poller-进程级单例" aria-label="permalink">¶</a></h3>
 <p>这是最值得单独拎出来的设计。每个后台 bash 都要 tail 文件显示进度，但不给每个任务起一个 timer 的天然理由有：</p>
 <ul>
 <li>timer 碎片化让 Node 的 timer wheel 抖动</li>
@@ -184,7 +184,7 @@
 <p><code>Math.max(prev, extrapolated)</code> 保证单调：tail 里恰好是一堆短行，下一 tick tail 里全是长行，比例外推值会下降 —— 这里用前值托底，避免 UI 计数抖动。</p>
 <p>tail 窗口本身只有 4KB（<code>PROGRESS_TAIL_BYTES = 4096</code>，<code class="ref">src/utils/task/TaskOutput.ts:11</code>），也就是说 tick 里只读文件尾 4KB。超过这个窗口的历史输出不会被每秒扫一遍，只在任务完成或显式 <code>Read</code> 时才被取回。这是用"固定小尾巴 + 外推"换"无论文件多大都保持 tick 成本恒定"，让 1 小时跑出来 1GB 的任务在进度条上不会反映出"每 tick 更慢"。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/task/diskOutput.ts:304-330</code>）：<code>BashOutput</code> 增量读（<code>getTaskOutputDelta</code>）按<strong>字节偏移</strong>推进 —— <code>newOffset = fromOffset + result.bytesRead</code>。如果一次读取的 <code>maxBytes</code> 边界恰好切中一个 UTF-8 多字节字符或一行中段，返回的 <code>content</code> 会在中间被物理切断（半个字符、半行）。调用方（BashOutput 工具的实现）必须自己容忍这种"半行 / 半字符"的边界情况。产品层面你会偶发看到后台任务输出里中文字符变成问号或者一行被切两段，底层就是字节推进而不是行对齐。</p></blockquote>
-<h3>角色 4：生命周期 —— <code>LocalShellTask</code></h3>
+<h3 id="角色-4-生命周期-localshelltask">角色 4：生命周期 —— <code>LocalShellTask</code><a class="h-anchor" href="#角色-4-生命周期-localshelltask" aria-label="permalink">¶</a></h3>
 <p>task 层面有三个入口，对应"什么时候登记到 AppState"这个决策：</p>
 <ul>
 <li><strong><code>spawnShellTask()</code></strong>（<code class="ref">src/tasks/LocalShellTask/LocalShellTask.tsx:180-252</code>）：模型显式传 <code>run_in_background: true</code> 或 <code>ShellCommand</code> 超时触发 <code>onTimeout</code>。登记时 <code>isBackgrounded: true</code>，同时 <code>shellCommand.background(taskId)</code>。同一函数里还登记了进程退出的 cleanup hook（<code>:200-202</code>）—— 见下面的隐藏细节。</li>
@@ -214,7 +214,7 @@
   <span class="hl-cm">// 同理 backgroundAgentTask</span>
 }</code></pre></figure>
 <p>注意两件事：过滤条件里 <code>task.shellCommand</code> 要非空（killed / completed 的任务 <code>shellCommand</code> 会被置空，自动跳过）；bash 和 agent 分别走各自的 <code>backgroundTask</code> / <code>backgroundAgentTask</code>，不共享代码但结构对称。</p>
-<h3>角色 5：完成事件回灌 —— 消息队列</h3>
+<h3 id="角色-5-完成事件回灌-消息队列">角色 5：完成事件回灌 —— 消息队列<a class="h-anchor" href="#角色-5-完成事件回灌-消息队列" aria-label="permalink">¶</a></h3>
 <p>命令跑完，要把结果告诉 agent。直接 push 到 <code>messages</code> 数组会破坏 agent 的串行推理假设（agent 可能在 API 调用中间），所以走队列：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tasks/LocalShellTask/LocalShellTask.tsx:160-172（简化）</span>
 <span class="hl-kw">const</span> message = <span class="hl-str">`&lt;${TASK_NOTIFICATION_TAG}&gt;
@@ -243,8 +243,8 @@ updateTaskState(taskId, setAppState, task =&gt; {
 <p>避免 <code>TaskStopTool</code> 手动 kill、子进程正常退出、stall watchdog 抢通知这三条路径互相灌重复事件。</p></li>
 <li><strong>priority 选项</strong>：通知可以插到队列前面（<code>&#x27;next&#x27;</code>）或后面（<code>&#x27;later&#x27;</code>）。stall watchdog 触发的"这东西在等输入"用 <code>&#x27;next&#x27;</code>；正常完成用 <code>&#x27;later&#x27;</code>，不打断 agent 正在做的事。</li>
 </ul>
-<h2>三个 watchdog / 自动化</h2>
-<h3>Size watchdog —— 5GB 硬上限</h3>
+<h2 id="三个-watchdog-自动化">三个 watchdog / 自动化<a class="h-anchor" href="#三个-watchdog-自动化" aria-label="permalink">¶</a></h2>
+<h3 id="size-watchdog-5gb-硬上限">Size watchdog —— 5GB 硬上限<a class="h-anchor" href="#size-watchdog-5gb-硬上限" aria-label="permalink">¶</a></h3>
 <p>后台 bash 把 stdout/stderr 焊到 fd 写磁盘，JS 既看不到数据也收不到字节计数。出事最快的 fail-safe 是：<strong>定期 stat 文件大小</strong>。</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/ShellCommand.ts:239-261（简化）</span>
 #startSizeWatchdog(): <span class="hl-kw">void</span> {
@@ -270,7 +270,7 @@ updateTaskState(taskId, setAppState, task =&gt; {
 <p>这个上限在官方 Interactive mode 文档里也明说：</p>
 <blockquote><p>Background tasks are automatically terminated if output exceeds 5GB, with a note in stderr explaining why —— <a href="https://code.claude.com/docs/en/interactive-mode" rel="noreferrer">https://code.claude.com/docs/en/interactive-mode</a>，访问于 2026-04-19</p></blockquote>
 <p>对应源码会给 stderr 前缀加一行解释（<code class="ref">src/utils/ShellCommand.ts:318-322</code>），让模型下一轮读出来就知道是资源问题。</p>
-<h3>Stall watchdog —— 交互提示识别</h3>
+<h3 id="stall-watchdog-交互提示识别">Stall watchdog —— 交互提示识别<a class="h-anchor" href="#stall-watchdog-交互提示识别" aria-label="permalink">¶</a></h3>
 <p>后台命令长时间没有输出增长，大概率是"卡在 <code>(y/n)</code> 等输入"。<code>startStallWatchdog</code>（<code class="ref">src/tasks/LocalShellTask/LocalShellTask.tsx:46-104</code>）做这件事：</p>
 <ol>
 <li>每 5 秒 stat 一次文件大小；</li>
@@ -280,7 +280,7 @@ updateTaskState(taskId, setAppState, task =&gt; {
 </ol>
 <p>关键在<strong>没匹配上的情况</strong>：不触发 kill、不发"还活着"的 ping，只是把 <code>lastGrowth</code> 重置让下一轮 45 秒后再看。这是正确的默默失败 —— 慢 build / <code>git log -S</code> 长时间无输出完全正常，不能骚扰 agent。</p>
 <p>正则前的 <code>cancelled</code> latch（<code>:72-73</code>）也值得一提：并发 tick 可能同时命中，一次触发就关停；<code>cancelled = true</code> 在 async boundary 前置，保证后到的 tick callback 看到 <code>cancelled === true</code> 直接 bail。</p>
-<h3>自动后台化的三种触发</h3>
+<h3 id="自动后台化的三种触发">自动后台化的三种触发<a class="h-anchor" href="#自动后台化的三种触发" aria-label="permalink">¶</a></h3>
 <p>BashTool 对"后台"的触发不是一处，是三处互补：</p>
 <ol>
 <li><strong>超时自动后台</strong>（<code class="ref">src/tools/BashTool/BashTool.tsx:967-971</code> + <code class="ref">src/utils/ShellCommand.ts:135-141</code>）：命令超过 timeout 且在允许自动后台的白名单里，选择后台化而不是 SIGTERM。白名单反向定义：   <code><code>ts   // src/tools/BashTool/BashTool.tsx:220-221   const DISALLOWED_AUTO_BACKGROUND_COMMANDS = [&#x27;sleep&#x27;]   </code></code>   <code>sleep</code> 被排除是因为它作为用户意图就是"阻塞 N 秒"；转后台没意义。</li>
@@ -289,8 +289,8 @@ updateTaskState(taskId, setAppState, task =&gt; {
 <li><strong>显式 <code>run_in_background: true</code></strong>：模型主动传的，直接转后台，立刻返回 <code>backgroundTaskId</code>（<code class="ref">src/tools/BashTool/BashTool.tsx:989-1001</code>）。</li>
 </ol>
 <p>三者的关系：显式 &gt; 超时自动 &gt; assistant-mode 15 秒。显式的任何时候都优先生效；超时自动受白名单限制；assistant-mode 15 秒只在主线程 + 非显式后台的前提下兜底。</p>
-<h2>回灌与重同步</h2>
-<h3>agent 侧读取：Read &gt; TaskOutputTool</h3>
+<h2 id="回灌与重同步">回灌与重同步<a class="h-anchor" href="#回灌与重同步" aria-label="permalink">¶</a></h2>
+<h3 id="agent-侧读取-read-taskoutputtool">agent 侧读取：Read &gt; TaskOutputTool<a class="h-anchor" href="#agent-侧读取-read-taskoutputtool" aria-label="permalink">¶</a></h3>
 <p>有两种方式读后台任务的输出：</p>
 <ul>
 <li><strong><code>TaskOutputTool</code></strong>（<code class="ref">src/tools/TaskOutputTool/TaskOutputTool.tsx</code>）：<code>task_id</code> + <code>block</code> + <code>timeout</code>，能轮询等完成。别名 <code>BashOutput</code> / <code>AgentOutputTool</code> 兼容旧 transcripts（<code>:149-150</code>，注意 API 层面 harness 给模型暴露的名字就是 <code>BashOutput</code>，不是 <code>BashOutputTool</code>）。</li>
@@ -303,7 +303,7 @@ updateTaskState(taskId, setAppState, task =&gt; {
 <p>理由是 <code>Read</code> 已经是 agent 主工具集里的核心工具，认知成本最低；多一个工具就多一个 schema 要塞进 system prompt。deprecation 后 <code>TaskOutputTool</code> 留下来只是为了兼容存量 transcript 回放（<code>maxResultSizeChars: 100_000</code>、<code>shouldDefer: true</code>、<code>aliases: [&#x27;AgentOutputTool&#x27;, &#x27;BashOutputTool&#x27;]</code>）。停止后台任务的对应工具叫 <code>TaskStopTool</code>，对外 alias <code>KillShell</code>（<code class="ref">src/tools/TaskStopTool/TaskStopTool.ts:39-44</code>）—— BashOutput / KillShell 两个名字是 Claude Code harness 层的扩展，不在 API bash tool 标准参数里。</p>
 <p>官方文档也是同样的表述：</p>
 <blockquote><p>Output is written to a file and Claude can retrieve it using the Read tool —— <a href="https://code.claude.com/docs/en/interactive-mode" rel="noreferrer">https://code.claude.com/docs/en/interactive-mode</a>，访问于 2026-04-19</p></blockquote>
-<h3>竞态处理 —— "我们刚 Ctrl+B 它就退出了"</h3>
+<h3 id="竞态处理-我们刚-ctrl-b-它就退出了">竞态处理 —— "我们刚 Ctrl+B 它就退出了"<a class="h-anchor" href="#竞态处理-我们刚-ctrl-b-它就退出了" aria-label="permalink">¶</a></h3>
 <p>BashTool 的进度 generator 和 <code>shellCommand.result</code> 之间会发生这种竞态：generator 正要把命令标记为"转后台"的时候，子进程自己退出了。<code>handleExit</code> 看到 <code>#backgroundTaskId !== undefined</code> 就按"后台命令完成"处理，但 generator 已经决定返回 "backgrounded" 给 agent，会留下"命令完成但通知会再发一次"的裂缝。</p>
 <p>处理方式（<code class="ref">src/tools/BashTool/BashTool.tsx:1047-1059</code>）：</p>
 <ul>
@@ -312,9 +312,9 @@ updateTaskState(taskId, setAppState, task =&gt; {
 <li>调 <code>markTaskNotified(taskId, setAppState)</code> 让 <code>.then()</code> 回调里的 <code>enqueueShellNotification</code> 自动 bail（依赖前面说的 <code>notified</code> 原子 flag）。</li>
 </ul>
 <p>这段不漂亮，但竞态窗口实际存在。原注释："race: backgrounding fired (15s timer / onTimeout / Ctrl+B) but the command completed before the next poll tick"。</p>
-<h2>会话级后台</h2>
+<h2 id="会话级后台">会话级后台<a class="h-anchor" href="#会话级后台" aria-label="permalink">¶</a></h2>
 <p>这是和进程级后台并列的第二层"后台"。数据结构<strong>复用</strong>了 sub-agent 框架 —— <code>LocalAgentTaskState</code> 加个 <code>agentType: &#x27;main-session&#x27;</code> —— 但触发条件和语义不同：进程级 Ctrl+B 是把 tool call 脱钩；会话级 Ctrl+B 是把整个 REPL query 脱钩。</p>
-<h3><code>useSessionBackgrounding</code> 两分支</h3>
+<h3 id="usesessionbackgrounding-两分支"><code>useSessionBackgrounding</code> 两分支<a class="h-anchor" href="#usesessionbackgrounding-两分支" aria-label="permalink">¶</a></h3>
 <p>Hook 的核心行为在 <code class="ref">src/hooks/useSessionBackgrounding.ts:41-74</code>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/useSessionBackgrounding.ts:41-74（省略）</span>
 <span class="hl-kw">const</span> handleBackgroundSession = useCallback(() =&gt; {
@@ -340,7 +340,7 @@ updateTaskState(taskId, setAppState, task =&gt; {
 <li>task 完成时自动拆回 background 状态。</li>
 </ul>
 <p>这套单向数据流的代价是 foregrounded task 的 UI 交互全走 state 镜像，不能真的把 UI 组件重新 mount 到那个 task 上 —— 历史消息只能看不能重新滚到中间。但对"把当前 query 推到背后、切走做别的事、晚点回来"这个场景足够。</p>
-<h3><code>startBackgroundSession</code> —— query 的 fork</h3>
+<h3 id="startbackgroundsession-query-的-fork"><code>startBackgroundSession</code> —— query 的 fork<a class="h-anchor" href="#startbackgroundsession-query-的-fork" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/tasks/LocalMainSessionTask.ts:338-425</code>。把当前消息和 queryParams 打包交给一个独立的 <code>query()</code> async iterator 跑：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tasks/LocalMainSessionTask.ts:338-375（简化）</span>
 <span class="hl-kw">export</span> <span class="hl-kw">function</span> startBackgroundSession({ messages, queryParams, ... }): string {
@@ -370,7 +370,7 @@ updateTaskState(taskId, setAppState, task =&gt; {
 <li><strong><code>AsyncLocalStorage</code> 隔离</strong>：<code>runWithAgentContext</code> 用 Node 的 ALS 把 <code>agentId</code> 绑到这一条 async chain，skill 调用、permission 检查都能按 agentId 归属。前台和后台并发 query 不互相干扰。</li>
 <li><strong><code>abort(&#x27;background&#x27;)</code> 的语义</strong>：REPL 层发起后台化时（<code class="ref">src/screens/REPL.tsx:2558-2606</code>）调的是 <code>abortController?.abort(&#x27;background&#x27;)</code> —— 这里的 <code>abortController</code> 是<strong>当前 query 的</strong> controller（用来停掉主循环的 <code>for await</code>），<strong>不是</strong> <code>ShellCommand.#abortSignal</code>。这两条 signal 链是分开的：bash 子进程的后台化完全走 <code>shellCommand.background(taskId)</code> 的状态迁移（<code>running → backgrounded</code>），子进程不接收任何 abort，继续照常跑。<code>ShellCommand.#abortHandler</code>（<code class="ref">src/utils/ShellCommand.ts:186-193</code>）只在它自己收到 abort 时起作用，而且只对 <code>reason === &#x27;interrupt&#x27;</code> 放行不 kill（"用户提交了新消息"的场景，让 caller 有机会背景化以保留部分输出）；其他 reason 一律走 <code>this.kill()</code>。所以："<code>&#x27;background&#x27;</code> 走不 kill 路径"这个直觉描述的是最终效果（子进程确实继续跑），但具体机制不是通过 reason 分支，而是通过"abort 信号压根没传到 ShellCommand"。</li>
 </ul>
-<h3>Ctrl+B 同一个键的双分派</h3>
+<h3 id="ctrl-b-同一个键的双分派">Ctrl+B 同一个键的双分派<a class="h-anchor" href="#ctrl-b-同一个键的双分派" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/keybindings/defaultBindings.ts:185-186</code> 里只有一个绑定：</p>
 <figure class="codeblock"><figcaption><span class="file">src/keybindings/defaultBindings.ts:181-188</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">{
   context: &#x27;<span class="hl-type">Task</span>&#x27;,
@@ -401,7 +401,7 @@ updateTaskState(taskId, setAppState, task =&gt; {
 }</code></pre></figure>
 <p>同一个键按不同状态做不同事，不是因为"方便"——是因为<strong>用户意图其实不同</strong>：有前台 bash 在跑时，用户的直觉是"把那个 shell 扔后台去"；没有前台 task 时，用户的直觉是"把这整个对话先放一边"。按"更细粒度的目标优先"分派符合直觉。</p>
 <p>一点需要诚实标注的：当前 external build 里 <code>isEnvTruthy(&quot;false&quot;)</code> 恒为 false（<code class="ref">src/components/SessionBackgroundHint.tsx:50</code>、<code>:67</code>），double-press 后台化 session 的入口被关。<code>useSessionBackgrounding</code> + <code>startBackgroundSession</code> 实现仍在，覆盖内部构建或后续开关；正文按实现描述。</p>
-<h2>设计取舍</h2>
+<h2 id="设计取舍">设计取舍<a class="h-anchor" href="#设计取舍" aria-label="permalink">¶</a></h2>
 <ul>
 <li><strong>为什么 file 模式直接焊 fd，不在 JS 里缓存</strong>：JS 不是数据搬运的瓶颈点，但它<strong>成为瓶颈</strong>的概率高。后台命令可能跑一晚上、输出 10GB，JS 哪怕只做一次 <code>.toString()</code> 都是 heap 灾难。把 JS 从 hot path 彻底剥掉，换来 Node 进程可以稳定后台跑任意时长。代价：JS 看不到输出细节，得走文件 tail + 共享 poller 重建进度 —— 但 tail 4KB 的成本可以接受。</li>
 <li><strong>为什么共享 poller 不做 per-task timer</strong>：per-task timer 在 20 个任务并发时就 20 个 stat + 20 个 timer tick，CPU wake-up 频率放大；共享 poller 一个 tick 串行处理所有 active task。代价：某个任务的 stat 慢会拖累其他任务的 tick 时机 —— 但 stat 是轻操作，且注释说"Non-async body (.then) to avoid stacking if I/O is slow"（<code class="ref">src/utils/task/TaskOutput.ts:107-108</code>），I/O 不阻塞 tick。</li>
@@ -409,7 +409,7 @@ updateTaskState(taskId, setAppState, task =&gt; {
 <li><strong>为什么用 XML <code>&lt;task-notification&gt;</code> 包装而不是 structured JSON</strong>：XML 对 LLM 友好（tag-aware 训练语料丰富），对人读 transcript 也友好；同一份消息 <code class="ref">print.ts</code> 解析出 <code>&lt;status&gt;</code> 发 SDK 事件，模型和订阅者共享，不用维护两条路径。代价：XML 解析容错比 JSON 差，<code>escapeXml</code> 必须正确（<code class="ref">src/tasks/LocalShellTask/LocalShellTask.tsx:164</code>）。</li>
 <li><strong>为什么 session 背景化复用 LocalAgentTaskState 而不是新建 type</strong>：UI 组件已经能渲染 agent task；复用减少新 code path。代价：语义被稍微拉扯 —— "main-session" agent 在任务列表里和真 sub-agent 并排看起来容易混，但通过 <code>isMainSessionTask()</code> 型别守卫能区分。</li>
 </ul>
-<h2>可迁移的点</h2>
+<h2 id="可迁移的点">可迁移的点<a class="h-anchor" href="#可迁移的点" aria-label="permalink">¶</a></h2>
 <ul>
 <li><strong>"唯一输出源"类</strong>：给每个外部任务一个拥有 taskId / buffer / file path / progress 的 Output 对象，统一对外提供 <code>getStdout()</code>、<code>spillToDisk()</code>、<code>clear()</code>，让上层不操心数据在哪。对任何"跑子进程 + 可能很大 + 要 UI 展示"的系统都成立。</li>
 <li><strong>共享 poller + UI 生命周期驱动</strong>：React 挂载 / 卸载触发 <code>startPolling</code> / <code>stopPolling</code>，interval 只在有人看时存在。这套模式能移植到任何"后台数据源 + 按需订阅"的场景。</li>

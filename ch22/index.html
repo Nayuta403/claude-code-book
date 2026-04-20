@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2>22.1 用户看到的三层观测</h2>
+<h2 id="22-1-用户看到的三层观测">22.1 用户看到的三层观测<a class="h-anchor" href="#22-1-用户看到的三层观测" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 是长跑进程。一次会话可能跨几小时、调上百次 tool、读写上千文件、烧几块钱 token，还可能把 Node 堆吃到 2 GB。工程师需要三件事：</p>
 <ul>
 <li>知道花了多少（cost）</li>
@@ -53,15 +53,15 @@
 <li>会话退出时自动打印的总结（<code class="ref">src/costHook.ts:6-22</code> 在 <code>process.on(&#x27;exit&#x27;)</code> 里调 <code>formatTotalCost</code>）。</li>
 </ol>
 <p>本章讲"数据从哪来、给谁看、为什么这样分"。几件事<strong>不在</strong>本章范围：Hooks 协议在 <a class="chref" href="../ch14/">ch.14</a>（本章的 <code>costHook</code> 只是其中一个内置消费者）；Agent Loop 在 <a class="chref" href="../ch03/">ch.03</a>（cost 的"源头归集"那条路径在那里画）；Ink 怎么把 statusline 画到屏幕上在 <a class="chref" href="../ch21/">ch.21</a>；SDK 如何消费这些 usage 数据在 <a class="chref" href="../ch23/">ch.23</a>；cost 怎么参与 compact 决策在 <a class="chref" href="../ch07/">ch.07</a>；跨机协作场景下 cost 归属到哪台机器，在 <a class="chref" href="../ch17/">ch.17</a>（remote session）。</p>
-<h2>22.2 为什么挑这个设计出来讲</h2>
+<h2 id="22-2-为什么挑这个设计出来讲">22.2 为什么挑这个设计出来讲<a class="h-anchor" href="#22-2-为什么挑这个设计出来讲" aria-label="permalink">¶</a></h2>
 <p>本章有一个值得抄作业的设计点：<strong>把 statusline 的"模板语言"退化成"把 JSON 喂到 stdin、把 stdout 原样贴回屏幕"</strong>。官方不维护 DSL，也不提供变量语法，只约定一份 JSON schema。用户想怎么用 bash / python / node / jq / awk 都行。这个设计的代价是每次刷新 fork 一个子进程；收益是扩展面无穷、维护成本归零。见 §22.7。</p>
 <p>其余还讲两件事：</p>
 <ul>
 <li>Cost 累加器用<strong>单一真相源</strong>（<code>modelUsage</code> 按 model 分桶），所有总计都是派生。避免"总量对不上分项"的经典 bug（§22.3）。</li>
 <li><code>/heapdump</code> 的"先写 diagnostics、再写 snapshot"—— 失败域排序的小标本（§22.8）。</li>
 </ul>
-<h2>22.3 Cost：从 API usage 到屏幕</h2>
-<h3>22.3.1 唯一的真相源是 API response</h3>
+<h2 id="22-3-cost-从-api-usage-到屏幕">22.3 Cost：从 API usage 到屏幕<a class="h-anchor" href="#22-3-cost-从-api-usage-到屏幕" aria-label="permalink">¶</a></h2>
+<h3 id="22-3-1-唯一的真相源是-api-response">22.3.1 唯一的真相源是 API response<a class="h-anchor" href="#22-3-1-唯一的真相源是-api-response" aria-label="permalink">¶</a></h3>
 <p>Claude Code <strong>不做本地 tokenizer 估算</strong>。每个 message_delta 事件里，<code>@anthropic-ai/sdk</code> 已经给了 <code>usage</code> 对象（SDK 侧怎么拿到它，见 <a class="chref" href="../ch23/">ch.23</a>），代码直接换算成美元：</p>
 <figure class="codeblock"><figcaption><span class="file">src/services/api/claude.ts:2251-2256</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> costUSDForPart = calculateUSDCost(resolvedModel, usage)
 costUSD += addToTotalSessionCost(
@@ -84,7 +84,7 @@ costUSD += addToTotalSessionCost(
 }</code></pre></figure>
 <p>五个维度线性加和。价格表硬编码（<code class="ref">src/utils/modelCost.ts:36-87</code>），例如 Sonnet 的 tier 是 <code>$3 input / $15 output / $3.75 cache write / $0.30 cache read</code>。</p>
 <p>Prompt cache 的账单意义值得单独点一下。官方说明（来源：<a href="https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching" rel="noreferrer">https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching</a>，访问于 2026-04-19）：5 分钟 cache 的 read 是基准 input 的 <strong>0.1 倍</strong>、write 是 <strong>1.25 倍</strong>。Claude Code 的 Sonnet 价位 <code>promptCacheReadTokens = 0.3</code>、<code>inputTokens = 3</code>，比值刚好 0.1，能对上。所以 statusline / stats 里把 <code>cache_read</code> 暴露出来，不是炫耀，是对用户的经济提示：<strong>这一块 token 只花你 10% 的钱</strong>。</p>
-<h3>22.3.2 累加器：按 model 分桶，总计都是派生</h3>
+<h3 id="22-3-2-累加器-按-model-分桶-总计都是派生">22.3.2 累加器：按 model 分桶，总计都是派生<a class="h-anchor" href="#22-3-2-累加器-按-model-分桶-总计都是派生" aria-label="permalink">¶</a></h3>
 <p>Claude Code 会话里可以来回切 model（<code>/model</code>），还可能同时跑 advisor / classifier 这类 side query，每条都用不同的 model。要让 <code>/cost</code> 既能报总额，又能按 model 拆开，就得解决"总量对不上分项"的常见问题。</p>
 <p>做法是<strong>只存一份</strong>：按 model 分桶的 <code>modelUsage</code>。</p>
 <figure class="codeblock"><figcaption><span class="file">src/bootstrap/state.ts:557-564</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> addToTotalCostState(
@@ -121,7 +121,7 @@ costUSD += addToTotalSessionCost(
   )
 }</code></pre></figure>
 <p>所以 <code>/cost</code> 输出里按 model 列的那几行，自然会把 advisor 用到的 Haiku / Sonnet 分开列 —— 不需要额外写"advisor 行"。</p>
-<h3>22.3.3 未知 model 的兜底</h3>
+<h3 id="22-3-3-未知-model-的兜底">22.3.3 未知 model 的兜底<a class="h-anchor" href="#22-3-3-未知-model-的兜底" aria-label="permalink">¶</a></h3>
 <p>模型每隔几周就会发新版本。如果客户端没更新到最新价格表，账就算错了。Claude Code 的策略是 <strong>fallback + 可见警告</strong>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/modelCost.ts:155-173</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> costs = <span class="hl-type">MODEL_COSTS</span>[shortName]
 <span class="hl-kw">if</span> (!costs) {
@@ -133,7 +133,7 @@ costUSD += addToTotalSessionCost(
 }</code></pre></figure>
 <p><code>trackUnknownModelCost</code> 打 <code>tengu_unknown_model_cost</code> 分析事件，再调 <code>setHasUnknownModelCost()</code> 置标志位。只要这次会话撞到过未知 model，<code>/cost</code> 的输出就会在金额后面追加 <code>(costs may be inaccurate due to usage of unknown models)</code>（<code class="ref">src/cost-tracker.ts:230-233</code>）—— 让用户知道"这笔账是估的"。</p>
 <p>官方也给了背书（来源：<a href="https://code.claude.com/docs/en/costs" rel="noreferrer">https://code.claude.com/docs/en/costs</a>，访问于 2026-04-19）："The dollar figure is an estimate computed locally from token counts and may differ from your actual bill."</p>
-<h3>22.3.4 持久化：只记"上一次"</h3>
+<h3 id="22-3-4-持久化-只记-上一次">22.3.4 持久化：只记"上一次"<a class="h-anchor" href="#22-3-4-持久化-只记-上一次" aria-label="permalink">¶</a></h3>
 <p>Claude Code 的 session 可以 <code>--resume</code> 复活。cost 也得跟着回来。但<strong>没有</strong>跨会话总账，只持久化"上一次会话的 cost"，而且只在 session id 匹配时才恢复：</p>
 <figure class="codeblock"><figcaption><span class="file">src/cost-tracker.ts:87-100</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> getStoredSessionCosts(
   sessionId: string,
@@ -156,7 +156,7 @@ process.on(&#x27;exit&#x27;, f)</code></pre></figure>
 <p>所以"会话内的累加 + 单会话恢复"是 <code>/cost</code> 的数据边界。跨会话、跨天、streak 这些视图交给 <code>/stats</code>，它从磁盘上的 session JSONL 重算，数据源不同。</p>
 <p>订阅用户这里有个取舍：<code>/cost</code> 命令本身默认<strong>隐藏</strong>（<code class="ref">src/commands/cost/index.ts:12-18</code>），即便手动输入也只返回一段订阅文案（<code class="ref">src/commands/cost/cost.ts:7-24</code>）。但<strong>累加器和持久化仍然工作</strong> —— 数据在、只是 UI 不给看。理由是订阅用户的金额不代表真实账单，看了反而误导。</p>
 <p>另外，compact 发生时 cost 不会清零（也不会被 compact 前后的 token 占比重新校准）；compact 只是把 message 序列换成摘要再继续跑，<code>addToTotalSessionCost</code> 继续按新 message_delta 加数。关于 compact 决策本身怎么看 token 预算与 cost，见 <a class="chref" href="../ch07/">ch.07</a>。</p>
-<h3>22.3.5 OTel 旁路</h3>
+<h3 id="22-3-5-otel-旁路">22.3.5 OTel 旁路<a class="h-anchor" href="#22-3-5-otel-旁路" aria-label="permalink">¶</a></h3>
 <p>除了业务总账，cost 还被同步推给 OpenTelemetry：</p>
 <figure class="codeblock"><figcaption><span class="file">src/bootstrap/state.ts:968-975</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-type">STATE</span>.costCounter = createCounter(&#x27;claude_code.cost.usage&#x27;, {
   description: &#x27;<span class="hl-type">Cost</span> <span class="hl-kw">of</span> the <span class="hl-type">Claude</span> <span class="hl-type">Code</span> session&#x27;,
@@ -182,7 +182,7 @@ getTokenCounter()?.add(usage.cache_creation_input_tokens ?? <span class="hl-num"
   <span class="hl-kw">type</span>: &#x27;cacheCreation&#x27;,
 })</code></pre></figure>
 <p><code>{model, type}</code> 做 metric attribute，<code>type</code> 覆盖 input/output/cacheRead/cacheCreation 四种。对企业用户意味着：如果你开了 OTel exporter，在 Grafana 里就能直接画"按 model 的 cache hit 率曲线"，源数据已经分好。</p>
-<h2>22.4 <code>/cost</code>、<code>/stats</code>、<code>/usage</code> 的分工</h2>
+<h2 id="22-4-cost-stats-usage-的分工">22.4 <code>/cost</code>、<code>/stats</code>、<code>/usage</code> 的分工<a class="h-anchor" href="#22-4-cost-stats-usage-的分工" aria-label="permalink">¶</a></h2>
 <p>三个命令名字都带"用量"，但数据源根本不同：</p>
 <div class="table-wrap"><table><thead><tr><th>命令</th><th>数据源</th><th>回答</th></tr></thead><tbody><tr><td><code>/cost</code></td><td>会话内内存累加器（API usage 流）</td><td>这次会话花了多少钱、调了多少 token、按 model 怎么分</td></tr>
 <tr><td><code>/stats</code></td><td>磁盘上的 session JSONL 记录</td><td>历史活跃度、streak、每日 token 曲线、model 偏好</td></tr>
@@ -216,7 +216,7 @@ getTokenCounter()?.add(usage.cache_creation_input_tokens ?? <span class="hl-num"
 <p>返回 <code>five_hour / seven_day / seven_day_opus / seven_day_sonnet / extra_usage</code>。这是<strong>订阅服务端</strong>的账本，和本地的 token 计数完全无关。在跨机场景下（<a class="chref" href="../ch17/">ch.17</a>），远端机器产生的 token 也记在服务端账本里、但本地 <code>cost-tracker</code> 看不见 —— 所以"跨机 cost 归属"这个问题 <code>/usage</code> 能答、<code>/cost</code> 答不了。</p>
 <p>三个命令故意不合并。因为一旦合并，用户会误以为它们在回答同一个问题。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/statsCache.ts:14-75</code>）：<code>/stats</code> 的聚合结果有 <code class="ref">stats-cache.json</code> 持久化，但<strong>源 session JSONL 没有任何 rotation</strong>。全仓搜 <code>pruneSessions / deleteOldSessions / rotateSession / maxSessionAge</code> 均无匹配；<code>PersistedStatsCache</code> 类型注释里只承诺"bounded by days / sessions"（聚合层），源文件（<code>~/.claude/projects/&lt;slug&gt;/</code> 下的 JSONL）不会被主动清理。长期跑同一个项目会让这个目录无界增长，要手动删。cache 是"聚合只算增量"的加速层，不是保留策略。</p></blockquote>
-<h2>22.5 <code>costHook</code>：作为消费者</h2>
+<h2 id="22-5-costhook-作为消费者">22.5 <code>costHook</code>：作为消费者<a class="h-anchor" href="#22-5-costhook-作为消费者" aria-label="permalink">¶</a></h2>
 <p><code class="ref">costHook.ts</code> 很短，但承担了两件事：把总账打印到屏幕、保存到 config。它是 Hooks 协议（<a class="chref" href="../ch14/">ch.14</a> 讲协议本身：生命周期、触发点、用户可扩展面）的一个<strong>内置消费者</strong> —— 用协议自身给的数据窗口做"会话退出时做点什么"。</p>
 <figure class="codeblock"><figcaption><span class="file">src/costHook.ts:6-22</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> useCostSummary(
   getFpsMetrics?: () =&gt; <span class="hl-type">FpsMetrics</span> | <span class="hl-kw">undefined</span>,
@@ -237,7 +237,7 @@ getTokenCounter()?.add(usage.cache_creation_input_tokens ?? <span class="hl-num"
 <p>它是 cost 数据的一个<strong>消费端点</strong>，不是 hook 协议本身（那部分协议 / 匹配 / 触发逻辑见 <a class="chref" href="../ch14/">ch.14</a>）。</p>
 <p>注意 <code>hasConsoleBillingAccess()</code> 的守卫 —— 订阅用户在 exit 时也不会看到金额总结，和 <code>/cost</code> 的隐藏策略一致。但 <code>saveCurrentSessionCosts</code> 无条件执行：数据一直在盘上。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/billing.ts:10-43</code>）：<code>hasConsoleBillingAccess()</code> 比"是不是订阅用户"严得多。它依次检查：<code>DISABLE_COST_WARNINGS</code> 环境变量（任一 truthy 值直接关闭）、是不是 <code>isClaudeAISubscriber</code>（是就关）、有没有任何认证源（没有就关）、以及 <strong>org / workspace 角色必须是 <code>admin | billing | workspace_admin | workspace_billing</code></strong>。所以企业 API 用户里"普通成员"角色 exit 时也看不到金额总结，常见的问题"为什么我没看到 cost 总结"通常是 <code>DISABLE_COST_WARNINGS=1</code> 或角色不在白名单里；grandfathered 用户（没重新走一次 re-auth 拿到 role 字段）也会被关掉。底层 <code>saveCurrentSessionCosts</code> 不走这个守卫，数据一直在 config 里。</p></blockquote>
-<h2>22.6 Prompt cache 命中暴露在哪里</h2>
+<h2 id="22-6-prompt-cache-命中暴露在哪里">22.6 Prompt cache 命中暴露在哪里<a class="h-anchor" href="#22-6-prompt-cache-命中暴露在哪里" aria-label="permalink">¶</a></h2>
 <p>cache hit / miss 的统计对调优决策非常直接 —— cache read 便宜 10 倍，谁都想多命中。Claude Code 把这两个数暴露在三个地方：</p>
 <ul>
 <li><code>/cost</code> 输出的每行"按 model"统计里（<code class="ref">src/cost-tracker.ts:213-223</code>），显示 <code>... cache read, ... cache write</code>。</li>
@@ -246,9 +246,9 @@ getTokenCounter()?.add(usage.cache_creation_input_tokens ?? <span class="hl-num"
 </ul>
 <p>用户可以自己用这两个数算命中率。代码没做 "cache hit rate" 的一级字段，避免口径歧义 —— 你定义成 <code>cacheRead / (cacheRead + input)</code>？还是 <code>cacheRead / (cacheRead + cacheCreation + input)</code>？还是只看本轮 <code>current_usage</code> 不看历史累计？三个答案都合理，都各有场景。交给用户在 statusline 的 shell 脚本里自己 <code>jq</code> 算。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/tokens.ts:138-157</code>）：statusline JSON 里的 <code>context_window.current_usage</code> 不是"本会话累积"，而是 <code>getCurrentUsage(messages)</code> 从 messages 数组<strong>尾部向前</strong>找到的<strong>第一条带 usage 的 message 的 raw usage</strong>。换句话说，它是"最近一次 API 响应的原始数字"，每轮 API 响应都会整个换掉。如果你在 shell 脚本里把它当"累积用量"画进度条，compact 之后那一轮 <code>cache_read_input_tokens</code> 会突然暴涨，而下一轮又回落 —— 数字抖得很厉害。"累计"字段在同级的 <code>total_input_tokens / total_output_tokens</code>（从 <code>modelUsage</code> 求和）。这两个字段的区别是官方 Available Data 表里最容易被忽略的一对。</p></blockquote>
-<h2>22.7 Statusline：shell + stdin 替代 DSL</h2>
+<h2 id="22-7-statusline-shell-stdin-替代-dsl">22.7 Statusline：shell + stdin 替代 DSL<a class="h-anchor" href="#22-7-statusline-shell-stdin-替代-dsl" aria-label="permalink">¶</a></h2>
 <p>这是本章最想让读者抄走的一个设计点。</p>
-<h3>22.7.1 它不是模板</h3>
+<h3 id="22-7-1-它不是模板">22.7.1 它不是模板<a class="h-anchor" href="#22-7-1-它不是模板" aria-label="permalink">¶</a></h3>
 <p>首先澄清：<code>/statusline</code> 这个斜杠命令<strong>不是渲染命令</strong>。它是<strong>配置向导</strong>。</p>
 <figure class="codeblock"><figcaption><span class="file">src/commands/statusline.tsx:4-22</span><span class="lang">tsx</span></figcaption><pre><code class="language-tsx"><span class="hl-kw">const</span> statusline = {
   <span class="hl-kw">type</span>: &#x27;prompt&#x27;,
@@ -265,7 +265,7 @@ getTokenCounter()?.add(usage.cache_creation_input_tokens ?? <span class="hl-num"
   },
 }</code></pre></figure>
 <p>它做的事是：派一个 <code>statusline-setup</code> sub-agent，用户说"我想要 model + 分支 + context %"，sub-agent 去读用户 shell 的 PS1、生成一段 shell 命令、写到 <code class="ref">~/.claude/settings.json</code> 的 <code>statusLine</code> 字段。真正 runtime 的逻辑在别处。</p>
-<h3>22.7.2 运行模型：JSON 到 stdin，stdout 到屏幕</h3>
+<h3 id="22-7-2-运行模型-json-到-stdin-stdout-到屏幕">22.7.2 运行模型：JSON 到 stdin，stdout 到屏幕<a class="h-anchor" href="#22-7-2-运行模型-json-到-stdin-stdout-到屏幕" aria-label="permalink">¶</a></h3>
 <p>用户在 <code class="ref">settings.json</code> 里配的是这样一段：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">json</span></figcaption><pre><code class="language-json">{
   &quot;statusLine&quot;: {
@@ -297,7 +297,7 @@ getTokenCounter()?.add(usage.cache_creation_input_tokens ?? <span class="hl-num"
 <span class="hl-kw">return</span> <span class="hl-kw">undefined</span></code></pre></figure>
 <p>5 秒超时、退出码非 0 丢弃 stdout、trust 未通过直接跳过。最终由 Ink 把 stdout 原样贴到屏幕（<a class="chref" href="../ch21/">ch.21</a> 讲 Ink 的渲染模型）。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/hooks.ts:4587</code> + <code class="ref">src/utils/settings/types.ts:550-556</code>）：statusline 子进程硬超时 5 秒，<strong>且 <code>settings.json -&gt; statusLine</code> schema 根本没有 <code>timeout</code> 字段</strong>（schema 只允许 <code>type / command / padding</code> 三项）。<code>timeoutMs: number = 5000</code> 是 <code>executeStatusLineCommand</code> 的默认形参，外部无配置点可覆盖它。超时时走 <code>AbortSignal</code>，<code>result.aborted</code> 为 true，函数直接 <code>return undefined</code> —— Ink 不刷新、<strong>屏幕上保留上一次的 statusline 文本</strong>，没有 "timeout" 视觉提示。想在 statusline 里跑 <code>gh pr status</code> / <code>kubectl get pods</code> / <code>git fetch</code> 这类偶尔超 5 秒的命令，这里必踩。解决办法是在命令里用更短超时的替代品（本地缓存 / 预跑后台任务写到临时文件）。</p></blockquote>
-<h3>22.7.3 JSON 入参：暴露什么变量</h3>
+<h3 id="22-7-3-json-入参-暴露什么变量">22.7.3 JSON 入参：暴露什么变量<a class="h-anchor" href="#22-7-3-json-入参-暴露什么变量" aria-label="permalink">¶</a></h3>
 <p>这是"模板语言"和"stdin JSON"的分水岭 —— 模板语言会让你挑一个变量语法（mustache 还是 printf），stdin JSON 让你直接给用户一份 schema。Claude Code 给的 schema 分六类，全在 <code>buildStatusLineCommandInput</code> 里拼（<code class="ref">src/components/StatusLine.tsx:65-126</code>）：</p>
 <ul>
 <li><strong>身份</strong>：<code>session_id</code>、<code>session_name</code>、<code>version</code>、<code>cwd</code>、<code>transcript_path</code></li>
@@ -321,7 +321,7 @@ getTokenCounter()?.add(usage.cache_creation_input_tokens ?? <span class="hl-num"
 MODEL=$(echo &quot;$input&quot; | jq -r &#x27;.model.display_name&#x27;)
 REMAIN=$(echo &quot;$input&quot; | jq -r &#x27;.context_window.remaining_percentage // empty&#x27;)
 echo &quot;[$MODEL] ${REMAIN}% remaining&quot;</code></pre></figure>
-<h3>22.7.4 触发：四路事件 + 300ms debounce + Abort</h3>
+<h3 id="22-7-4-触发-四路事件-300ms-debounce-abort">22.7.4 触发：四路事件 + 300ms debounce + Abort<a class="h-anchor" href="#22-7-4-触发-四路事件-300ms-debounce-abort" aria-label="permalink">¶</a></h3>
 <p>性能敏感的问题：每次都 fork 子进程很贵，不能每帧刷。Claude Code 的调度是 React 驱动的：</p>
 <figure class="codeblock"><figcaption><span class="file">src/components/StatusLine.tsx:237-246</span><span class="lang">tsx</span></figcaption><pre><code class="language-tsx">useEffect(() =&gt; {
   <span class="hl-kw">if</span> (lastAssistantMessageId !== previousStateRef.current.messageId
@@ -356,7 +356,7 @@ abortControllerRef.current = controller</code></pre></figure>
 <p>超时硬限 5 秒（<code class="ref">src/utils/hooks.ts:4587</code>）。合起来是<strong>四重保护</strong>：事件驱动（不轮询）+ 300ms debounce（不抖动）+ Abort（不堆积）+ 5s timeout（不卡死）。</p>
 <p>官方 docs 把这段说得很直白（来源：<a href="https://code.claude.com/docs/en/statusline" rel="noreferrer">https://code.claude.com/docs/en/statusline</a>，访问于 2026-04-19）："Your script runs after each new assistant message, when the permission mode changes, or when vim mode toggles. Updates are debounced at 300ms ... If a new update triggers while your script is still running, the in-flight execution is cancelled."</p>
 <p>对时间类场景（例如显示一个时钟），docs 另有 <code>refreshInterval</code> 秒级定时选项。</p>
-<h3>22.7.5 可迁移的点</h3>
+<h3 id="22-7-5-可迁移的点">22.7.5 可迁移的点<a class="h-anchor" href="#22-7-5-可迁移的点" aria-label="permalink">¶</a></h3>
 <p>做出"shell + stdin JSON"的判断，设计者多半考虑过 alternatives：</p>
 <ul>
 <li><strong>自研 DSL</strong>（mustache-ish）：省 fork；代价是官方得维护 grammar、sandbox、错误诊断，扩展字段要同步文档，每个新 feature 要考虑"模板能不能打到"。</li>
@@ -364,8 +364,8 @@ abortControllerRef.current = controller</code></pre></figure>
 <li><strong>当前方案</strong>：fork 一个子进程、喂 JSON、接 stdout。扩展 = 加字段，用户学成本 = <code>jq</code> 的 shell 用法。零 sandbox（反正跑的是用户的 shell、用户自己的权限）。零维护。</li>
 </ul>
 <p>这个取舍可以迁移到很多"需要给用户一个'小窗口'展示实时数据"的场景：git hook、CI 状态行、IDE 左下角。只要你的数据本来就能 JSON 化、只要刷新不是每秒级，这个模式都可用。</p>
-<h2>22.8 <code>/heapdump</code>：内存取证</h2>
-<h3>22.8.1 捞什么</h3>
+<h2 id="22-8-heapdump-内存取证">22.8 <code>/heapdump</code>：内存取证<a class="h-anchor" href="#22-8-heapdump-内存取证" aria-label="permalink">¶</a></h2>
+<h3 id="22-8-1-捞什么">22.8.1 捞什么<a class="h-anchor" href="#22-8-1-捞什么" aria-label="permalink">¶</a></h3>
 <p>Ant-only 命令（<code class="ref">src/commands/heapdump/index.ts:7</code> 标 <code>isHidden: true</code>）。核心在 <code class="ref">src/utils/heapDumpService.ts</code>。<code>captureMemoryDiagnostics</code> 收集：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/heapDumpService.ts:92-111</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> usage = process.memoryUsage()          <span class="hl-cm">// heapUsed, heapTotal, external, arrayBuffers, rss</span>
 <span class="hl-kw">const</span> heapStats = getHeapStatistics()        <span class="hl-cm">// heapSizeLimit, detachedContexts, ...</span>
@@ -379,7 +379,7 @@ abortControllerRef.current = controller</code></pre></figure>
 )._getActiveRequests().length</code></pre></figure>
 <p><code>_getActiveHandles</code> / <code>_getActiveRequests</code> 是 Node 的 undocumented 内部 API —— 代码注释 "internal APIs but stable" 交待了取舍。</p>
 <p>Linux 还会尝试读 <code>/proc/self/fd</code> 和 <code>/proc/self/smaps_rollup</code>（<code class="ref">heapDumpService.ts:113-127</code>），识别 fd 泄漏和拿到 RSS 明细。</p>
-<h3>22.8.2 自动嫌疑人识别</h3>
+<h3 id="22-8-2-自动嫌疑人识别">22.8.2 自动嫌疑人识别<a class="h-anchor" href="#22-8-2-自动嫌疑人识别" aria-label="permalink">¶</a></h3>
 <p>dump 不只是导出原料，还做<strong>一次初步诊断</strong>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/heapDumpService.ts:134-160</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (heapStats.number_of_detached_contexts &gt; <span class="hl-num">0</span>)
   potentialLeaks.push(<span class="hl-str">`${...} detached context(s) - possible iframe/context leak`</span>)
@@ -392,7 +392,7 @@ abortControllerRef.current = controller</code></pre></figure>
 <span class="hl-kw">if</span> (openFileDescriptors &amp;&amp; openFileDescriptors &gt; <span class="hl-num">500</span>)
   potentialLeaks.push(<span class="hl-str">`${openFileDescriptors} open file descriptors - possible file/socket leak`</span>)</code></pre></figure>
 <p>结果写到 <code>diagnostics.analysis.potentialLeaks</code> 数组里，随产物一起落盘。打开 <code class="ref">diagnostics.json</code> 第一眼就能看到"嫌疑人清单" —— 不需要先把 snapshot 加载到 Chrome DevTools 再满屏翻保留树。</p>
-<h3>22.8.3 先写 diagnostics、再写 snapshot</h3>
+<h3 id="22-8-3-先写-diagnostics-再写-snapshot">22.8.3 先写 diagnostics、再写 snapshot<a class="h-anchor" href="#22-8-3-先写-diagnostics-再写-snapshot" aria-label="permalink">¶</a></h3>
 <p>注释把这里的取舍讲清楚了：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/heapDumpService.ts:217-220</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// Diagnostics are written BEFORE the heap snapshot is captured, because the</span>
 <span class="hl-cm">// V8 heap snapshot serialization can crash for very large heaps. By writing</span>
@@ -405,7 +405,7 @@ abortControllerRef.current = controller</code></pre></figure>
 </ul>
 <p>文件权限 <code>0o600</code>，避免多用户机上其他账号看到你的 heap 内容。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/heapDumpService.ts:243-245</code>）：<code>suffix = dumpNumber &gt; 0 ? &#x27;-dump${dumpNumber}&#x27; : &#x27;&#x27;</code>。手动触发（<code>/heapdump</code>）时 <code>dumpNumber = 0</code>，suffix 是空串 —— 也就是说<strong>同一 session 里连按两次 <code>/heapdump</code>，两次的文件名都是 <code>&lt;sessionId&gt;.heapsnapshot</code>，后一次直接覆盖前一次</strong>。自动 dump 路径才会传 <code>dumpNumber &gt; 0</code>，生成 <code>-dump1 / -dump2</code> 后缀。想对比两次手动快照（例如 "跑一段长任务前后的 heap"），只能先手动把上一次重命名挪走，再跑第二次。</p></blockquote>
-<h3>22.8.4 Bun vs Node 分支</h3>
+<h3 id="22-8-4-bun-vs-node-分支">22.8.4 Bun vs Node 分支<a class="h-anchor" href="#22-8-4-bun-vs-node-分支" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/utils/heapDumpService.ts:284-303</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">async</span> <span class="hl-kw">function</span> writeHeapSnapshot(filepath: string): <span class="hl-type">Promise</span>&lt;<span class="hl-kw">void</span>&gt; {
   <span class="hl-kw">if</span> (<span class="hl-kw">typeof</span> <span class="hl-type">Bun</span> !== &#x27;<span class="hl-kw">undefined</span>&#x27;) {
     writeFileSync(filepath, <span class="hl-type">Bun</span>.generateHeapSnapshot(&#x27;v8&#x27;, &#x27;arraybuffer&#x27;), {
@@ -419,7 +419,7 @@ abortControllerRef.current = controller</code></pre></figure>
   <span class="hl-kw">await</span> pipeline(heapSnapshotStream, writeStream)
 }</code></pre></figure>
 <p>Node 用流式 pipe（流起来内存峰值低）；Bun 的 <code>generateHeapSnapshot</code> 不是流式，强制同步写，写完立刻 <code>Bun.gc(true)</code> 尝试回收那份临时 ArrayBuffer。同步写的理由在 comment 里：避免跨 worker 线程克隆大字符串。</p>
-<h3>22.8.5 什么时候提示用户跑</h3>
+<h3 id="22-8-5-什么时候提示用户跑">22.8.5 什么时候提示用户跑<a class="h-anchor" href="#22-8-5-什么时候提示用户跑" aria-label="permalink">¶</a></h3>
 <p>Claude Code 不会在内存高时<strong>自动</strong> dump（至少在本恢复仓库里看到的路径是这样），但会把 <code>/heapdump</code> 命令<strong>推到用户眼前</strong>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/hooks/useMemoryUsage.ts:11-36</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">HIGH_MEMORY_THRESHOLD</span> = <span class="hl-num">1.5</span> * <span class="hl-num">1024</span> * <span class="hl-num">1024</span> * <span class="hl-num">1024</span>
 <span class="hl-kw">const</span> <span class="hl-type">CRITICAL_MEMORY_THRESHOLD</span> = <span class="hl-num">2.5</span> * <span class="hl-num">1024</span> * <span class="hl-num">1024</span> * <span class="hl-num">1024</span>
@@ -450,11 +450,11 @@ abortControllerRef.current = controller</code></pre></figure>
 <p>注意这组件 ant-only 门控在 hook 之前（<code class="ref">MemoryUsageIndicator.tsx:10-12</code>）：<code>if (&quot;external&quot; !== &#x27;ant&#x27;) return null</code> 让 bundler 把整块 dead-code-eliminate，external build 根本不装 polling。</p>
 <p><strong>只提示，不强制</strong>，是这里的关键。自动 dump 一个 2 GB 的 heap 会把磁盘占满、也会让卡住的进程更卡。把决定权交给工程师。</p>
 <blockquote><p>源码里 <code>trigger: &#x27;manual&#x27; | &#x27;auto-1.5GB&#x27;</code> 枚举存在（<code class="ref">heapDumpService.ts:89</code>）但本恢复仓库没有直接把 polling 连到 <code>performHeapDump(&#x27;auto-1.5GB&#x27;)</code>，可能是恢复期 shim 遗漏。本章按"当前可验证的行为"写成只提示不自动触发。</p></blockquote>
-<h2>22.9 <code>/debug-tool-call</code>：在本仓库是 stub</h2>
+<h2 id="22-9-debug-tool-call-在本仓库是-stub">22.9 <code>/debug-tool-call</code>：在本仓库是 stub<a class="h-anchor" href="#22-9-debug-tool-call-在本仓库是-stub" aria-label="permalink">¶</a></h2>
 <figure class="codeblock"><figcaption><span class="file">src/commands/debug-tool-call/index.js:1</span><span class="lang">js</span></figcaption><pre><code class="language-js"><span class="hl-kw">export</span> <span class="hl-kw">default</span> { isEnabled: () =&gt; <span class="hl-kw">false</span>, isHidden: <span class="hl-kw">true</span>, name: &#x27;stub&#x27; };</code></pre></figure>
 <p>它被列在 <code class="ref">src/commands.ts:225-254</code> 的 <code>INTERNAL_ONLY_COMMANDS</code> 里，external build 会完整剔除。恢复期的仓库里只看到壳。从命令名和 ant-only 的定位看，合理的猜测是"摊开最近一次 / 指定一次 tool 调用的完整 payload、response、耗时"的内部调试面板，对应 Agent Loop（<a class="chref" href="../ch03/">ch.03</a>）和 Tool system（<a class="chref" href="../ch08/">ch.08</a>）里本来不完全透明的内部状态 —— 但此章<strong>不按猜测写</strong>。如果你拿到 ant 构建的源码，请以真实实现为准。</p>
 <p>公开可观测面上能用的等价数据：<code>tengu_tool_use_success / error / cancelled</code> 这组分析事件（OTel / analytics 侧）记录了每次 tool 调用的结果。</p>
-<h2>22.10 <code>/doctor</code>：诊断，不自愈</h2>
+<h2 id="22-10-doctor-诊断-不自愈">22.10 <code>/doctor</code>：诊断，不自愈<a class="h-anchor" href="#22-10-doctor-诊断-不自愈" aria-label="permalink">¶</a></h2>
 <p><code>/doctor</code> 要回答一个务实的问题：<strong>为什么我的 Claude Code 不正常</strong>。诊断项很杂，但设计模式只有一个 —— <code>{issue, fix}</code> 对：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/doctorDiagnostic.ts:54-71</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">DiagnosticInfo</span> = {
   installationType: <span class="hl-type">InstallationType</span>
@@ -493,7 +493,7 @@ abortControllerRef.current = controller</code></pre></figure>
 <p><code class="ref">src/screens/Doctor.tsx</code>（574 行）里还追加：agent 解析失败、plugin 初始化错误、CLAUDE.md 过大警告、权限规则不可达、MCP 解析错误、sandbox 诊断、keybinding 冲突、版本锁。</p>
 <p>这是一个<strong>长尾清单</strong>，几乎每加一个 feature 就得加一条 <code>/doctor</code> 检查。把 schema 卡死成 <code>{issue, fix}</code> 的好处就是：写新检查的人没得选，必须同时想好"怎么修"。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/doctorDiagnostic.ts:573-586</code>）：<code>/doctor</code> <strong>不做运行时的 network 探测</strong>（没有 "能不能连上 api.anthropic.com"、"OAuth token 还有效吗" 这类主动 probe）。它只做静态检查：安装路径 / PATH / ripgrep 能不能找到 / npm-global 下 <code>~/.local/bin</code> 的写权限（<code>checkGlobalInstallPermissions</code> 探测的是"能不能自动更新"，不是"API 能不能通"）/ <code class="ref">managed-settings.json</code> 的 forwards-compat / Linux sandbox 下 glob 规则的退化。想诊断"为什么连不上后端"，<code>/doctor</code> 不会告诉你；得看 <code>tengu_api_error</code> 分析事件或 REPL 里的 error toast。这是 <code>/doctor</code> 的设计边界：<strong>诊断本地安装，不诊断服务侧</strong>。</p></blockquote>
-<h2>22.11 设计取舍</h2>
+<h2 id="22-11-设计取舍">22.11 设计取舍<a class="h-anchor" href="#22-11-设计取舍" aria-label="permalink">¶</a></h2>
 <p>把前面讲的拧成几条可以带走的：</p>
 <ol>
 <li><strong>只信 API response 的 usage，不做本地估算</strong>  避免了"本地 tokenizer 和 Anthropic 不一致"的长期对账问题。代价是不能在请求发出前知道要花多少钱。Claude Code 判定这个代价可接受 —— 未知 model 走兜底 + warning。</li>
@@ -505,7 +505,7 @@ abortControllerRef.current = controller</code></pre></figure>
 <li><strong>高内存时只提示、不自动 dump</strong>  2 GB heap 的自动 dump 会把磁盘占满、把卡住的进程更卡。交给工程师按 <code>/heapdump</code> 决定。</li>
 <li><strong><code>/cost</code> 对订阅用户隐藏但数据仍累加</strong>  UI 和底层数据分离。底层不受上层策略影响，是正确的分层。</li>
 </ol>
-<h2>22.12 可迁移的点</h2>
+<h2 id="22-12-可迁移的点">22.12 可迁移的点<a class="h-anchor" href="#22-12-可迁移的点" aria-label="permalink">¶</a></h2>
 <ul>
 <li>把"三种视角不同"的命令合并要慎重。先问"它们回答的问题是同一个吗"。</li>
 <li>给外部脚本 / hook 一个数据窗口时，首选<strong>喂 JSON 到 stdin</strong>，而不是自己发明模板语法。把 schema 文档化、版本化，比自研 DSL 容易维护。</li>

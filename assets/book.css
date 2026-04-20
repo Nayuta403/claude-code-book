@@ -211,6 +211,8 @@ h1.chap-title .cn {
   margin: var(--2xl) 0 var(--md);
   padding-bottom: 10px;
   border-bottom: 1px solid var(--mist);
+  scroll-margin-top: 72px;  /* keep room below the sticky showcase-bar */
+  position: relative;
 }
 .article .prose h2::before {
   content: "§ ";
@@ -233,6 +235,38 @@ h1.chap-title .cn {
   letter-spacing: -0.01em;
   color: var(--ink);
   margin: var(--xl) 0 var(--sm);
+  scroll-margin-top: 72px;
+  position: relative;
+}
+.article .prose h4 { scroll-margin-top: 72px; position: relative; }
+
+/* pilcrow permalink anchor on headings, visible on hover */
+.article .prose .h-anchor {
+  display: inline-block;
+  margin-left: 0.35em;
+  color: var(--rose);
+  font-family: var(--body);
+  font-style: normal;
+  font-weight: 500;
+  font-size: 0.62em;
+  text-decoration: none;
+  border-bottom: none;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.18s var(--ease-out), transform 0.18s var(--ease-out);
+  vertical-align: 0.12em;
+  letter-spacing: 0.02em;
+}
+.article .prose h2:hover .h-anchor,
+.article .prose h3:hover .h-anchor,
+.article .prose h4:hover .h-anchor,
+.article .prose .h-anchor:focus-visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+/* On touch devices (no hover), keep the anchor lightly visible */
+@media (hover: none) {
+  .article .prose .h-anchor { opacity: 0.35; transform: none; }
 }
 
 .article .prose h4 {

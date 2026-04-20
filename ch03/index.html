@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2>1. 用户看到的是什么</h2>
+<h2 id="1-用户看到的是什么">1. 用户看到的是什么<a class="h-anchor" href="#1-用户看到的是什么" aria-label="permalink">¶</a></h2>
 <p class="drop">你在终端敲一条 "把 <code class="ref">src/utils/foo.ts</code> 里的 <code>memoize</code> 换成 <code>lodash/memoize</code>"，按下回车。</p>
 <p>之后发生的事可以写成一张时间轴：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">T+0.0s   你的消息进入 processUserInput
@@ -52,7 +52,7 @@ T+2.4s   Edit 工具完成，tool_result 喂回
 T+3.0s   模型产出最终 &quot;Done. Replaced the local memoize...&quot; 文本，end_turn
 T+3.1s   result 消息 yield，UI 收摊</code></pre></figure>
 <p>屏幕上看到的 "tool_use → tool_result → assistant → tool_use → ..." 这条流水线，就是本章要拆开讲的东西。它在 Anthropic 官方文档里是 5 行伪码；在 Claude Code 里是一个 1729 行的 async generator（<code class="ref">src/query.ts</code>）加上 1295 行的包装类（<code class="ref">src/QueryEngine.ts</code>），共同处理"5 行伪码没告诉你"的那些问题：流式工具执行、模型 fallback、上下文超限、输出被截断、stop hook 反复拦截、用户提前打断、read-only 工具并发、权限请求等待。</p>
-<h2>2. 为什么挑这个讲</h2>
+<h2 id="2-为什么挑这个讲">2. 为什么挑这个讲<a class="h-anchor" href="#2-为什么挑这个讲" aria-label="permalink">¶</a></h2>
 <p>官方文档 How tool use works 页面（来源：<a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/how-tool-use-works" rel="noreferrer">https://platform.claude.com/docs/en/agents-and-tools/tool-use/how-tool-use-works</a>，访问于 2026-04-19）把 client-tool agent loop 描述成：</p>
 <blockquote><ol>
 <li>Send a request with your <code>tools</code> array and the user message.</li>
@@ -72,14 +72,14 @@ T+3.1s   result 消息 yield，UI 收摊</code></pre></figure>
 <tr><td>Sub-agent 嵌套的 depth/chainId 追踪</td><td>queryTracking 字段每次迭代 depth++</td></tr>
 <tr><td>权限被拒绝（详见 <a class="chref" href="../ch09/">ch.09</a>）</td><td>合成 "User rejected" 的 tool_result，循环照常继续</td></tr></tbody></table></div>
 <p>这里没有单独"优美"的点，值得借鉴的是<strong>如何把这些横切关注点拼成一条可读的主干</strong>。本章要讲清：循环的每次迭代做什么、状态在哪里、出口有几个、每个错误恢复路径插在哪、取舍是什么。</p>
-<h2>3. 两层入口：QueryEngine 与 query()</h2>
+<h2 id="3-两层入口-queryengine-与-query">3. 两层入口：QueryEngine 与 query()<a class="h-anchor" href="#3-两层入口-queryengine-与-query" aria-label="permalink">¶</a></h2>
 <p>Claude Code 把"一条 agent 会话"拆成两层：</p>
 <ul>
 <li><strong>外层 <code>QueryEngine</code></strong>（<code class="ref">src/QueryEngine.ts:184</code>）—— session 级对象，每 conversation 一个。持有跨 turn 不变的东西：<code>mutableMessages</code>、<code>readFileState</code>、<code>abortController</code>、<code>totalUsage</code>、<code>permissionDenials</code>、<code>discoveredSkillNames</code>。</li>
 <li><strong>内层 <code>query()</code></strong>（<code class="ref">src/query.ts:219</code>）—— 纯 async generator。只管"消息进、消息出"，不接 UI 状态、不管 session 存储。</li>
 </ul>
 <p>这个分层的意义体现在 query() 的 reusability：它既被 <code>QueryEngine.submitMessage</code> 调用（主线程），也被 sub-agent 调用（<code class="ref">src/services/tools/toolExecution.ts</code> 的 AgentTool 起一个子 query，详见 <a class="chref" href="../ch04/">ch.04</a>），也被 compact 子任务调用（querySource='compact'，详见 <a class="chref" href="../ch07/">ch.07</a>）。分层因此不是可有可无。</p>
-<h3>QueryEngine 的职责</h3>
+<h3 id="queryengine-的职责">QueryEngine 的职责<a class="h-anchor" href="#queryengine-的职责" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/QueryEngine.ts:184-207</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">class</span> <span class="hl-type">QueryEngine</span> {
   <span class="hl-kw">private</span> config: <span class="hl-type">QueryEngineConfig</span>
   <span class="hl-kw">private</span> mutableMessages: <span class="hl-type">Message</span>[]
@@ -106,9 +106,9 @@ T+3.1s   result 消息 yield，UI 收摊</code></pre></figure>
 <span class="hl-cm">//   getTotalCost() &gt;= maxBudgetUsd              → error_max_budget_usd  (:972-1002)</span>
 <span class="hl-cm">//   structured output 调用次数 &gt;= maxRetries    → error_max_structured_output_retries (:1004-1048)</span></code></pre></figure>
 <p>三者分别对应 "轮数上限"、"美元预算上限"、"结构化输出重试上限"。它们都走同一条 result 通道（带 is_error=true），但是 subtype 不同，让 SDK consumer 能分类处理。取舍：这三个 check 本可以塞进 query() 里，放在 QueryEngine 里的原因是 query() 不该知道"美元"或"JSON schema 重试"这种应用层概念。query() 只负责把消息往外 yield，QueryEngine 在外面决定何时喊停。</p>
-<h3>ask() 一次性包装</h3>
+<h3 id="ask-一次性包装">ask() 一次性包装<a class="h-anchor" href="#ask-一次性包装" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/QueryEngine.ts:1186-1295</code> 的 <code>ask()</code> 是无状态包装：给一条 prompt、构造 QueryEngine、走 submitMessage、出结果后把 readFileCache 写回。非交互式 / SDK 一次性调用用这条路径（Agent SDK 如何把 <code>ask()</code> 组合成面向外部消费者的 API 详见 <a class="chref" href="../ch23/">ch.23</a>）。</p>
-<h3>query() 的 wrapper</h3>
+<h3 id="query-的-wrapper">query() 的 wrapper<a class="h-anchor" href="#query-的-wrapper" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/query.ts:219-239</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span>* query(
   params: <span class="hl-type">QueryParams</span>,
 ): <span class="hl-type">AsyncGenerator</span>&lt;...&gt; {
@@ -121,8 +121,8 @@ T+3.1s   result 消息 yield，UI 收摊</code></pre></figure>
 }</code></pre></figure>
 <p>这层薄 wrapper 做一件事：正常返回时通知"这些 queued 命令完成了"。异常或 <code>.return()</code>（提前结束 generator）时跳过这一步。注释（<code class="ref">src/query.ts:231-234</code>）明确这是<strong>故意的 asymmetric signal</strong>：调用方能从"有 started 但无 completed"推断出 turn 失败。</p>
 <p>真正的主循环是 <code>queryLoop</code>（<code class="ref">src/query.ts:241-1728</code>）。</p>
-<h2>4. 核心数据结构</h2>
-<h3>QueryParams</h3>
+<h2 id="4-核心数据结构">4. 核心数据结构<a class="h-anchor" href="#4-核心数据结构" aria-label="permalink">¶</a></h2>
+<h3 id="queryparams">QueryParams<a class="h-anchor" href="#queryparams" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/query.ts:181-199</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">QueryParams</span> = {
   messages: <span class="hl-type">Message</span>[]
   systemPrompt: <span class="hl-type">SystemPrompt</span>
@@ -143,7 +143,7 @@ T+3.1s   result 消息 yield，UI 收摊</code></pre></figure>
 <li><code>deps?: QueryDeps</code> —— 依赖注入口子。默认 production 实现在 <code class="ref">src/query/deps.ts:33-40</code>，覆盖了 <code>callModel</code> / <code>microcompact</code> / <code>autocompact</code> / <code>uuid</code>。注释（<code class="ref">src/query/deps.ts:7-20</code>）交代了动机："Passing a <code>deps</code> override into QueryParams lets tests inject fakes directly instead of spyOn-per-module — the most common mocks (callModel, autocompact) are each spied in 6-8 test files today with module-import-and-spy boilerplate."</li>
 <li><code>taskBudget?: { total: number }</code> —— 注意这不是用户侧 <code>+500k</code> 预算。注释（<code class="ref">src/query.ts:192-197</code>）明确："API task_budget (output_config.task_budget, beta task-budgets-2026-03-13). Distinct from the tokenBudget +500k auto-continue feature. <code>total</code> is the budget for the whole agentic turn; <code>remaining</code> is computed per iteration from cumulative API usage."</li>
 </ul>
-<h3>State</h3>
+<h3 id="state">State<a class="h-anchor" href="#state" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/query.ts:203-217</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">type</span> <span class="hl-type">State</span> = {
   messages: <span class="hl-type">Message</span>[]
   toolUseContext: <span class="hl-type">ToolUseContext</span>
@@ -160,7 +160,7 @@ T+3.1s   result 消息 yield，UI 收摊</code></pre></figure>
 <blockquote><p>Why the previous iteration continued. Undefined on first iteration. Lets tests assert recovery paths fired without inspecting message contents.</p></blockquote>
 <p>把"怎么进到当前迭代的"写进 state，测试不用 parse messages 就能判断路径是否走过。这是可以直接抄的做法。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code>src/query.ts:216, 1092</code>）：<code>state.transition</code> 字段<strong>只被内部逻辑读过一次</strong>（1092 行 <code>collapse_drain_retry</code> 的防重入判断），<strong>既不进 logEvent，也不写进任何 yield 出去的消息</strong>。意味着从 telemetry 或外部 SDK 消费侧完全看不到"循环因为什么重试了"——要排查得靠进程内调试或 reactive compact / max_output_tokens 自己 logEvent 的那几条辅助事件。注释把这个字段定位成"for tests"，生产侧基本是黑盒。</p></blockquote>
-<h3>Terminal / Continue —— 类型定义在哪里</h3>
+<h3 id="terminal-continue-类型定义在哪里">Terminal / Continue —— 类型定义在哪里<a class="h-anchor" href="#terminal-continue-类型定义在哪里" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/query.ts:104</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">import</span> <span class="hl-kw">type</span> { <span class="hl-type">Terminal</span>, <span class="hl-type">Continue</span> } <span class="hl-kw">from</span> &#x27;./query/transitions.js&#x27;</code></pre></figure>
 <p>但 <code class="ref">src/query/transitions.ts:1-3</code> 实际只有：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> transitionQueryState&lt;<span class="hl-type">T</span>&gt;(value: <span class="hl-type">T</span>): <span class="hl-type">T</span> {
@@ -168,7 +168,7 @@ T+3.1s   result 消息 yield，UI 收摊</code></pre></figure>
 }</code></pre></figure>
 <p>没有 <code>Terminal</code> 和 <code>Continue</code> 的 export。<code>import type</code> 在 TypeScript 编译后被 elide 掉了，所以运行时无影响；但这说明原始实现里这个模块承担了更多职责（见 <a class="chref" href="../ch03/">ch.03</a> open-questions #1 的讨论：该模块为恢复期 shim，真实实现可能不同）。</p>
 <p>真实的 Terminal / Continue union 要从散落的 return/continue 处反推。下一节列出这张表。</p>
-<h3>状态机顶点：12 个 Terminal + 7 个 Continue</h3>
+<h3 id="状态机顶点-12-个-terminal-7-个-continue">状态机顶点：12 个 Terminal + 7 个 Continue<a class="h-anchor" href="#状态机顶点-12-个-terminal-7-个-continue" aria-label="permalink">¶</a></h3>
 <p>通过 grep <code>reason: &#x27;...&#x27;</code> 扫出的所有字面量（<code class="ref">src/query.ts</code>）：</p>
 <p><strong>Terminal（12 种，出现在 return 语句里）</strong>：</p>
 <div class="table-wrap"><table><thead><tr><th>reason</th><th>行号</th><th>触发点</th></tr></thead><tbody><tr><td><code>blocking_limit</code></td><td>646</td><td>tokens 超过硬阻塞上限且 autocompact 关闭</td></tr>
@@ -192,9 +192,9 @@ T+3.1s   result 消息 yield，UI 收摊</code></pre></figure>
 <tr><td><code>token_budget_continuation</code></td><td>1338</td><td>用户 turn 预算未满，nudge 后继续</td></tr>
 <tr><td><code>next_turn</code></td><td>1725</td><td>正常的下一轮（需要 tool_result 喂回）</td></tr></tbody></table></div>
 <p>总共 19 个状态机顶点。这 19 个 reason 不是随意枚举：每个都对应一种<strong>曾经在生产里出过问题、需要能从日志里区分开的情况</strong>。</p>
-<h2>5. 主循环的 8 个阶段</h2>
+<h2 id="5-主循环的-8-个阶段">5. 主循环的 8 个阶段<a class="h-anchor" href="#5-主循环的-8-个阶段" aria-label="permalink">¶</a></h2>
 <p><code>queryLoop</code> 的 while(true) 每次迭代分 8 个阶段。不是所有阶段都 yield 消息，也不是所有阶段都会执行（有 feature gate 和早退出）。按执行顺序列：</p>
-<h3>阶段 1：迭代入口</h3>
+<h3 id="阶段-1-迭代入口">阶段 1：迭代入口<a class="h-anchor" href="#阶段-1-迭代入口" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/query.ts:307-337（简化）</span>
 <span class="hl-kw">while</span> (<span class="hl-kw">true</span>) {
   <span class="hl-kw">let</span> { toolUseContext } = state
@@ -207,7 +207,7 @@ T+3.1s   result 消息 yield，UI 收摊</code></pre></figure>
 }</code></pre></figure>
 <p>三件事：destructure state（<code>toolUseContext</code> 是唯一会在迭代内被重赋值的，其他都是只读）、起动 skill discovery 的异步 prefetch、yield <code>stream_request_start</code> 让 UI 更新状态。</p>
 <p><strong>skill prefetch 的设计值得一看</strong>（<code class="ref">src/query.ts:331-335</code>）：它启动后不 await，而是让整次 API call 的时间（5-30s）掩盖 prefetch 的延迟。真正 await 是在阶段 8 的末尾，当 prefetch 已经 settled 时直接取结果，否则跳过（<code class="ref">src/query.ts:1599-1614</code>，<code>pendingMemoryPrefetch.settledAt !== null</code>）。这个 "start → hide under IO → consume when settled" 的模式在本章多处出现（memory prefetch、tool use summary）。</p>
-<h3>阶段 2：四段式裁剪</h3>
+<h3 id="阶段-2-四段式裁剪">阶段 2：四段式裁剪<a class="h-anchor" href="#阶段-2-四段式裁剪" aria-label="permalink">¶</a></h3>
 <p>消息在进入模型之前要裁剪。Claude Code 用四个机制，顺序不能换：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/query.ts:365-447（精简）</span>
 <span class="hl-kw">let</span> messagesForQuery = [...getMessagesAfterCompactBoundary(messages)]
@@ -241,7 +241,7 @@ messagesForQuery = microcompactResult.messages
 <li>contextCollapse 处理"一段历史可以折叠成一句话"</li>
 </ul>
 <p>四条流水线都跑完了还不够小才走阶段 3。</p>
-<h3>阶段 3：AutoCompact</h3>
+<h3 id="阶段-3-autocompact">阶段 3：AutoCompact<a class="h-anchor" href="#阶段-3-autocompact" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/query.ts:454-543</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> { compactionResult, consecutiveFailures } = <span class="hl-kw">await</span> deps.autocompact(
   messagesForQuery, toolUseContext, { systemPrompt, ... }, querySource, tracking, snipTokensFreed,
 )
@@ -263,7 +263,7 @@ messagesForQuery = microcompactResult.messages
 <blockquote><p>BQ 2026-03-10: 1,279 sessions had 50+ consecutive failures (up to 3,272) in a single session, wasting ~250K API calls/day globally.</p></blockquote>
 <p>换句话说：3 次失败就断路，不是拍脑袋选的 3，是从 BigQuery 数据里看到历史上有 1,279 个会话压爆 50 次，占总 API 调用 ~250K/天。这是<strong>把运维数据固化进代码常量</strong>的典型例子。读者做自己的 agent 系统时如果遇到类似"不知道该重试几次"的决定，这条注释给出的方法是可迁移的：从数据里看尾部分布，而不是预设。</p>
 <p>压缩的实际机制（分 summary、attachments、hookResults 三部分重建历史）在 <a class="chref" href="../ch06/">ch.06</a> 展开。本章只讲 queryLoop 看到的接口。</p>
-<h3>阶段 4：硬阻塞</h3>
+<h3 id="阶段-4-硬阻塞">阶段 4：硬阻塞<a class="h-anchor" href="#阶段-4-硬阻塞" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/query.ts:628-648（精简）</span>
 <span class="hl-kw">if</span> (!compactionResult &amp;&amp; querySource !== &#x27;compact&#x27; &amp;&amp; ...) {
   <span class="hl-kw">const</span> { isAtBlockingLimit } = calculateTokenWarningState(
@@ -279,7 +279,7 @@ messagesForQuery = microcompactResult.messages
   }
 }</code></pre></figure>
 <p>只有在 <strong>autoCompact 关闭</strong>的情况下才会走这条短路，给用户留手动 <code>/compact</code> 的空间（注释 <code class="ref">src/query.ts:593</code>）。设计理由：自动压缩是可关的，但关了之后不能让循环无限尝试超大 prompt。</p>
-<h3>阶段 5：API 调用 + 流式消费</h3>
+<h3 id="阶段-5-api-调用-流式消费">阶段 5：API 调用 + 流式消费<a class="h-anchor" href="#阶段-5-api-调用-流式消费" aria-label="permalink">¶</a></h3>
 <p>这是最长的一段，<code class="ref">src/query.ts:650-954</code>。结构：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">外层 while (attemptWithFallback) {            // 处理模型 fallback
   try {
@@ -300,14 +300,14 @@ messagesForQuery = microcompactResult.messages
   }
 }</code></pre></figure>
 <p>三个值得讲的细节：</p>
-<h4>5.1 needsFollowUp 是循环不退出的唯一信号</h4>
+<h4 id="5-1-needsfollowup-是循环不退出的唯一信号">5.1 needsFollowUp 是循环不退出的唯一信号<a class="h-anchor" href="#5-1-needsfollowup-是循环不退出的唯一信号" aria-label="permalink">¶</a></h4>
 <figure class="codeblock"><figcaption><span class="file">src/query.ts:554-558</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// Note: stop_reason === &#x27;tool_use&#x27; is unreliable -- it&#x27;s not always set correctly.</span>
 <span class="hl-cm">// Set during streaming whenever a tool_use block arrives — the sole</span>
 <span class="hl-cm">// loop-exit signal. If false after streaming, we&#x27;re done (modulo stop-hook retry).</span>
 <span class="hl-kw">const</span> toolUseBlocks: <span class="hl-type">ToolUseBlock</span>[] = []
 <span class="hl-kw">let</span> needsFollowUp = <span class="hl-kw">false</span></code></pre></figure>
 <p>官方伪码是 "while stop_reason == 'tool_use'"。Claude Code 不信任 stop_reason 字段（"it's not always set correctly"），只看 "assistant content 里有没有 tool_use block"。看到一个就置 true，流结束后 false 就退出循环。这个判定比 stop_reason 稳，代价是每条 assistant content 块都要过一次 filter。</p>
-<h4>5.2 Withhold + recover 模式</h4>
+<h4 id="5-2-withhold-recover-模式">5.2 Withhold + recover 模式<a class="h-anchor" href="#5-2-withhold-recover-模式" aria-label="permalink">¶</a></h4>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/query.ts:799-825（精简）</span>
 <span class="hl-kw">let</span> withheld = <span class="hl-kw">false</span>
 <span class="hl-kw">if</span> (feature(&#x27;<span class="hl-type">CONTEXT_COLLAPSE</span>&#x27;)) {
@@ -330,7 +330,7 @@ messagesForQuery = microcompactResult.messages
 <blockquote><p>Withhold recoverable errors (prompt-too-long, max-output-tokens) until we know whether recovery (collapse drain / reactive compact / truncation retry) can succeed. Still pushed to assistantMessages so the recovery checks below find them. Either subsystem's withhold is sufficient — they're independent so turning one off doesn't break the other's recovery path.</p></blockquote>
 <p>如果早早把错误 yield 出去，SDK consumer（比如 cowork / Claude Desktop）看到 <code>is_error: true</code> 就会提前终止 session。但循环其实还能恢复。所以做了 withhold。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/services/api/claude.ts:1874-1884</code>）：流式调用有一个<strong>主动的 idle watchdog</strong>——如果连续 <code>STREAM_IDLE_TIMEOUT_MS</code>（默认 90_000ms，可由 <code>CLAUDE_STREAM_IDLE_TIMEOUT_MS</code> 覆盖）没收到新 chunk 就 abort 整条流。注释原话："Without this, a silently dropped connection can hang the session indefinitely since the SDK's request timeout only covers the initial fetch(), not the streaming body." 该 watchdog 默认<strong>关闭</strong>，需设 <code>CLAUDE_ENABLE_STREAM_WATCHDOG</code> 打开。另有一路轻量 stall 检测（同文件 1944-1958 行）即使 watchdog 关着也会记录 <code>tengu_streaming_stall</code>，但不会 abort——它只是被动"下一个 chunk 到了才发现刚才卡过"。此外若整条流结束都没收到 <code>message_start</code> 事件，触发 non-streaming fallback（<code class="ref">claude.ts:2350-2364</code>），所以"断流后重连"其实有两条路径：watchdog-abort 后走 fallback 循环；流自然结束但是空 → 直接非流式重试。</p></blockquote>
-<h4>5.3 Fallback 的内层循环</h4>
+<h4 id="5-3-fallback-的内层循环">5.3 Fallback 的内层循环<a class="h-anchor" href="#5-3-fallback-的内层循环" aria-label="permalink">¶</a></h4>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/query.ts:894-951（精简）</span>
 } <span class="hl-kw">catch</span> (innerError) {
   <span class="hl-kw">if</span> (innerError <span class="hl-kw">instanceof</span> <span class="hl-type">FallbackTriggeredError</span> &amp;&amp; fallbackModel) {
@@ -350,7 +350,7 @@ messagesForQuery = microcompactResult.messages
 }</code></pre></figure>
 <p>Fallback <strong>不算新的一轮</strong>。它在阶段 5 的内层 while 里处理，turnCount 不增。理由：用户提示没有变化，消息历史没有变化，只换了模型。把它当新轮记会误导 maxTurns 计数。</p>
 <p><code>stripSignatureBlocks</code> 只对 ant 用户生效。原因（注释 <code class="ref">src/query.ts:923-926</code>）：thinking block 的签名是模型绑定的，replaying 到非 protected 模型会 400。</p>
-<h3>阶段 6：Abort 清理</h3>
+<h3 id="阶段-6-abort-清理">阶段 6：Abort 清理<a class="h-anchor" href="#阶段-6-abort-清理" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/query.ts:1015-1052</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (toolUseContext.abortController.signal.aborted) {
   <span class="hl-kw">if</span> (streamingToolExecutor) {
     <span class="hl-kw">for</span> <span class="hl-kw">await</span> (<span class="hl-kw">const</span> update <span class="hl-kw">of</span> streamingToolExecutor.getRemainingResults()) {
@@ -370,10 +370,10 @@ messagesForQuery = microcompactResult.messages
 <li><code>yieldMissingToolResultBlocks</code>（<code class="ref">src/query.ts:123-149</code>）给每个没配对的 tool_use 合成一个 <code>is_error: true</code> 的 tool_result。不补上的话下次 API 调用会 400（Anthropic API 要求每个 tool_use 必须有对应的 tool_result）。</li>
 <li>abort reason 为 <code>&#x27;interrupt&#x27;</code> 时不发中断消息。注释（<code class="ref">src/query.ts:1044-1046</code>）说："用户在工具执行中键入新消息" 这条路径里，后面那条 queued user 消息自带上下文，不需要再 yield interruption。</li>
 </ol>
-<h3>阶段 7：完成 / 恢复分支</h3>
+<h3 id="阶段-7-完成-恢复分支">阶段 7：完成 / 恢复分支<a class="h-anchor" href="#阶段-7-完成-恢复分支" aria-label="permalink">¶</a></h3>
 <p><code>!needsFollowUp</code> 是说这一轮没有 tool_use。按理该出循环。但不急着 return —— 有五类情况需要"假装完成，其实要 retry"。</p>
 <p>这里是状态机最复杂的地方，下一节专门拆。</p>
-<h3>阶段 8：工具执行 + 下一轮</h3>
+<h3 id="阶段-8-工具执行-下一轮">阶段 8：工具执行 + 下一轮<a class="h-anchor" href="#阶段-8-工具执行-下一轮" aria-label="permalink">¶</a></h3>
 <p>如果进到阶段 8，说明 <code>needsFollowUp === true</code>，要执行工具。</p>
 <figure class="codeblock"><figcaption><span class="file">src/query.ts:1380-1408</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> toolUpdates = streamingToolExecutor
   ? streamingToolExecutor.getRemainingResults()
@@ -405,9 +405,9 @@ messagesForQuery = microcompactResult.messages
 <li>skillPrefetch 若已 settled，append 到 toolResults</li>
 </ul>
 <p>所有这些附件都作为 user 消息跟在 tool_results 后面，在下一次 API call 里一起送进去。</p>
-<h2>6. Tool call 的插入与并发切分</h2>
+<h2 id="6-tool-call-的插入与并发切分">6. Tool call 的插入与并发切分<a class="h-anchor" href="#6-tool-call-的插入与并发切分" aria-label="permalink">¶</a></h2>
 <p>本节聚焦 queryLoop 和执行器之间的接口（batch 切分、并发上限、合成 tool_result）。Tool 接口定义本身、内置工具清单、ToolSearch 懒加载机制详见 <a class="chref" href="../ch08/">ch.08</a>。</p>
-<h3>6.1 两种执行模式</h3>
+<h3 id="6-1-两种执行模式">6.1 两种执行模式<a class="h-anchor" href="#6-1-两种执行模式" aria-label="permalink">¶</a></h3>
 <p>Claude Code 有两条工具执行路径：</p>
 <ul>
 <li><strong>经典 <code>runTools</code></strong>（<code class="ref">src/services/tools/toolOrchestration.ts:19</code>）—— 等一整条 assistant 消息流完，收集所有 tool_use blocks，再开始执行</li>
@@ -416,7 +416,7 @@ messagesForQuery = microcompactResult.messages
 <p>切换靠 feature gate：</p>
 <figure class="codeblock"><figcaption><span class="file">src/query.ts:561</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> useStreamingToolExecution = config.gates.streamingToolExecution</code></pre></figure>
 <p>gate 来自 <code>tengu_streaming_tool_execution2</code>（<code class="ref">src/query/config.ts:33-35</code>）。v2 的命名暗示 v1 被推翻过。</p>
-<h3>6.2 并发切分规则</h3>
+<h3 id="6-2-并发切分规则">6.2 并发切分规则<a class="h-anchor" href="#6-2-并发切分规则" aria-label="permalink">¶</a></h3>
 <p>核心逻辑在 <code>partitionToolCalls</code>（<code class="ref">src/services/tools/toolOrchestration.ts:91-116</code>）：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">function</span> partitionToolCalls(
   toolUseMessages: <span class="hl-type">ToolUseBlock</span>[],
@@ -450,7 +450,7 @@ Batch 2: [Edit(a)]                 isConcurrencySafe=false → 串行
 Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code></pre></figure>
 <p>并发上限：<code>CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY</code>，默认 10（<code class="ref">src/services/tools/toolOrchestration.ts:8-12</code>）。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/services/tools/toolOrchestration.ts:158-176</code>）：这个上限通过 <code class="ref">utils/generators.ts</code> 的 <code>all(..., concurrency)</code> helper 生效，<strong>每个 batch 独立算一次</strong>——partitionToolCalls 切出来的 batch 连续出现多组 concurrency-safe 时，相邻 batch 之间是串行关系（上一个 batch 全完了下一个才起），但同一个 batch 内最多 10 个并发。所以模型一口气要求 30 个 Read 时实际吞吐是 10 并发一波、10 并发第二波、10 并发第三波，而不是 30 同时在飞。另外 <code>isConcurrencySafe(input)</code> 里如果抛异常（例如 Bash 的 shell-quote parse 失败，<code>:102-106</code>）会被保守降级为 <code>false</code>——"模棱两可就串行"，不会赌。</p></blockquote>
-<h3>6.3 并发 batch 的 context modifier 延后应用</h3>
+<h3 id="6-3-并发-batch-的-context-modifier-延后应用">6.3 并发 batch 的 context modifier 延后应用<a class="h-anchor" href="#6-3-并发-batch-的-context-modifier-延后应用" aria-label="permalink">¶</a></h3>
 <p><code>runToolsConcurrently</code> 里所有 context modifier 先进队列，整批执行完才统一 apply（<code class="ref">src/services/tools/toolOrchestration.ts:42-62</code>）：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> queuedContextModifiers: <span class="hl-type">Record</span>&lt;string, ((ctx) =&gt; ctx)[]&gt; = {}
 <span class="hl-kw">for</span> <span class="hl-kw">await</span> (<span class="hl-kw">const</span> update <span class="hl-kw">of</span> runToolsConcurrently(...)) {
@@ -468,7 +468,7 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 }
 <span class="hl-kw">yield</span> { newContext: currentContext }</code></pre></figure>
 <p>理由：多个并发工具如果都调 modifier，最后一个胜出，顺序不可预测。延后到 batch 结束统一 apply 保证确定性。代价：并发 batch 里的单个工具不能立即看到其他并发工具的 context 修改 —— 这是刻意的约束。</p>
-<h3>6.4 StreamingToolExecutor 的状态机</h3>
+<h3 id="6-4-streamingtoolexecutor-的状态机">6.4 StreamingToolExecutor 的状态机<a class="h-anchor" href="#6-4-streamingtoolexecutor-的状态机" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/services/tools/StreamingToolExecutor.ts:19</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">type</span> <span class="hl-type">ToolStatus</span> = &#x27;queued&#x27; | &#x27;executing&#x27; | &#x27;completed&#x27; | &#x27;yielded&#x27;</code></pre></figure>
 <p>每个 TrackedTool 走 queued → executing → completed → yielded 四态。<code>canExecuteTool</code>（<code class="ref">src/services/tools/StreamingToolExecutor.ts:129-135</code>）判定能否启动：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">private</span> canExecuteTool(isConcurrencySafe: boolean): boolean {
@@ -479,7 +479,7 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
   )
 }</code></pre></figure>
 <p>规则：要么现在没任何工具在跑，要么现在跑的全是 safe 且新来的也 safe。这和 partitionToolCalls 的切分语义一致，只是动态版。</p>
-<h3>6.5 Bash 特殊错误链</h3>
+<h3 id="6-5-bash-特殊错误链">6.5 Bash 特殊错误链<a class="h-anchor" href="#6-5-bash-特殊错误链" aria-label="permalink">¶</a></h3>
 <p>一个值得讲的细节。<code class="ref">src/services/tools/StreamingToolExecutor.ts:356-364</code>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (isErrorResult) {
   thisToolErrored = <span class="hl-kw">true</span>
@@ -495,7 +495,7 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 <p>只有 Bash 工具出错才会触发 <code>siblingAbortController.abort()</code>，把同批并发的其他工具都杀掉。其他工具（Read / WebFetch / Grep）出错各自独立，不影响兄弟。</p>
 <p>理由注释已说明：Bash 命令之间常有隐式依赖（<code>mkdir foo &amp;&amp; cd foo &amp;&amp; touch bar.txt</code> 这类），前一条失败后面就无意义。其他工具是独立的。</p>
 <p>这个判断不动 parent abortController，所以不会终止整个 turn —— 只取消这一批里的兄弟工具，主循环继续处理它们产出的 "Cancelled: parallel tool call ... errored" 合成 tool_result。</p>
-<h3>6.6 三种合成 tool_result</h3>
+<h3 id="6-6-三种合成-tool_result">6.6 三种合成 tool_result<a class="h-anchor" href="#6-6-三种合成-tool_result" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/services/tools/StreamingToolExecutor.ts:153-205</code> 的 <code>createSyntheticErrorMessage</code> 按 reason 产出三种 <code>is_error: true</code> 的 tool_result：</p>
 <ul>
 <li><code>user_interrupted</code> —— 套 <code>REJECT_MESSAGE</code>，再用 <code>withMemoryCorrectionHint</code> 包一层，减少模型立刻重试同一操作的概率</li>
@@ -503,9 +503,9 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 <li><code>sibling_error</code> —— <code>Cancelled: parallel tool call {desc} errored</code>（有 erroredToolDescription 时带具体工具名，否则泛化）</li>
 </ul>
 <p>三者都让模型在下一轮知道"这个工具没跑成，为什么跑不了"。</p>
-<h2>7. Token 预算与上下文裁剪</h2>
+<h2 id="7-token-预算与上下文裁剪">7. Token 预算与上下文裁剪<a class="h-anchor" href="#7-token-预算与上下文裁剪" aria-label="permalink">¶</a></h2>
 <p><strong>这一节讲两套完全不同的"预算"</strong>，读者容易混。先把边界划清。</p>
-<h3>7.1 预算 A：Context window（模型上下文窗口）</h3>
+<h3 id="7-1-预算-a-context-window-模型上下文窗口">7.1 预算 A：Context window（模型上下文窗口）<a class="h-anchor" href="#7-1-预算-a-context-window-模型上下文窗口" aria-label="permalink">¶</a></h3>
 <p>防止 prompt 超过模型能接受的 token 数。四段式裁剪（阶段 2）+ autoCompact（阶段 3）+ blocking limit（阶段 4）配合处理。阈值在 <code class="ref">src/services/compact/autoCompact.ts:62-70</code>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">AUTOCOMPACT_BUFFER_TOKENS</span> = <span class="hl-num">13_000</span>
 <span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">WARNING_THRESHOLD_BUFFER_TOKENS</span> = <span class="hl-num">20_000</span>
@@ -524,7 +524,7 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
   <span class="hl-kw">return</span> contextWindow - reservedTokensForSummary
 }</code></pre></figure>
 <p>留 20K tokens 给"万一触发 compact 时 summary 自身的输出空间"。这个保留量基于 p99.99 观测（注释 <code class="ref">src/services/compact/autoCompact.ts:29</code>）："Based on p99.99 of compact summary output being 17,387 tokens."</p>
-<h3>7.2 预算 B：Turn output token budget（用户 <code>+500k</code> 语法）</h3>
+<h3 id="7-2-预算-b-turn-output-token-budget-用户-500k-语法">7.2 预算 B：Turn output token budget（用户 <code>+500k</code> 语法）<a class="h-anchor" href="#7-2-预算-b-turn-output-token-budget-用户-500k-语法" aria-label="permalink">¶</a></h3>
 <p>和上面完全不同。这是用户显式在 prompt 里写 <code>+500k</code> 表达"允许这轮花 50 万 output tokens 在反复思考上"的语法。目的：让 agent 在大任务里自动多轮 continue 而不需要用户反复敲回车。</p>
 <p>语法解析在 <code class="ref">src/utils/tokenBudget.ts:21-29</code>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> parseTokenBudget(text: string): number | <span class="hl-kw">null</span> {
@@ -580,16 +580,16 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 }</code></pre></figure>
 <p>sub-agent 不调 <code>snapshotOutputTokensForTurn</code>（<code class="ref">src/screens/REPL.tsx:2927</code>），所以读出来的 budget 是 parent 的。配合 <code>checkTokenBudget</code> 的 agentId 守卫，sub-agent 被明确隔离。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code>src/screens/REPL.tsx:2167, 2927, 2999</code> vs <code class="ref">src/QueryEngine.ts:1186-1295</code>）：<code>snapshotOutputTokensForTurn</code> 的调用点<strong>只出现在 REPL.tsx 里</strong>。<code>ask()</code> / 非交互式入口 / Agent SDK（详见 <a class="chref" href="../ch23/">ch.23</a>）那条路径从不 snapshot，所以<strong>用户即使在 SDK 输入里写 <code>+500k</code> 也不会触发 continuation</strong>——那套预算是 CLI-only 特性。预算 A（context window）才是两条路径都走的。</p></blockquote>
-<h3>7.3 两套预算混不得</h3>
+<h3 id="7-3-两套预算混不得">7.3 两套预算混不得<a class="h-anchor" href="#7-3-两套预算混不得" aria-label="permalink">¶</a></h3>
 <p>三句话说清边界：</p>
 <ul>
 <li>预算 A 的单位是 input token 数（context window size）；预算 B 的单位是 output token 数（turn output）</li>
 <li>预算 A 的触发机制是 compact（把历史压成 summary 重新跑）；预算 B 的触发机制是 continuation（往消息末尾塞一条 "keep working" 继续跑）</li>
 <li>预算 A 全局生效；预算 B 仅对用户显式用 <code>+500k</code> 语法指定过的 turn 生效，且不含 sub-agent</li>
 </ul>
-<h2>8. 错误恢复的五条路径</h2>
+<h2 id="8-错误恢复的五条路径">8. 错误恢复的五条路径<a class="h-anchor" href="#8-错误恢复的五条路径" aria-label="permalink">¶</a></h2>
 <p>都在阶段 7（<code>!needsFollowUp</code>）里。按源码出现顺序列。</p>
-<h3>8.1 Model fallback（阶段 5 内层，不是阶段 7）</h3>
+<h3 id="8-1-model-fallback-阶段-5-内层-不是阶段-7">8.1 Model fallback（阶段 5 内层，不是阶段 7）<a class="h-anchor" href="#8-1-model-fallback-阶段-5-内层-不是阶段-7" aria-label="permalink">¶</a></h3>
 <p>严格说这是阶段 5 里的内层循环，不是阶段 7 的路径——代码已在 §5.3 贴过（<code class="ref">src/query.ts:893-951</code>），这里只列关键动作：</p>
 <ul>
 <li>补全孤儿 tool_use 的 tool_result（防止下次 API 400）</li>
@@ -599,7 +599,7 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 <li>发 warning 告知切换</li>
 </ul>
 <p>不走 turnCount++（maxTurns 语义详见 <a class="chref" href="../ch04/">ch.04</a>），不走 transition—— 因为这是同一轮的第二次尝试。</p>
-<h3>8.2 Prompt-too-long 413</h3>
+<h3 id="8-2-prompt-too-long-413">8.2 Prompt-too-long 413<a class="h-anchor" href="#8-2-prompt-too-long-413" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/query.ts:1062-1183（精简骨架）</span>
 <span class="hl-kw">if</span> (!needsFollowUp) {
   <span class="hl-kw">const</span> lastMessage = assistantMessages.at(-<span class="hl-num">1</span>)
@@ -643,7 +643,7 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 </ol>
 <p>注释里明确了死循环教训（<code class="ref">src/query.ts:1291-1297</code>）：</p>
 <blockquote><p>Preserve the reactive compact guard — if compact already ran and couldn't recover from prompt-too-long, retrying after a stop-hook blocking error will produce the same result. Resetting to false here caused an infinite loop: compact → still too long → error → stop hook blocking → compact → … burning thousands of API calls.</p></blockquote>
-<h3>8.3 Max output tokens 截断</h3>
+<h3 id="8-3-max-output-tokens-截断">8.3 Max output tokens 截断<a class="h-anchor" href="#8-3-max-output-tokens-截断" aria-label="permalink">¶</a></h3>
 <p>两级恢复：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/query.ts:1188-1256（精简）</span>
 <span class="hl-kw">if</span> (isWithheldMaxOutputTokens(lastMessage)) {
@@ -685,7 +685,7 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 <li>"Pick up mid-thought" 暗示可以直接续写，不必另起一段</li>
 <li>"Break remaining work into smaller pieces" 给下一次截断风险上个保险</li>
 </ul>
-<h3>8.4 Stop hook blocking</h3>
+<h3 id="8-4-stop-hook-blocking">8.4 Stop hook blocking<a class="h-anchor" href="#8-4-stop-hook-blocking" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/query.ts:1267-1306</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> stopHookResult = <span class="hl-kw">yield</span>* handleStopHooks(
   messagesForQuery, assistantMessages, systemPrompt, userContext, systemContext, toolUseContext, querySource, stopHookActive,
 )
@@ -710,9 +710,9 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 <li>都没有 → 继续后面的 token budget 检查，最后 return <code>completed</code></li>
 </ul>
 <p><code>stopHookActive</code> 下次传入 <code>handleStopHooks</code>（<code>src/query/stopHooks.ts:73, 184</code>），hook 执行器知道"这是重试"，可选择不再拦截。</p>
-<h3>8.5 Streaming abort 补洞</h3>
+<h3 id="8-5-streaming-abort-补洞">8.5 Streaming abort 补洞<a class="h-anchor" href="#8-5-streaming-abort-补洞" aria-label="permalink">¶</a></h3>
 <p>不在阶段 7，散落在阶段 6（流中断）和阶段 8（工具执行中中断）。核心是<strong>保证每个已发出的 tool_use 都有配对的 tool_result</strong>，不然下次 API 400。<code>yieldMissingToolResultBlocks</code>（<code class="ref">src/query.ts:123-149</code>）遍历 assistantMessages 里的每个 tool_use block，按同样的 id 合成一条 <code>is_error: true</code> 的 tool_result 并带上 <code>sourceToolAssistantUUID</code>（用于 UI 关联）。Streaming 模式下 StreamingToolExecutor 在 <code>getRemainingResults</code> 里自行补洞，传统模式才用这个 helper。</p>
-<h2>9. transitions.ts —— 空 shim 的含义</h2>
+<h2 id="9-transitions-ts-空-shim-的含义">9. transitions.ts —— 空 shim 的含义<a class="h-anchor" href="#9-transitions-ts-空-shim-的含义" aria-label="permalink">¶</a></h2>
 <p>这一节要讲清楚一个现象：</p>
 <figure class="codeblock"><figcaption><span class="file">src/query/transitions.ts:1-3</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> transitionQueryState&lt;<span class="hl-type">T</span>&gt;(value: <span class="hl-type">T</span>): <span class="hl-type">T</span> {
   <span class="hl-kw">return</span> value
@@ -730,9 +730,9 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 <p><strong>当前形态下</strong>：19 个 transition reason 散落在 return/continue 处，和 IO（yield 消息、调用模型）紧耦合。写单测必须搭一整套 fake（callModel fake / microcompact fake / autocompact fake / tool executor fake），看 deps.ts 的依赖注入设计（本章 4.1 小节）就能感觉到这种压力 —— 4 个最常 mock 的依赖被显式拎出来做注入点，正是为了缓解这一点。</p>
 <p><strong>可迁移的借鉴</strong>：如果你自己写 agent loop，把 state transition 做成 pure function 是值得的。测试成本一降，调试日志一条 transition line 就能复现问题。Claude Code 当前内联形态是<strong>可运行但难测试</strong>的一种折衷。</p>
 <p>open-questions.md #1 里标记了"建议后续版本恢复 transitions.ts 原貌"。</p>
-<h2>10. 设计取舍</h2>
+<h2 id="10-设计取舍">10. 设计取舍<a class="h-anchor" href="#10-设计取舍" aria-label="permalink">¶</a></h2>
 <p>汇总本章提到的几个设计决定，按"取舍清晰度"排。</p>
-<h3>10.1 Generator-everywhere</h3>
+<h3 id="10-1-generator-everywhere">10.1 Generator-everywhere<a class="h-anchor" href="#10-1-generator-everywhere" aria-label="permalink">¶</a></h3>
 <p>从 <code>query()</code> 到 <code>runTools()</code> 到 <code>runToolUse()</code> 到 <code>StreamingToolExecutor.getRemainingResults()</code> 全是 <code>async function*</code>。</p>
 <p><strong>收益</strong>：</p>
 <ul>
@@ -747,11 +747,11 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 <li>取消不能直接 <code>generator.return()</code>（会错过 clean-up），要走 abortController</li>
 </ul>
 <p>对大多数 agent 系统，收益大于成本 —— UI 体验和实时性通常是 deal-breaker。但如果目标是离线批处理，更适合 non-generator 架构。</p>
-<h3>10.2 Withhold + recover 模式</h3>
+<h3 id="10-2-withhold-recover-模式">10.2 Withhold + recover 模式<a class="h-anchor" href="#10-2-withhold-recover-模式" aria-label="permalink">¶</a></h3>
 <p>API 错误不立即 yield，先缓存；外层判断能否恢复，能就丢弃错误，不能才 yield。</p>
 <p><strong>收益</strong>：SDK consumer 不会看到中间态错误后误判 session 结束 <strong>成本</strong>：多了一个"什么情况算 withhold-able" 的判定函数集合，每个新错误类型都要扩展</p>
 <p>这个模式可迁移性最强。任何要从 LLM API 错误里 recover 的系统都值得抄。</p>
-<h3>10.3 两种工具执行模式并存</h3>
+<h3 id="10-3-两种工具执行模式并存">10.3 两种工具执行模式并存<a class="h-anchor" href="#10-3-两种工具执行模式并存" aria-label="permalink">¶</a></h3>
 <p>feature gate 切 StreamingToolExecutor vs runTools。</p>
 <p><strong>为什么不一步到位全用 streaming</strong>：</p>
 <ul>
@@ -760,13 +760,13 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 <li>回滚代价：发现 streaming 有 bug 时能 gate 一关</li>
 </ul>
 <p>灰度策略本身不算设计亮点，值得记住的是<strong>新旧两条路径共用 <code>isConcurrencySafe</code> 接口</strong>。tool 一侧只需实现一次，执行器有多套。</p>
-<h3>10.4 Fallback 是内层循环</h3>
+<h3 id="10-4-fallback-是内层循环">10.4 Fallback 是内层循环<a class="h-anchor" href="#10-4-fallback-是内层循环" aria-label="permalink">¶</a></h3>
 <p>不增 turnCount，同一轮的第二次尝试。</p>
 <p><strong>对比 alternative</strong>：如果把 fallback 算新一轮，maxTurns 就会被模型 fallback 事件意外耗尽。用户并不知道 fallback 发生，他看到的 "maxTurns=10" 意味着"最多 10 次 agent 决策"，不是"最多 10 次 API 成功调用"。</p>
 <p>小决定，但体现了"语义一致性优先"的风格。</p>
-<h3>10.5 transitions.ts 留空 shim</h3>
+<h3 id="10-5-transitions-ts-留空-shim">10.5 transitions.ts 留空 shim<a class="h-anchor" href="#10-5-transitions-ts-留空-shim" aria-label="permalink">¶</a></h3>
 <p>这不是"设计"，是 restoration artifact。但它揭示了一个原本存在的分层 —— reducer vs IO。本章第 9 节把它当设计信号讨论。</p>
-<h2>11. 可迁移的点</h2>
+<h2 id="11-可迁移的点">11. 可迁移的点<a class="h-anchor" href="#11-可迁移的点" aria-label="permalink">¶</a></h2>
 <p>给自己做 agent 系统的读者，本章有 5 个能直接抄的做法：</p>
 <ol>
 <li><strong>Session 态和 turn 态拆两层</strong>。Claude Code 的 <code>QueryEngine</code> 持跨-turn 状态（messages、file cache、usage、abort），<code>query()</code> 只是一个 async generator 处理单次推进。<code>query()</code> 能被主线程、sub-agent、compact 子任务共用。自己做时把它们分成 class + free function 的组合，不要混一起。</li>
@@ -776,7 +776,7 @@ Batch 3: [Read(c), Read(d)]       isConcurrencySafe=true  → 并发执行</code
 <li><strong>两套预算分离</strong>。context window 预算（input side）和 output token 预算（output side）是正交的。Claude Code 用了两套不同机制：compact vs continuation。混到一起就难了。</li>
 </ol>
 <p>还有一个不是"可迁移"、但值得记住的做法：<strong>注释里带 BQ 观测数据</strong>。Circuit breaker 为什么是 3 次、reserveTokensForSummary 为什么是 20K、为什么要防 "1,279 sessions 50+ 次失败"—— 这些在注释里都有具体数字和日期。写 agent 系统的人常要面对"选什么阈值"的问题，方法是：从生产数据看尾部分布，把选择的理由注释到代码旁。</p>
-<h2>12. 跨章边界</h2>
+<h2 id="12-跨章边界">12. 跨章边界<a class="h-anchor" href="#12-跨章边界" aria-label="permalink">¶</a></h2>
 <p>本章只讲"单 agent 循环"。以下内容不在本章：</p>
 <ul>
 <li><strong>Tool 接口的字段定义、ToolSearch 的懒加载机制、每个内置工具的实现</strong> → <a class="chref" href="../ch08/">ch.08</a></li>

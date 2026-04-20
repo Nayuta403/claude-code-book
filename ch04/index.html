@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2>4.1　用户看到什么</h2>
+<h2 id="4-1-用户看到什么">4.1　用户看到什么<a class="h-anchor" href="#4-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">在 Claude Code 的交互里，sub-agent 有两种观感。</p>
 <p><strong>同步 sub-agent</strong>。主 agent 在一轮回答里调一次 <code>Agent</code> 工具，终端上那条 tool 调用会挂十几秒到几分钟，显示一个转圈加"Running task"的进度行，超过 2 秒后多出一条"可以 Ctrl+B 移到后台"的提示。等它结束，主 agent 立刻拿到一条 <code>tool_result</code>，看起来就像一次普通的工具调用返回——只不过这条返回内容是"一段文字"，里面是 sub-agent 的最后一段陈述。</p>
 <p><strong>异步 sub-agent</strong>。主 agent 调 <code>Agent</code> 时带了 <code>run_in_background: true</code>，或者在 coordinator 模式下（下面会讲），调用<strong>立刻</strong>返回：</p>
@@ -58,7 +58,7 @@ The agent is working in the background. You will be notified automatically when 
 &lt;/task-notification&gt;</code></pre></figure>
 <p>它看起来像用户说话，其实是系统塞进来的通知。主 agent 的系统提示里教过它识别 <code>&lt;task-notification&gt;</code> 开头，当成 sub-agent 的"回流信号"处理（coordinator 模式下这条规则在 <code class="ref">src/coordinator/coordinatorMode.ts:144-160</code> 有完整模板）。</p>
 <p>终端底部还有一个背景任务 pill（ant 构建下走 Coordinator Panel，external 构建下走 pill）。键入 <code>/tasks</code> 可以展开：每条任务显示状态、描述、耗时。</p>
-<h2>4.2　为什么挑这个设计出来讲</h2>
+<h2 id="4-2-为什么挑这个设计出来讲">4.2　为什么挑这个设计出来讲<a class="h-anchor" href="#4-2-为什么挑这个设计出来讲" aria-label="permalink">¶</a></h2>
 <p>可以用一句话概括：<strong>主 agent 的一次 tool call 被替换成 sub-agent 的完整 run</strong>。</p>
 <p>这句话的工程含义是：主 agent 的 Agent Loop 代码并不需要区分"本地工具"和"sub-agent"，它看到的都是 tool_use / tool_result 对；是 Agent 工具的实现把"一整段 agent 生命周期"压进了一个 tool_result 里（Agent Loop 的完整结构见 <a class="chref" href="../ch03/">ch.03</a>）。这个抽象的副作用很好：</p>
 <ul>
@@ -69,7 +69,7 @@ The agent is working in the background. You will be notified automatically when 
 <p>官方博客对这个模式的描述是："they help manage context: subagents use their own isolated context windows, and only send relevant information back to the orchestrator."（来源：<a href="https://claude.com/blog/building-agents-with-the-claude-agent-sdk" rel="noreferrer">https://claude.com/blog/building-agents-with-the-claude-agent-sdk</a>，访问于 2026-04-19）。</p>
 <p>本章把源码里"这一条 tool call 到底做了什么"拆开。重点是三件事：上下文边界怎么画、state 机怎么对 sync 和 async 保持一致、权限请求怎么回流。</p>
 <p>边界先说清楚：<strong>单 agent 的 Agent Loop 本身</strong>（<code>query()</code>、turn、stream event）<strong>不在本章</strong>，见 <a class="chref" href="../ch03/">ch.03</a>。<strong>Tool 接口与 <code>buildTool</code></strong> 不在本章，见 <a class="chref" href="../ch08/">ch.08</a>。<strong>权限决策（allow/deny 规则、bash 规则）</strong> 不在本章，见 <a class="chref" href="../ch09/">ch.09</a>。<strong>worktree 文件系统隔离</strong>见 <a class="chref" href="../ch06/">ch.06</a>。<strong>cron 触发 Task</strong> 见 <a class="chref" href="../ch13/">ch.13</a>。<strong>Plan Mode 下的只读 sub-agent</strong>（Explore / Plan 的职责边界）见 <a class="chref" href="../ch05/">ch.05</a>。<strong>Remote permission bridge</strong>（异步 sub-agent 的远端权限回传通道）见 <a class="chref" href="../ch17/">ch.17</a>。<strong>Agent SDK 的 <code>canUseTool</code> hook</strong> 见 <a class="chref" href="../ch23/">ch.23</a>。</p>
-<h2>4.3　两种形态：AgentTool 同步/异步 vs. Task 家族</h2>
+<h2 id="4-3-两种形态-agenttool-同步-异步-vs-task-家族">4.3　两种形态：AgentTool 同步/异步 vs. Task 家族<a class="h-anchor" href="#4-3-两种形态-agenttool-同步-异步-vs-task-家族" aria-label="permalink">¶</a></h2>
 <p>源码里有<strong>三层</strong>东西叫 "Task"，容易混，先在这里一次说清。</p>
 <div class="table-wrap"><table><thead><tr><th>层</th><th>源码位置</th><th>是什么</th></tr></thead><tbody><tr><td><strong>AgentTool</strong></td><td><code>src/tools/AgentTool/</code></td><td>主 agent 可调的那个工具，wire 名 <code>Agent</code>，保留别名 <code>Task</code></td></tr>
 <tr><td><strong>运行时 Task state</strong></td><td><code>src/tasks/{LocalAgentTask,RemoteAgentTask,LocalShellTask,...}</code></td><td>背景任务的运行时状态对象，<code>LocalAgentTaskState</code> 就是一个 async sub-agent</td></tr>
@@ -86,14 +86,14 @@ The agent is working in the background. You will be notified automatically when 
 <span class="hl-cm">// Legacy wire name for backward compat (permission rules, hooks, resumed sessions)</span>
 <span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">LEGACY_AGENT_TOOL_NAME</span> = &#x27;<span class="hl-type">Task</span>&#x27;</code></pre></figure>
 <p>然后回到形态对比。</p>
-<h3>同步 sub-agent（sync）</h3>
+<h3 id="同步-sub-agent-sync">同步 sub-agent（sync）<a class="h-anchor" href="#同步-sub-agent-sync" aria-label="permalink">¶</a></h3>
 <ul>
 <li>触发：<code>run_in_background</code> 为假、<code>background: true</code> 没在 agent 定义里设、非 coordinator、非 fork、非 kairos/proactive（判断在 <code class="ref">src/tools/AgentTool/AgentTool.tsx:567</code>）。</li>
 <li>生命周期：主 agent 当前 turn 被<strong>挂起</strong>直到 sub-agent 完成；期间主 agent 的 abortController 被 sub-agent 共享（<code class="ref">src/tools/AgentTool/runAgent.ts:526-528</code>），按 ESC 一起死。</li>
 <li>返回：一条 <code>tool_result</code>，<code>data.status === &#x27;completed&#x27;</code>。</li>
 <li>结果内容：sub-agent 最后一条 assistant message 的 text 块，加一条 <code>agentId: ... &lt;usage&gt;</code> 尾巴（<code class="ref">AgentTool.tsx:1363-1373</code>）。</li>
 </ul>
-<h3>异步 sub-agent（async）</h3>
+<h3 id="异步-sub-agent-async">异步 sub-agent（async）<a class="h-anchor" href="#异步-sub-agent-async" aria-label="permalink">¶</a></h3>
 <ul>
 <li>触发：<code>run_in_background: true</code>、或 <code>selectedAgent.background === true</code>、或 coordinator/fork/kairos/proactive 任一为真。</li>
 <li>生命周期：<code>AgentTool</code> 登记一个 <code>LocalAgentTaskState</code>，<code>void runAsyncAgentLifecycle(...)</code> fire-and-forget 地跑（<code class="ref">AgentTool.tsx:733-752</code>）；tool 立刻返回 <code>async_launched</code>。</li>
@@ -107,8 +107,8 @@ The agent is working in the background. You will be notified automatically when 
 <li><strong>worktree 隔离</strong>（<code>isolation: &#x27;worktree&#x27;</code>）：sub-agent 运行在独立的 git worktree 里，父子共享一份 repo 但各写各的文件（详见 <a class="chref" href="../ch06/">ch.06</a>）。</li>
 </ul>
 <p>两种形态的区别可以概括成一句：<strong>sync 用调用栈保留 sub-agent 的生死，async 把生死挪到 AppState.tasks 的 state 里，用一条 XML-in-user-message 把结果"外部送达"</strong>。</p>
-<h2>4.4　关键数据结构</h2>
-<h3>AgentTool 的输入</h3>
+<h2 id="4-4-关键数据结构">4.4　关键数据结构<a class="h-anchor" href="#4-4-关键数据结构" aria-label="permalink">¶</a></h2>
+<h3 id="agenttool-的输入">AgentTool 的输入<a class="h-anchor" href="#agenttool-的输入" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/tools/AgentTool/AgentTool.tsx:82-102</code> 定义分两层。基础：</p>
 <figure class="codeblock"><figcaption><span class="file">src/tools/AgentTool/AgentTool.tsx:82-88</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> baseInputSchema = lazySchema(() =&gt; z.object({
   description: z.string().describe(&#x27;<span class="hl-type">A</span> short (<span class="hl-num">3</span>-<span class="hl-num">5</span> word) description <span class="hl-kw">of</span> the task&#x27;),
@@ -137,7 +137,7 @@ The agent is working in the background. You will be notified automatically when 
 <li><strong><code>subagent_type</code> 选的是预置 agent 定义</strong>。<code>general-purpose</code> 在 <code class="ref">src/tools/AgentTool/built-in/generalPurposeAgent.ts:25-34</code>；还有 Explore、Plan、verification、claudeCodeGuide、statuslineSetup 几个内建。用户也可以在 <code>.claude/agents/*.md</code> 定义自己的。</li>
 <li><strong><code>run_in_background</code> 不是 async 的唯一触发条件</strong>。coordinator 模式强制所有 spawn async（<code>AgentTool.tsx:553, 567</code>），fork 实验也强制 async（<code class="ref">forkSubagent.ts:25-31</code>）。</li>
 </ol>
-<h3>AgentTool 的输出：一个 union</h3>
+<h3 id="agenttool-的输出-一个-union">AgentTool 的输出：一个 union<a class="h-anchor" href="#agenttool-的输出-一个-union" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/tools/AgentTool/AgentTool.tsx:141-155</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> outputSchema = lazySchema(() =&gt; {
   <span class="hl-kw">const</span> syncOutputSchema = agentToolResultSchema().extend({
     status: z.literal(&#x27;completed&#x27;),
@@ -155,7 +155,7 @@ The agent is working in the background. You will be notified automatically when 
 })</code></pre></figure>
 <p><code>agentToolResultSchema()</code>（<code class="ref">src/tools/AgentTool/agentToolUtils.ts:227-258</code>）里声明了同步路径返回的具体字段：<code>agentId</code>、<code>content: { type: &#x27;text&#x27;, text: string }[]</code>、<code>totalToolUseCount</code>、<code>totalDurationMs</code>、<code>totalTokens</code>、<code>usage</code>（模型用量）。AgentTool 自身作为 Tool 接口（<code>buildTool</code>、<code>call</code>、<code>inputSchema</code>）的实现细节见 <a class="chref" href="../ch08/">ch.08</a>，本节只关心它作为 sub-agent 调度入口的输入/输出契约。</p>
 <p>有两个内部类型不在 schema 里（<code>TeammateSpawnedOutput</code>、<code>RemoteLaunchedOutput</code>，<code class="ref">AgentTool.tsx:161-190</code>）：它们是给 swarm 和 remote 路径用的，被有意排除在 schema 之外以便 dead code elimination（外部构建里 ant-only 的分支整块被优化掉）。</p>
-<h3>运行时 state：LocalAgentTaskState</h3>
+<h3 id="运行时-state-localagenttaskstate">运行时 state：LocalAgentTaskState<a class="h-anchor" href="#运行时-state-localagenttaskstate" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/tasks/LocalAgentTask/LocalAgentTask.tsx:116-148</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">LocalAgentTaskState</span> = <span class="hl-type">TaskStateBase</span> &amp; {
   <span class="hl-kw">type</span>: &#x27;local_agent&#x27;
   agentId: string
@@ -184,7 +184,7 @@ The agent is working in the background. You will be notified automatically when 
 <tr><td><code>failAgentTask</code></td><td><code>running</code></td><td><code>failed</code></td><td><code>:437-456</code></td></tr>
 <tr><td><code>killAsyncAgent</code></td><td><code>running</code></td><td><code>killed</code></td><td><code>:281-303</code></td></tr>
 <tr><td><code>unregisterAgentForeground</code></td><td>foreground 跑完</td><td>从 map 直接移除</td><td><code>:657-681</code></td></tr></tbody></table></div>
-<h3>回流 payload：<code>&lt;task-notification&gt;</code></h3>
+<h3 id="回流-payload">回流 payload：<code>&lt;task-notification&gt;</code><a class="h-anchor" href="#回流-payload" aria-label="permalink">¶</a></h3>
 <p>tag 常量在 <code class="ref">src/constants/xml.ts:28-34</code>。生成的地方是 <code>enqueueAgentNotification</code>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/tasks/LocalAgentTask/LocalAgentTask.tsx:252-257</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> message = <span class="hl-str">`&lt;${TASK_NOTIFICATION_TAG}&gt;
 &lt;${TASK_ID_TAG}&gt;${taskId}&lt;/${TASK_ID_TAG}&gt;${toolUseIdLine}
@@ -199,9 +199,9 @@ enqueuePendingNotification({
 <p>然后 <code>enqueuePendingNotification</code>（<code class="ref">src/utils/messageQueueManager.ts:142-149</code>）把它加到一个优先级队列里，默认 priority <code>later</code>——避免系统消息抢了用户输入的位置。Agent Loop 下一轮空闲时把它当 user message 注入（投递的具体机制见 <a class="chref" href="../ch03/">ch.03</a>）。</p>
 <p>注意 <code>notified</code> 标志位（<code class="ref">LocalAgentTask.tsx:228-236</code>）：确保"完成通知"幂等——如果 <code>TaskStopTool</code> 已经发过一次终止通知（<code class="ref">src/tasks/stopTask.ts:72-95</code>），正常完成路径不再重发。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/tasks/LocalAgentTask/LocalAgentTask.tsx:248-256</code>）：<code>&lt;task-notification&gt;</code> 的真实字段比 §4.1 示例里展示的多。完整形状是 <code>&lt;task-id&gt;</code>（必有）、可选 <code>&lt;tool-use-id&gt;</code>（来自触发的那次 <code>Agent</code> tool_use）、<code>&lt;output-file&gt;</code>（sidechain transcript 路径）、<code>&lt;status&gt;</code>、<code>&lt;summary&gt;</code>、可选 <code>&lt;result&gt;</code>（最后一条 assistant 的 text）、可选 <code>&lt;usage&gt;</code>（内含 <code>&lt;total_tokens&gt;</code> + <code>&lt;tool_uses&gt;</code> + <code>&lt;duration_ms&gt;</code> 三个子标签，而不是只有前两个）、可选 <code>&lt;worktree&gt;</code>（内含 <code>&lt;worktree-path&gt;</code> 与 <code>&lt;worktree-branch&gt;</code>）。—— 产品层面你看到的是一条用户角色的"Agent 完成"气泡，但模型读到的是一段可解析的 XML，这段 XML 的稳定性就是 coordinator / fork / 异步 sub-agent 回流的唯一契约。</p></blockquote>
-<h2>4.5　关键流程：一次 sub-agent 跑完一生</h2>
+<h2 id="4-5-关键流程-一次-sub-agent-跑完一生">4.5　关键流程：一次 sub-agent 跑完一生<a class="h-anchor" href="#4-5-关键流程-一次-sub-agent-跑完一生" aria-label="permalink">¶</a></h2>
 <p>以一次 async sub-agent 为主线，sync 在必要处对比。</p>
-<h3>1. 选 agent + 组工具</h3>
+<h3 id="1-选-agent-组工具">1. 选 agent + 组工具<a class="h-anchor" href="#1-选-agent-组工具" aria-label="permalink">¶</a></h3>
 <p><code>AgentTool.call()</code> 的入口在 <code class="ref">src/tools/AgentTool/AgentTool.tsx:239-260</code>。前几十行做的事按顺序：</p>
 <ol>
 <li>Swarm 分支（<code>:262-316</code>）：<code>team_name &amp;&amp; name</code> 齐备走 <code>spawnTeammate()</code>（tmux 分屏或 in-process 新进程），直接返回 <code>teammate_spawned</code>。<strong>不进入后续路径</strong>。</li>
@@ -214,7 +214,7 @@ enqueuePendingNotification({
 <p>到这里 <code>runAgentParams</code> 组装完成，进入 async/sync 分叉（<code class="ref">AgentTool.tsx:686</code>）。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/tools/AgentTool/runAgent.ts:577-646</code>）：sub-agent <strong>不继承主 agent 在交互中临时加载的 skills</strong>。<code>runAgent</code> 里只走一条 "从 agent 定义的 frontmatter 读 <code>skills: [...]</code>、用 <code>getSkillToolCommands(getProjectRoot())</code> 查表并 preload 为 <code>isMeta</code> user message" 的路径，没有任何"把父的已加载 skills 注入子"的逻辑。—— 产品层面你感觉 sub-agent "应该和主 agent 一样什么都能用"，但实际上：你在主会话里通过 <code>/skill foo</code> 拉过的 skill，sub-agent 看不到；只有在 sub-agent 的 agent 定义 <code class="ref">.claude/agents/xxx.md</code> 的 frontmatter 里显式声明 <code>skills: [foo]</code> 才会被它 preload。要让一个 skill 在 sub-agent 里也能用，要么改 agent 定义，要么在 <code>prompt</code> 里把 skill 的实质内容直接写进去。</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code>src/tools/AgentTool/runAgent.ts:95-110, 647-664</code>）：MCP server 的继承规则是<strong>additive</strong>：如果 agent 定义没声明 <code>mcpServers</code>，<code>initializeAgentMcpServers</code> 直接返回 <code>parentClients</code> 原样（<code>:104-109</code>）——父会话里连上的所有 MCP server sub-agent 都能用，<strong>不需要子自己重连</strong>。只有当 agent 定义里显式列了 <code>mcpServers: [...]</code> 时才追加新的（或引用已有配置），追加后 <code>uniqBy([...resolvedTools, ...agentMcpTools], &#x27;name&#x27;)</code> 按工具名去重。新连上的 inline MCP 在 sub-agent 退出时走 <code>mcpCleanup()</code> 断开；从父继承的连接不断。—— 产品层面你感觉 "sub-agent 的 MCP 工具要单独配"，实际上父的 MCP 池默认穿透过来，子只在需要额外 server 时声明，握手等待在 <code class="ref">AgentTool.tsx:370-410</code> 有最多 30 秒的兜底。</p></blockquote>
-<h3>2. async：register → void lifecycle</h3>
+<h3 id="2-async-register-void-lifecycle">2. async：register → void lifecycle<a class="h-anchor" href="#2-async-register-void-lifecycle" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/AgentTool/AgentTool.tsx:687-752（节选）</span>
 <span class="hl-kw">const</span> asyncAgentId = earlyAgentId
 <span class="hl-kw">const</span> agentBackgroundTask = registerAsyncAgent({
@@ -276,7 +276,7 @@ The agent is working in the background.
 You will be notified automatically when it completes.`</span>
   <span class="hl-cm">// ...</span>
 }</code></pre></figure>
-<h3>3. runAgent：sub-agent 自己跑一个 query()</h3>
+<h3 id="3-runagent-sub-agent-自己跑一个-query">3. runAgent：sub-agent 自己跑一个 query()<a class="h-anchor" href="#3-runagent-sub-agent-自己跑一个-query" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/tools/AgentTool/runAgent.ts:248-329</code> 是 sub-agent 的真实引擎。它是一个 <code>AsyncGenerator&lt;Message, void&gt;</code>，内层就是调 <code>query()</code>——和主 agent 用的是<strong>同一个 Agent Loop</strong>（详见 <a class="chref" href="../ch03/">ch.03</a>）：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/AgentTool/runAgent.ts:747-805（节选）</span>
 <span class="hl-kw">try</span> {
@@ -314,7 +314,7 @@ You will be notified automatically when it completes.`</span>
 <li><strong><code>shouldAvoidPermissionPrompts</code></strong>：async 子 agent 默认置 true，意思是"不能弹 UI 的就别问，直接按规则决定"——配合 auto 分类器让背景 agent 不因一个权限请求停下。</li>
 <li><strong><code>abortController</code></strong>：<code>override</code> &gt; async 用新的 &gt; sync 共享父的。</li>
 </ul>
-<h3>4. sync：race + 可背景化</h3>
+<h3 id="4-sync-race-可背景化">4. sync：race + 可背景化<a class="h-anchor" href="#4-sync-race-可背景化" aria-label="permalink">¶</a></h3>
 <p>同步路径（<code class="ref">AgentTool.tsx:785-1261</code>）用 <code>agentIterator</code> 手工驱动 <code>runAgent</code>，每一轮 race 两个 Promise：</p>
 <figure class="codeblock"><figcaption><span class="file">src/tools/AgentTool/AgentTool.tsx:885-892</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> nextMessagePromise = agentIterator.next()
 <span class="hl-kw">const</span> raceResult = backgroundPromise
@@ -324,7 +324,7 @@ You will be notified automatically when it completes.`</span>
     ])
   : { <span class="hl-kw">type</span>: &#x27;message&#x27; <span class="hl-kw">as</span> <span class="hl-kw">const</span>, result: <span class="hl-kw">await</span> nextMessagePromise }</code></pre></figure>
 <p>"移到后台"于是变成了<strong>一次 Promise race 胜出</strong>：命中背景分支就把当前迭代器 return 掉，在 <code>void</code> 里<strong>重新启动一个 async 版本的 <code>runAgent</code></strong>（<code class="ref">AgentTool.tsx:911-950</code>），后半段跑在背景，最终也走 <code>enqueueAgentNotification</code>。这样 UX 上的"按一下 Ctrl+B 瞬间移到后台"，在代码里是一个干净的路径切换。</p>
-<h3>5. 完成：finalize 把 transcript 压成一条 text</h3>
+<h3 id="5-完成-finalize-把-transcript-压成一条-text">5. 完成：finalize 把 transcript 压成一条 text<a class="h-anchor" href="#5-完成-finalize-把-transcript-压成一条-text" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/AgentTool/agentToolUtils.ts:297-317（节选）</span>
 <span class="hl-kw">const</span> lastAssistantMessage = getLastAssistantMessage(agentMessages)
 <span class="hl-kw">if</span> (lastAssistantMessage === <span class="hl-kw">undefined</span>) <span class="hl-kw">throw</span> <span class="hl-kw">new</span> <span class="hl-type">Error</span>(&#x27;<span class="hl-type">No</span> assistant messages found&#x27;)
@@ -363,12 +363,12 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
   }
 }</code></pre></figure>
 <p><code>ONE_SHOT_BUILTIN_AGENT_TYPES</code>（<code class="ref">src/tools/AgentTool/constants.ts:9-12</code>）当前只有 <code>Explore</code> 和 <code>Plan</code>——这俩主 agent 从不 continue，省掉尾巴是 ~135 字 × 34M runs/week 的累计收益。</p>
-<h3>6. async 完成：enqueueAgentNotification</h3>
+<h3 id="6-async-完成-enqueueagentnotification">6. async 完成：enqueueAgentNotification<a class="h-anchor" href="#6-async-完成-enqueueagentnotification" aria-label="permalink">¶</a></h3>
 <p>背景 agent 完成时走 <code>runAsyncAgentLifecycle</code> 的正常路径：<code>completeAgentTask(agentResult, rootSetAppState)</code> 改 state 为 <code>completed</code>，然后 <code>enqueueAgentNotification</code> 把 <code>&lt;task-notification&gt;</code> 塞队列。Agent Loop 下一轮把这条 XML 当 user message 注入（详见 <a class="chref" href="../ch03/">ch.03</a>），主 agent 在下一个 turn 里"读到 sub-agent 的完成消息"。</p>
 <p>错误和终止走对应分支：catch <code>AbortError</code> → <code>killAsyncAgent</code> + <code>status=&#x27;killed&#x27;</code> 通知；其他 error → <code>failAsyncAgent</code> + <code>status=&#x27;failed&#x27;</code>。每一条通知都走同一条 <code>enqueueAgentNotification</code>，只是 <code>status</code> 不同。</p>
-<h2>4.6　上下文隔离的落地</h2>
+<h2 id="4-6-上下文隔离的落地">4.6　上下文隔离的落地<a class="h-anchor" href="#4-6-上下文隔离的落地" aria-label="permalink">¶</a></h2>
 <p>隔离这件事的实现核心在两个函数：<code>createSubagentContext</code> 和 <code>runAgent</code> 里的 override 逻辑。</p>
-<h3>createSubagentContext</h3>
+<h3 id="createsubagentcontext">createSubagentContext<a class="h-anchor" href="#createsubagentcontext" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/utils/forkedAgent.ts:345-462</code>。按字段分类如何对待父 context：</p>
 <p><strong>克隆（isolation）</strong>：</p>
 <ul>
@@ -393,7 +393,7 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
 <li><code>agentId</code>：默认新建（<code>:448</code>）。</li>
 </ul>
 <p><strong>"setAppState 是 no-op 但 setAppStateForTasks 通往 root store"</strong> 这组看起来冗余，其实是被 bug 喂出来的设计。<code class="ref">forkedAgent.ts:413-415</code> 的注释说得清楚：嵌套 async agent（父本身就是 async）的 <code>setAppState</code> 已经是 no-op 了，但子 agent 起的 bash 子进程必须登记到 root store 才能在会话结束时被统一 kill；否则这些进程变成 PPID=1 僵尸。单一通道无法区分"我要改 UI"和"我要登记任务"，所以拆成两条。</p>
-<h3>官方对隔离的说法</h3>
+<h3 id="官方对隔离的说法">官方对隔离的说法<a class="h-anchor" href="#官方对隔离的说法" aria-label="permalink">¶</a></h3>
 <blockquote><p>"Each subagent runs in its own fresh conversation. Intermediate tool calls and results stay inside the subagent; only its final message returns to the parent." （<a href="https://code.claude.com/docs/en/agent-sdk/subagents" rel="noreferrer">https://code.claude.com/docs/en/agent-sdk/subagents</a>，访问于 2026-04-19）</p></blockquote>
 <p>源码对应的是两个选择：</p>
 <ol>
@@ -401,7 +401,7 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
 <li><code>finalizeAgentTool</code> 只抽最后一条 assistant text，前面所有 tool_use/tool_result 都丢给 sidechain。</li>
 </ol>
 <p>这两步一内一外合起来实现了文档的"only its final message returns to the parent"。</p>
-<h3>readonly sub-agent 的瘦身</h3>
+<h3 id="readonly-sub-agent-的瘦身">readonly sub-agent 的瘦身<a class="h-anchor" href="#readonly-sub-agent-的瘦身" aria-label="permalink">¶</a></h3>
 <p><code class="ref">runAgent.ts:390-410</code> 两段对 Explore / Plan 的特殊处理：</p>
 <ul>
 <li>去掉 <code>claudeMd</code>（<code>:390-398</code>）：read-only agent 不需要看 commit/PR/lint 规则，父会自己解读产物。注释写 "Dropping claudeMd here saves ~5-15 Gtok/week across 34M+ Explore spawns."</li>
@@ -409,9 +409,9 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
 </ul>
 <p>这是"上下文隔离"的进阶版：<strong>连父的"当前仓库状态"都不往下传</strong>，让 sub-agent 按需自取。成本是 sub-agent 偶尔多跑一条 git 命令，收益是规模化后的 token 节省。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/context.ts:155-189</code> + <code class="ref">src/tools/AgentTool/runAgent.ts:380-398</code>）：sub-agent 的 <strong>memdir / CLAUDE.md 不独立</strong>——它从进程全局的 <code>getUserContext()</code> 里直接拿，而这个函数用 <code>memoize(...)</code> 缓存整个会话，意思是 <strong>父和子读到的是同一份 memory files 快照</strong>，子不会再次扫盘，也不会看到 sub-agent 启动后才新增的内存笔记（它们要等下一个会话才生效）。Explore / Plan 之所以能"瘦身"，是因为 <code>omitClaudeMd</code> flag 显式把 <code>claudeMd</code> 字段解构掉（<code class="ref">runAgent.ts:394-398</code>），而不是因为它们有独立的 memdir。—— 产品层面你以为 sub-agent "在新环境里重新起"，实际上只是<strong>看了同一份字典里更短的片段</strong>；如果你在主会话里 <code>/memory edit</code> 改了 CLAUDE.md，当前 turn 的 sub-agent 读到的仍是旧内容。</p></blockquote>
-<h2>4.7　Task 家族的 6 个工具</h2>
+<h2 id="4-7-task-家族的-6-个工具">4.7　Task 家族的 6 个工具<a class="h-anchor" href="#4-7-task-家族的-6-个工具" aria-label="permalink">¶</a></h2>
 <p>来把那 6 个 <code>Task*Tool</code> 一次性说完。它们按作用分两组。</p>
-<h3>操作背景任务的两个</h3>
+<h3 id="操作背景任务的两个">操作背景任务的两个<a class="h-anchor" href="#操作背景任务的两个" aria-label="permalink">¶</a></h3>
 <p><strong><code>TaskStopTool</code></strong>（<code class="ref">src/tools/TaskStopTool/TaskStopTool.ts:39-131</code>，wire 名 <code>TaskStop</code>，别名 <code>KillShell</code>）。核心逻辑完全委派给 <code>stopTask()</code>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tasks/stopTask.ts:38-65（节选）</span>
 <span class="hl-kw">export</span> <span class="hl-kw">async</span> <span class="hl-kw">function</span> stopTask(taskId, context): <span class="hl-type">Promise</span>&lt;<span class="hl-type">StopTaskResult</span>&gt; {
@@ -433,7 +433,7 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
 }</code></pre></figure>
 <p>这个工具在 ant 构建下甚至不加载（<code>:163-165</code> <code>isEnabled() { return &quot;external&quot; !== &#x27;ant&#x27; }</code>）。保留下来兼容旧代码。功能上：<code>block=true</code> 阻塞等完成；<code>block=false</code> 立刻返回当前状态；对 agent task 会优先从内存中的 <code>agentTask.result.content</code> 抽干净的 final answer（<code>:96-105</code>）而不是回放整个 transcript。</p>
 <p>推荐路径是 <code>AgentTool</code> 的 <code>async_launched</code> 返回结果里的 <code>outputFile</code> 字段 + <code>Read</code> 工具——这也是为什么 <code>async_launched</code> 的 tool_result 文本里直接给了这个路径（<code class="ref">AgentTool.tsx:1329</code>）。</p>
-<h3>TodoV2 的四个（和 sub-agent 调度没有直接耦合）</h3>
+<h3 id="todov2-的四个-和-sub-agent-调度没有直接耦合">TodoV2 的四个（和 sub-agent 调度没有直接耦合）<a class="h-anchor" href="#todov2-的四个-和-sub-agent-调度没有直接耦合" aria-label="permalink">¶</a></h3>
 <p>这四个操作的不是 sub-agent，是<strong>模型给用户看的待办清单</strong>。</p>
 <ul>
 <li><strong><code>TaskCreateTool</code></strong>（<code class="ref">src/tools/TaskCreateTool/TaskCreateTool.ts:48-138</code>）：建 todo，写磁盘（<code>getTasksDir(getTaskListId())</code>）；触发 <code>TaskCreated</code> hooks，可阻塞。</li>
@@ -443,18 +443,18 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
 </ul>
 <p>它们在 <strong>swarm 模式下</strong>被额外做成了 teammate 间的协作信道：owner 变化时 <code>writeToMailbox</code> 把 <code>task_assignment</code> 消息投给新 owner（<code class="ref">TaskUpdateTool.ts:276-298</code>）。所以你会看到 UI 上"A teammate 被分配到一个 task"——本质上是 lead 用 TaskUpdate 写了一条 owner 字段。本章不深入 mailbox 机制（见 <a class="chref" href="../ch13/">ch.13</a>）。</p>
 <p>UI 同步逻辑在 <code class="ref">src/hooks/useTasksV2.ts:29-229</code>：一个 singleton store + <code>fs.watch</code> + 5 秒兜底轮询 + React <code>useSyncExternalStore</code>。所有消费者（REPL、Spinner、footer）共享一个 watcher。设计重点：<strong>不要为每个 UI 位置建 fs.watch</strong>——Spinner 每轮 mount/unmount，watcher 频繁起停会打中 Bun 的 <code>PathWatcherManager</code> 死锁（<code class="ref">useTaskListWatcher.ts:46-50</code> 的同样注释）。</p>
-<h3>容易混的一条规则</h3>
+<h3 id="容易混的一条规则">容易混的一条规则<a class="h-anchor" href="#容易混的一条规则" aria-label="permalink">¶</a></h3>
 <p><strong>主 agent 的 Agent 工具（同步 sub-agent 路径）和 TaskOutputTool 之间没有耦合</strong>。同步 sub-agent 完成后直接把 text 放到 tool_result 里返回，不需要 TaskOutputTool；异步 sub-agent 推荐通过 outputFile + Read；TaskOutputTool 只是历史兼容和 bash 背景任务的通用读取口。</p>
-<h2>4.8　Fork：最大化 prompt cache 共享的 sub-agent 变体</h2>
+<h2 id="4-8-fork-最大化-prompt-cache-共享的-sub-agent-变体">4.8　Fork：最大化 prompt cache 共享的 sub-agent 变体<a class="h-anchor" href="#4-8-fork-最大化-prompt-cache-共享的-sub-agent-变体" aria-label="permalink">¶</a></h2>
 <p>fork 是 sub-agent 的一个特殊路径，默认关闭，在 gate <code>FORK_SUBAGENT</code> 打开时生效。核心结构在 <code class="ref">src/tools/AgentTool/forkSubagent.ts</code>。</p>
-<h3>语义</h3>
+<h3 id="语义">语义<a class="h-anchor" href="#语义" aria-label="permalink">¶</a></h3>
 <ul>
 <li>调 <code>Agent</code> 时<strong>省略 <code>subagent_type</code></strong>，落到 <code>FORK_AGENT</code>（<code class="ref">forkSubagent.ts:60-71</code>）。</li>
 <li>子 agent<strong>继承父的完整对话历史</strong>（<code>toolUseContext.messages</code>） + <strong>父的已渲染系统提示</strong>（<code>toolUseContext.renderedSystemPrompt</code>）。</li>
 <li>所有 fork spawn 强制 async。</li>
 <li>子 agent 的工具池<strong>字节级</strong>等同父（<code>useExactTools=true</code>，<code class="ref">runAgent.ts:500-502</code> + <code class="ref">runAgent.ts:667-695</code>）。</li>
 </ul>
-<h3>为什么非要字节级对齐</h3>
+<h3 id="为什么非要字节级对齐">为什么非要字节级对齐<a class="h-anchor" href="#为什么非要字节级对齐" aria-label="permalink">¶</a></h3>
 <p>LLM API 的 prompt cache 以 request prefix 为单位命中。只要子 agent 的系统提示、工具定义、消息前缀都和父的历史请求一致（前 N 个 token 字节完全等同），后端就能复用父的 KV cache，省下重新 prefill 的开销。<code class="ref">forkSubagent.ts:98-106</code> 的注释：</p>
 <blockquote><p>"For prompt cache sharing, all fork children must produce byte-identical API request prefixes."</p></blockquote>
 <p>于是有这两个细节：</p>
@@ -464,7 +464,7 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
 </ol>
 <figure class="codeblock"><figcaption><span class="file">src/tools/AgentTool/forkSubagent.ts:93</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">FORK_PLACEHOLDER_RESULT</span> = &#x27;<span class="hl-type">Fork</span> started — processing <span class="hl-kw">in</span> background&#x27;</code></pre></figure>
 <p>每个 fork 子的 tool_result 块都是这句话，这样多个 fork 并行时 request prefix 继续对齐，只有最后一块 user text（per-child directive）不同。</p>
-<h3>buildForkedMessages</h3>
+<h3 id="buildforkedmessages">buildForkedMessages<a class="h-anchor" href="#buildforkedmessages" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/AgentTool/forkSubagent.ts:107-168（节选）</span>
 <span class="hl-kw">export</span> <span class="hl-kw">function</span> buildForkedMessages(directive, assistantMessage) {
   <span class="hl-kw">const</span> fullAssistantMessage = { ...assistantMessage, uuid: randomUUID(), ... }
@@ -482,7 +482,7 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
   <span class="hl-kw">return</span> [fullAssistantMessage, toolResultMessage]
 }</code></pre></figure>
 <p>得到的 wire 形状：<code>[...父历史, 父最后一条 assistant (包含所有 tool_use), user (所有占位 tool_result + 本子 directive)]</code>。</p>
-<h3>fork 的 system prompt 教学</h3>
+<h3 id="fork-的-system-prompt-教学">fork 的 system prompt 教学<a class="h-anchor" href="#fork-的-system-prompt-教学" aria-label="permalink">¶</a></h3>
 <p>fork 子 agent 的 system prompt 是在 <code>buildChildMessage()</code>（<code class="ref">forkSubagent.ts:171-198</code>）拼出来的——其实是塞在 user message 里的规则，因为父的 system prompt 被保留了（为了 cache）。关键条款：</p>
 <ul>
 <li>"You are NOT the main agent."</li>
@@ -491,9 +491,9 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
 <li>报告格式硬性约束：Scope / Result / Key files / Files changed / Issues。</li>
 </ul>
 <p>fork 是 sub-agent 一个特殊化的设计点：<strong>当继承上下文比省 token 更值得时，用继承；当子 agent 应该完全独立推理时，用 subagent_type</strong>。</p>
-<h2>4.9　Coordinator 与 Swarm：sub-agent 之上再加一层</h2>
+<h2 id="4-9-coordinator-与-swarm-sub-agent-之上再加一层">4.9　Coordinator 与 Swarm：sub-agent 之上再加一层<a class="h-anchor" href="#4-9-coordinator-与-swarm-sub-agent-之上再加一层" aria-label="permalink">¶</a></h2>
 <p>到这里 AgentTool 和 Task state 都讲清楚了。Coordinator 和 Swarm 是在这之上加壳。</p>
-<h3>Coordinator</h3>
+<h3 id="coordinator">Coordinator<a class="h-anchor" href="#coordinator" aria-label="permalink">¶</a></h3>
 <p>入口是环境变量：</p>
 <figure class="codeblock"><figcaption><span class="file">src/coordinator/coordinatorMode.ts:36-41</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> isCoordinatorMode(): boolean {
   <span class="hl-kw">if</span> (feature(&#x27;<span class="hl-type">COORDINATOR_MODE</span>&#x27;))
@@ -511,7 +511,7 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
 <li>INTERNAL_WORKER_TOOLS（<code class="ref">coordinatorMode.ts:29-34</code>）—— TeamCreate / TeamDelete / SendMessage / SyntheticOutput，这些 worker 自己用不到。</li>
 </ul>
 <p>Coordinator 本质上就是 "用 prompt 把主 agent 变成一个调度器"，底层还是 <code>AgentTool</code> + <code>&lt;task-notification&gt;</code>。没有新发明的调度引擎——<strong>prompt 是最低摩擦的架构</strong>。</p>
-<h3>Swarm</h3>
+<h3 id="swarm">Swarm<a class="h-anchor" href="#swarm" aria-label="permalink">¶</a></h3>
 <p>比 Coordinator 更重：每个 teammate 是一个独立 Claude Code 进程（tmux 分屏或 in-process），通过磁盘 mailbox 和共享任务板通信。官方定义：</p>
 <blockquote><p>"Agent teams let you coordinate multiple Claude Code instances working together. One session acts as the team lead, coordinating work, assigning tasks, and synthesizing results. Teammates work independently, each in its own context window, and communicate directly with each other." （<a href="https://code.claude.com/docs/en/agent-teams" rel="noreferrer">https://code.claude.com/docs/en/agent-teams</a>，访问于 2026-04-19）</p></blockquote>
 <p>它由 <code>CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS</code> 开启。本章只涉及和 sub-agent 调度有直接关系的两个 hook：</p>
@@ -520,12 +520,12 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
 <p>Team 架构的完整清单文档原话：</p>
 <blockquote><p>"Team lead: The main Claude Code session ... · Teammates: Separate Claude Code instances ... · Task list: Shared list of work items that teammates claim and complete · Mailbox: Messaging system for communication between agents." （<a href="https://code.claude.com/docs/en/agent-teams" rel="noreferrer">https://code.claude.com/docs/en/agent-teams</a>，访问于 2026-04-19）</p></blockquote>
 <p><strong>Task list 就是 TodoV2</strong>（4.7 讲的那四个工具），<strong>Mailbox</strong> 是 <code class="ref">src/utils/teammateMailbox.ts</code>（本章未展开）。多进程协调、tmux 细节、团队命名等见 <a class="chref" href="../ch13/">ch.13</a>。</p>
-<h2>4.10　权限回传：sub-agent 怎么问父/用户</h2>
+<h2 id="4-10-权限回传-sub-agent-怎么问父-用户">4.10　权限回传：sub-agent 怎么问父/用户<a class="h-anchor" href="#4-10-权限回传-sub-agent-怎么问父-用户" aria-label="permalink">¶</a></h2>
 <p>Sub-agent 做敏感操作（写文件、跑不在白名单里的 bash 命令）需要许可。权限决策的规则匹配、allow/deny 格式、auto 分类器逻辑详见 <a class="chref" href="../ch09/">ch.09</a>——本节只讲"跨 agent"这一层：请求如何从 sub-agent 路由回父 / lead / 用户。场景按主体分三层。</p>
-<h3>本地同步 sub-agent</h3>
+<h3 id="本地同步-sub-agent">本地同步 sub-agent<a class="h-anchor" href="#本地同步-sub-agent" aria-label="permalink">¶</a></h3>
 <p>默认共享父的 <code>abortController</code> 和 <code>toolUseContext</code>（4.6），<code>toolUseContext.canShowPermissionPrompts</code> 为 true 时继续用父终端的权限弹窗。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/tools/AgentTool/runAgent.ts:465-479</code>）：sub-agent <strong>默认继承父的 <code>alwaysAllowRules</code></strong>——你在主会话里按过 "Always allow" 的那些规则，sub-agent 里也照样生效。只有当 AgentTool 的 caller 显式传入 <code>allowedTools</code> 参数时，<code>agentGetAppState</code> 才会把 <code>alwaysAllowRules.session</code> 字段替换为 <code>[...allowedTools]</code>；注意此时 <code>cliArg</code> 字段（来自 SDK <code>--allowedTools</code>）被<strong>有意保留</strong>，代码里的原话是 "Preserve SDK-level permissions from --allowedTools"。—— 产品层面你不会注意到主/子 agent 的权限字典差别，但这条规则决定了：跨 agent 的 "Always" 是默认传染的，想要彻底隔离得在 AgentTool 调用处传 <code>allowedTools</code> 显式重置。跨 agent 权限规则的语义、匹配优先级见 <a class="chref" href="../ch09/">ch.09</a>。</p></blockquote>
-<h3>本地异步 sub-agent</h3>
+<h3 id="本地异步-sub-agent">本地异步 sub-agent<a class="h-anchor" href="#本地异步-sub-agent" aria-label="permalink">¶</a></h3>
 <p><code>shouldAvoidPermissionPrompts</code> 在 <code class="ref">runAgent.ts:436-452</code> 默认被设为 true：</p>
 <figure class="codeblock"><figcaption><span class="file">src/tools/AgentTool/runAgent.ts:440-451</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> shouldAvoidPrompts =
   canShowPermissionPrompts !== <span class="hl-kw">undefined</span>
@@ -540,9 +540,9 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
   }
 }</code></pre></figure>
 <p>"避免弹窗"不等于"无脑拒绝"——<code>awaitAutomatedChecksBeforeDialog</code>（<code>:458-463</code>）让 async agent 先等自动分类器（auto mode classifier）和 hooks 给答案，只有在自动链路都无法决定时才求助于"能弹窗的权限 channel"。</p>
-<h3>bubble 模式</h3>
+<h3 id="bubble-模式">bubble 模式<a class="h-anchor" href="#bubble-模式" aria-label="permalink">¶</a></h3>
 <p><code>permissionMode: &#x27;bubble&#x27;</code> 的 agent（目前主要是 FORK_AGENT，<code class="ref">forkSubagent.ts:67</code>）反过来：<strong>强制冒泡到父终端</strong>。因为 fork 继承父上下文、行动范围也和父类似，让用户在父终端直接决定是自然的。</p>
-<h3>Swarm worker</h3>
+<h3 id="swarm-worker">Swarm worker<a class="h-anchor" href="#swarm-worker" aria-label="permalink">¶</a></h3>
 <p>进程隔离，不能共享 <code>abortController</code>，也不能弹父的终端。流程：</p>
 <ol>
 <li>worker 侧构造 <code>SwarmPermissionRequest</code>：  <code><code>ts  // src/utils/swarm/permissionSync.ts:167-207（节选）  export function createPermissionRequest(params): SwarmPermissionRequest {    return {      id: generateRequestId(),      workerId, workerName, workerColor, teamName,      toolName: params.toolName,      toolUseId: params.toolUseId,      description: params.description,      input: params.input,      permissionSuggestions: params.permissionSuggestions || [],      status: &#x27;pending&#x27;,      createdAt: Date.now()    }  }  </code></code></li>
@@ -556,21 +556,21 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
 <p>官方文档对这件事的描述：</p>
 <blockquote><p>"Teammate permission requests bubble up to the lead, which can create friction. Pre-approve common operations in your permission settings before spawning teammates to reduce interruptions." （<a href="https://code.claude.com/docs/en/agent-teams" rel="noreferrer">https://code.claude.com/docs/en/agent-teams</a>，访问于 2026-04-19）</p></blockquote>
 <p>（前文已点明 <a class="chref" href="../ch09/">ch.09</a> 是权限决策规则本身的归宿。）</p>
-<h2>4.11　设计取舍</h2>
+<h2 id="4-11-设计取舍">4.11　设计取舍<a class="h-anchor" href="#4-11-设计取舍" aria-label="permalink">¶</a></h2>
 <p>把"为什么选 A 不选 B"的几对关键决定列出来。</p>
-<h3>把 sub-agent 的整段 run 压成一条 text-only tool_result</h3>
+<h3 id="把-sub-agent-的整段-run-压成一条-text-only-tool_result">把 sub-agent 的整段 run 压成一条 text-only tool_result<a class="h-anchor" href="#把-sub-agent-的整段-run-压成一条-text-only-tool_result" aria-label="permalink">¶</a></h3>
 <ul>
 <li><strong>A（选中）</strong>：<code>finalizeAgentTool</code> 只保留最后一条 assistant 的 text 块。</li>
 <li><strong>B（替代方案）</strong>：把 sub-agent 的完整 transcript 塞回主 agent。</li>
 </ul>
 <p>A 的成本：主 agent 如果想看"sub-agent 具体怎么找到答案的"，必须再跑一次或读 sidechain transcript 文件（<code>outputFile</code>）。B 的成本：sub-agent 可能调 50 个工具，这 50 条记录进入主 agent 的 context window，tool noise 会把主 agent 推向 prompt cache bust 和注意力分散。Claude Code 的选择是 A，以"可观察性"换"上下文整洁度"。</p>
-<h3><code>&lt;task-notification&gt;</code> 用 XML-in-user-message，不发明新 message type</h3>
+<h3 id="用-xml-in-user-message-不发明新-message-type"><code>&lt;task-notification&gt;</code> 用 XML-in-user-message，不发明新 message type<a class="h-anchor" href="#用-xml-in-user-message-不发明新-message-type" aria-label="permalink">¶</a></h3>
 <ul>
 <li><strong>A（选中）</strong>：异步结果作为 user 消息塞回队列，系统提示教会模型识别 <code>&lt;task-notification&gt;</code> tag。</li>
 <li><strong>B（替代方案）</strong>：在 Message 类型里加一个 <code>&#x27;task-notification&#x27;</code> 子类型，改 schema，改所有下游（SDK、UI、transcript writer）。</li>
 </ul>
 <p>A 的成本：模型必须学会这个 tag 的含义——在 coordinator 模式下 system prompt 专门讲了（<code class="ref">coordinatorMode.ts:144-160</code>）。B 的成本：schema 改动传染整个生态，SDK 消费者要兼容新字段，transcript 回放兼容要加版本号，prompt cache 会对旧历史 bust。A 的胜出理由：<strong>transport 层零改动、向后兼容一阶免费</strong>。</p>
-<h3>主 agent 的 abortController 和 async sub-agent 解耦</h3>
+<h3 id="主-agent-的-abortcontroller-和-async-sub-agent-解耦">主 agent 的 abortController 和 async sub-agent 解耦<a class="h-anchor" href="#主-agent-的-abortcontroller-和-async-sub-agent-解耦" aria-label="permalink">¶</a></h3>
 <p><code class="ref">runAgent.ts:526</code> 用了一段显式注释：</p>
 <blockquote><p>"Don't link to parent's abort controller -- background agents should survive when the user presses ESC to cancel the main thread. They are killed explicitly via chat:killAgents."</p></blockquote>
 <ul>
@@ -578,15 +578,15 @@ duration_ms: ${data.totalDurationMs}&lt;/usage&gt;`</span>
 <li><strong>B（替代方案）</strong>：child controller 继承父。</li>
 </ul>
 <p>B 看起来更"家族一致"但会让 ESC 取消主线程 = 杀所有背景任务。async 的语义是"我现在不等它"，这和"用户想结束当前 turn"应该是两件事。A 的代价是需要一个额外 kill 通道（<code>chat:killAgents</code>、<code>killAllRunningAgentTasks</code>）。</p>
-<h3>sync 到 async 的切换用 Promise race 而不是信号</h3>
+<h3 id="sync-到-async-的切换用-promise-race-而不是信号">sync 到 async 的切换用 Promise race 而不是信号<a class="h-anchor" href="#sync-到-async-的切换用-promise-race-而不是信号" aria-label="permalink">¶</a></h3>
 <ul>
 <li><strong>A（选中）</strong>：<code class="ref">AgentTool.tsx:886-892</code> 的 <code>Promise.race([agentIterator.next(), backgroundPromise])</code>。</li>
 <li><strong>B（替代方案）</strong>：捕获用户键入并通过信号把同步循环"打断"。</li>
 </ul>
 <p>A 的胜出理由：<strong>无需额外同步原语</strong>。每一轮工具调用返回都是一个自然的 yield 点，Promise race 天然对齐；切到 async 之后当前迭代器 return()（触发 finally 清理），下一段在 void 里重新起一个 async 的 runAgent，前半段已经积累的 <code>agentMessages</code> 被带过去用作 progress 初值。</p>
-<h3><code>setAppStateForTasks</code> 和 <code>setAppState</code> 拆成两条通道</h3>
+<h3 id="setappstatefortasks-和-setappstate-拆成两条通道"><code>setAppStateForTasks</code> 和 <code>setAppState</code> 拆成两条通道<a class="h-anchor" href="#setappstatefortasks-和-setappstate-拆成两条通道" aria-label="permalink">¶</a></h3>
 <p>表面上冗余，实际解耦了"UI 更新"和"任务注册"两个语义。嵌套 async 场景下只有后者需要永远送达 root store，前者有意 no-op。</p>
-<h2>4.12　可迁移的点</h2>
+<h2 id="4-12-可迁移的点">4.12　可迁移的点<a class="h-anchor" href="#4-12-可迁移的点" aria-label="permalink">¶</a></h2>
 <p>读者想把哪些东西借走，放到自己项目里？</p>
 <ol>
 <li><strong>一次 tool call = 一个完整 agent run</strong>。这个抽象让主 agent 的推理代码不需要区分"本地工具"和"agent"，两者共用一个 schema 和生命周期契约。自己写 agent 框架时可以先定一条规则：<strong>任何子 agent 的产出都必须能被压缩成父 agent 的一条 tool_result</strong>。能压就让它进系统，不能压的东西（比如长 log）要么流式写盘（outputFile 模式），要么事后 Read。</li>

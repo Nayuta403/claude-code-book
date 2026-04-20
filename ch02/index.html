@@ -40,7 +40,7 @@
 <article class="article">
   <div class="prose">
 <blockquote><p><a class="chref" href="../ch01/">ch.01</a> 把能力清点完了。这一章换视角：挑 5 个端到端的真实场景，看这些能力<strong>怎么配合</strong>。本章不展开任何模块的实现，触到的地方一律标"（详见 ch0X）"；重点是"胶水"——哪段代码把几件事串成一件事。</p></blockquote>
-<h2>2.1 为什么单开一章讲场景</h2>
+<h2 id="2-1-为什么单开一章讲场景">2.1 为什么单开一章讲场景<a class="h-anchor" href="#2-1-为什么单开一章讲场景" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 单个能力拿出来讲不稀奇：开一个 TUI、实现 tool use、装个 git worktree。稀奇在于，同一个二进制要把"用户选中 VS Code 里几行代码"、"在终端让 sub-agent 去 worktree 实现功能"、"下班把 session 推到云上接着跑"、"明早九点 cron 拉 CI 状态提醒"这些事塞进同一条 Agent Loop。</p>
 <p>组装端的代码体量很小，但位置讲究。每个场景里真正值得抄的不是某个工具本身，而是某一条"跨模块的粘合路径"——例如"cron fire 把 prompt 扔进同一条命令队列，用 <code>isMeta:true</code> 把它藏起来"。这类粘合层在单章里最容易被忽略，所以把 showcase 单独拎一章。</p>
 <p>挑选原则：</p>
@@ -55,7 +55,7 @@
 <tr><td>2.4 Plan → worktree sub-agent</td><td><code>/plan</code> · <code>ExitPlanModeV2</code> · <code>AgentTool(isolation:&quot;worktree&quot;)</code> · PreToolUse hook</td></tr>
 <tr><td>2.5 IDE → CLI → Remote Control</td><td>IDE MCP 选区通知 · <code>/remote-control</code> · BRIDGE 白名单 · mobile push</td></tr>
 <tr><td>2.6 Web session → <code>/teleport</code> 回本地</td><td><code>claude --remote</code> · <code>teleportFromSessionsAPI</code> · git 切换</td></tr></tbody></table></div>
-<h2>2.2 场景一：Review my PR</h2>
+<h2 id="2-2-场景一-review-my-pr">2.2 场景一：Review my PR<a class="h-anchor" href="#2-2-场景一-review-my-pr" aria-label="permalink">¶</a></h2>
 <p><strong>用户输入</strong>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">/review 1234</code></pre></figure>
 <p><strong>用户看到的节点</strong>：进度条显示 <code>reviewing pull request</code>；片刻后 Claude 跑一串 <code>gh</code> 命令（每条要点一次权限确认，除非已加白名单）；最后返回分段评论。如果用户当时在 plan mode，会先被问一次"Exit plan mode?"。</p>
@@ -79,7 +79,7 @@
 </ul>
 <p><strong>这个场景跑通是因为</strong>：一条命令可以"什么都不做"，只往对话里贴一段内置 prompt。剩下的一切（git、Bash 权限、plan mode 门控、输出格式）都由 Agent Loop 自己决定。没有任何"review 专属"代码路径；也因此本地 <code>/review</code> 只有 50 行。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/commands/review.ts:33-42</code> + <code class="ref">src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts:195-219</code>）：在 plan mode 下输入 <code>/review 1234</code>，触发的不是 <code>gh pr diff</code> 被直接拦截，而是模型先尝试 <code>ExitPlanMode</code>、<code>validateInput</code> 检查 <code>mode === &#x27;plan&#x27;</code> 通过后走 <code>checkPermissions</code> 返回 <code>behavior:&#x27;ask&#x27;</code>，弹出"Exit plan mode?"对话框。用户看到的感觉是"怎么问我退出 plan 了"，但其实是<strong>审批对象从 Bash 变成了 plan 退出</strong>。加了 <code>Bash(gh *)</code> allowlist 也救不了这条，因为它拦的是 plan mode 的 mode-change，不是 shell。</p></blockquote>
-<h2>2.3 场景二：Overnight task with cron</h2>
+<h2 id="2-3-场景二-overnight-task-with-cron">2.3 场景二：Overnight task with cron<a class="h-anchor" href="#2-3-场景二-overnight-task-with-cron" aria-label="permalink">¶</a></h2>
 <p><strong>用户输入</strong>（睡前）：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">/loop 30m check the release PR and tell me if CI turned red</code></pre></figure>
 <p>第二天早上打开终端，REPL 里多出几条"Running scheduled task" 的标记，每条后面是模型对 CI 的判断。</p>
@@ -121,7 +121,7 @@
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/hooks/useScheduledTasks.ts:71-82</code>）：cron 触发的 prompt 进 API 时带 <code>workload: WORKLOAD_CRON</code>，服务端在流量紧张时会给这类请求排到更低 QoS。用户在 REPL 里完全看不到这条标记，但这是"半夜 cron 任务偶尔比预期慢"的根本原因之一——不是 cron 自己慢，是它被显式降级了。</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/tools/ScheduleCronTool/CronCreateTool.ts:107-114</code>）：<code>durable:true</code>（让任务写 <code class="ref">.claude/scheduled_tasks.json</code>，跨会话存活）对 teammate 一律禁用，返回 <code>errorCode:4</code>。原因是 teammate 不持久化，durable 会让 <code>agentId</code> 指向一个不存在的 teammate。产品 UI 里 <code>/schedule</code> 看不出这层限制，但若用 sub-agent 帮你排 cron 就会吃到。</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/tools/ScheduleCronTool/CronCreateTool.ts:97-104</code>）：每个 session 有硬上限 <code>MAX_JOBS</code>（官方文档给的数是 50），超过就返 <code>errorCode:3</code>，错误文案是 "Too many scheduled jobs (max ${MAX_JOBS}). Cancel one first."。REPL 用户只会看到这条报错，不会看到具体阈值——除非翻源码。对用 <code>/loop</code> 密集排各种轮询的用户，这条比 durable-teammate 限制更常撞到，cron 密度设计要预留冗余。</p></blockquote>
-<h2>2.4 场景三：Plan → Worktree sub-agent 落地</h2>
+<h2 id="2-4-场景三-plan-worktree-sub-agent-落地">2.4 场景三：Plan → Worktree sub-agent 落地<a class="h-anchor" href="#2-4-场景三-plan-worktree-sub-agent-落地" aria-label="permalink">¶</a></h2>
 <p><strong>用户输入</strong>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">(Shift+Tab 进 Plan mode)
 &gt; 给 auth 模块加 magic-link 登录，列 OAuth / magic-link / passkey 三条路线对比
@@ -156,7 +156,7 @@ done</code></pre></figure>
 <li>plan 写到磁盘（<code>getPlanFilePath(context.agentId)</code>），sub-agent 能 Read 到同一份。</li>
 <li><code>AgentTool.isolation</code> 把 worktree 的复杂清理周期藏进 sub-agent 生命周期——主 agent 根本不管。</li>
 </ol>
-<h2>2.5 场景四：IDE → CLI → Remote Control → 手机 push</h2>
+<h2 id="2-5-场景四-ide-cli-remote-control-手机-push">2.5 场景四：IDE → CLI → Remote Control → 手机 push<a class="h-anchor" href="#2-5-场景四-ide-cli-remote-control-手机-push" aria-label="permalink">¶</a></h2>
 <p><strong>用户流程</strong>：</p>
 <ol>
 <li>在 VS Code 里选中 <code class="ref">src/auth/login.ts</code> 的 30-45 行，按 Option+K 把 <code>@src/auth/login.ts#30-45</code> 塞进 Claude 扩展的输入框。</li>
@@ -206,7 +206,7 @@ done</code></pre></figure>
 <p><strong>这个场景跑通是因为</strong>：三种 surface 不是 point-to-point 连接，而是"每种 surface 都把输入折叠成 REPL 的 prompt / tool_result"再入队。IDE 扩展其实只是自己跑了一个 MCP server（官方文档：the extension "runs a local MCP server that the CLI connects to automatically"，<a href="https://code.claude.com/docs/en/ide-integrations" rel="noreferrer">https://code.claude.com/docs/en/ide-integrations</a> 访问 2026-04-19），CLI 用 MCP notification 订阅选区；Remote Control 本质是"claude.ai 的输入流转发给本地 CLI 的 stdin"。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/commands.ts:672-676</code>）：手机上敲 <code>/model</code> 不会报错，也不会切换模型；它会被 <code>isBridgeSafeCommand</code> 静默吞掉（<code>local-jsx</code> 型命令不在任何白名单）。用户通常的反应是"没反应"。这条过滤规则在 PR #19134 是全量 block，后来才放宽到这个双层白名单。要从 mobile 添加一条安全命令，必须进 <code>BRIDGE_SAFE_COMMANDS</code> 显式加一行。</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/hooks/useIdeSelection.ts:92-108</code>）：在 VS Code 里选区停在行首（<code>end.character === 0</code>），行数会被 <code>-1</code>。这是把 VS Code 原生 Range 语义（"选择到下一行的开头算选了下一行"）调成用户直觉语义（"我光标还在上一行末尾，下一行没选"）。对 IDE 侧 UI 无影响，但影响 <code>@file.ts#5-10</code> 这种 <code>#range</code> 里的 <code>10</code> 到底是哪个值。</p></blockquote>
-<h2>2.6 场景五：Web session → <code>/teleport</code> 回本地</h2>
+<h2 id="2-6-场景五-web-session-teleport-回本地">2.6 场景五：Web session → <code>/teleport</code> 回本地<a class="h-anchor" href="#2-6-场景五-web-session-teleport-回本地" aria-label="permalink">¶</a></h2>
 <p><strong>用户流程</strong>：</p>
 <ol>
 <li>下班前在终端：<code>claude --remote &quot;Run the migration rehearsal and report results&quot;</code>——云端 session 启动，clone repo、跑任务。</li>
@@ -238,7 +238,7 @@ done</code></pre></figure>
 </ul>
 <p><strong>这个场景跑通是因为</strong>：云端 session 和本地 session 用同一个 SDK message 格式（<code>src/entrypoints/sdk/</code>），transcript 可以在两个进程之间二进制转发。分支切换是 git 的事；context 延续是 transcript deserialize 的事；两件事由一个 CLI flag 串起来。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/teleport.tsx:1200-1222</code> 与调用点审计）：<code>archiveRemoteSession</code> 是"拉回本地 → 归档云端 session"的闭环关键，但它<strong>只在 <code>RemoteAgentTask</code> 完成</strong>（<code class="ref">src/tasks/RemoteAgentTask/RemoteAgentTask.tsx:841</code>）和 <code>ultraplan</code> 本地执行分支（<code class="ref">src/commands/ultraplan.tsx:157</code> 与 <code>395</code>）里被调用。<code>--teleport</code> / <code>/teleport</code> 的 pull-down 路径<strong>不调</strong>它。结果是：用户把云 session teleport 回本地继续干了，云端那份 session 在 claude.ai 仍然显示为 idle，并不自动归档；要么在 web UI 里手动 archive，要么用 ultraplan/RemoteAgent 路径进行生命周期管理。对用户的直接影响：cloud rate limit 额度持续被占，直到用户记得回去点 archive。</p></blockquote>
-<h2>2.7 横向看：这 5 个场景共同靠什么撑起来</h2>
+<h2 id="2-7-横向看-这-5-个场景共同靠什么撑起来">2.7 横向看：这 5 个场景共同靠什么撑起来<a class="h-anchor" href="#2-7-横向看-这-5-个场景共同靠什么撑起来" aria-label="permalink">¶</a></h2>
 <p>归纳这 5 个场景的<strong>共同胶水</strong>，比逐个研究场景更有参考价值：</p>
 <ol>
 <li><strong>一条统一的命令队列是中枢</strong>。用户敲的 prompt、cron fire 的 prompt、task 完成通知、bridge 推下来的 <code>/compact</code>、teleport 拉回时注入的 meta 消息——全部统一成 queued command 排队进 REPL。模式字段区分用途（<code>&#x27;prompt&#x27;</code> / <code>&#x27;task-notification&#x27;</code> / <code>&#x27;queued_command&#x27;</code>，见 <code class="ref">src/utils/attachments.ts:543-559</code>、<code>1044</code>），priority 决定顺序（<code>&#x27;later&#x27;</code> vs. 默认）。任何新输入来源只要会自己 enqueue 一次，就自动享有 transcript、hooks、permission、token 计费的全部下游链路。</li>

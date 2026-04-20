@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2>15.1 用户看到什么</h2>
+<h2 id="15-1-用户看到什么">15.1 用户看到什么<a class="h-anchor" href="#15-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">常规的 Claude Code 会话里，用户说一句、模型回一句。<code>claude --proactive</code> （或者设 <code>CLAUDE_CODE_PROACTIVE=1</code>）启动之后，模型不再等待用户输入 —— 它自己会不停"醒来"，检查有没有活干、没活就睡一会儿再试。REPL 的 footer 区在 proactive 启用时会多出一行 <code>waiting 30s</code> 的倒计时提示，告诉用户下一次 心跳什么时候到。用户按 Esc 中断，心跳就暂停；用户下一次提交输入，心跳 自动恢复。</p>
 <p>和 proactive 相邻的两个机制在用户视角看起来也像"主动行为"：</p>
 <ul>
@@ -47,7 +47,7 @@
 <li><strong>Teammate inbox</strong>。多人 agent swarm 里，别的 teammate 可以往当前 session 的邮箱写消息。session idle 时立即投递为新 turn，busy 时排队等主 loop 结束。 和权限请求一类的消息还会顺带弹一个桌面通知。</li>
 </ul>
 <p>本章的主干是 <code>src/proactive/</code> 的 Proactive mode，外加 <code>useAwaySummary</code> 作为"对称的独立机制"讲清边界。Inbox 协议细节属 <a class="chref" href="../ch17/">ch.17</a>（见 <a class="chref" href="../ch17/">ch.17</a> §17.4 Teammate inbox 数据结构，含远端 inbox 与本地文件 inbox 的分裂）， 本章只从 Proactive 视角看它的 idle/busy 投递策略。Buddy 作为通知渲染端 / 消费者在 <a class="chref" href="../ch19/">ch.19</a>（见 <a class="chref" href="../ch19/">ch.19</a> §19.7 通知集成 —— 渲染侧）；Hooks 里的 Notification 事件源见 <a class="chref" href="../ch14/">ch.14</a>（见 <a class="chref" href="../ch14/">ch.14</a> §14.9 内置事件源 vs 用户配置 hook）； cron / 定时任务触发 proactive 见 <a class="chref" href="../ch13/">ch.13</a>（见 <a class="chref" href="../ch13/">ch.13</a> §13.8 触发后：prompt 怎么被注入）。终端 focus 感知本身依赖 Ink 的事件层，见 <a class="chref" href="../ch21/">ch.21</a> §21.5 一帧是怎么出来的。sub-agent 在 proactive 活跃时被强制后台化， 相关约束见 <a class="chref" href="../ch04/">ch.04</a> §4.6 sub-agent 的生命周期。</p>
-<h2>15.2 为什么挑这个设计讲</h2>
+<h2 id="15-2-为什么挑这个设计讲">15.2 为什么挑这个设计讲<a class="h-anchor" href="#15-2-为什么挑这个设计讲" aria-label="permalink">¶</a></h2>
 <p>副标题里的"不打扰"容易让人把 Proactive 误解成一个客户端节流器。读完源码 之后判断反过来：<strong>Claude Code 的 proactive 系统里，客户端代码几乎不做任何 节流，所有"不打扰"语义都写在 system prompt 里</strong>。</p>
 <p><code class="ref">src/proactive/index.ts</code> 全长 58 行，只暴露四个状态变量和一组 pub/sub 订阅点。真正的 tick 注入 —— 把 <code>&lt;tick&gt;</code> 塞进 command queue 让模型再跑 一轮 —— 是 <code class="ref">src/cli/print.ts</code> 里三十几行的 <code>scheduleProactiveTick</code>。然后 <code class="ref">src/constants/prompts.ts:860-914</code> 里 50 行的自然语言"做人哲学"告诉模型 心跳到了该怎么处理。</p>
 <p>这个分工值得单独讲：</p>
@@ -56,8 +56,8 @@
 <li>模型是节奏决策者。依据是 prompt 里给它的规则 + userContext 里塞的一条 "terminal 是否 focused"字符串。</li>
 </ul>
 <p>比客户端写节流器便宜得多，更重要的是语义表达力强。"如果用户刚发了消息 就优先回复"这种条件，用代码写要定义"刚发"、"优先"两个阈值；用 prompt 一 句话就表达完了。</p>
-<h2>15.3 关键数据结构</h2>
-<h3>15.3.1 Proactive 状态模块</h3>
+<h2 id="15-3-关键数据结构">15.3 关键数据结构<a class="h-anchor" href="#15-3-关键数据结构" aria-label="permalink">¶</a></h2>
+<h3 id="15-3-1-proactive-状态模块">15.3.1 Proactive 状态模块<a class="h-anchor" href="#15-3-1-proactive-状态模块" aria-label="permalink">¶</a></h3>
 <p>全仓最短的核心模块之一：</p>
 <figure class="codeblock"><figcaption><span class="file">src/proactive/index.ts:1-58</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">let</span> active = <span class="hl-kw">false</span>
 <span class="hl-kw">let</span> paused = <span class="hl-kw">false</span>
@@ -106,11 +106,11 @@
 <p>注：<code>contextBlocked</code> 的 setter 只 emit 不被再读回；<code>nextTickAt</code> 只在 activate/deactivate 置空，没有被设置成具体时间戳的写路径。这两处是恢复 版本里的 shim 断点，但语义可以从调用方还原 —— 真实实现里 <code>scheduleProactiveTick</code> 应当在 <code>contextBlocked</code> 时 short-circuit，并且在 fire 前把 <code>Date.now() + delay</code> 写入 <code>nextTickAt</code> 供 UI 倒计时读取。下文按这个语义 叙述。[^1]</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/proactive/index.ts:51</code>）：<code>setContextBlocked</code> 里那行 <code>void contextBlocked</code> 不是占位符，是 TypeScript 里压住 <code>@typescript-eslint/no-unused-vars</code> 的 discard。从模块<strong>内部</strong>看它没有 reader，全仓 grep 外部也读不回 —— 所以在当前恢复版本里，<code>setContextBlocked(true)</code> 的实际效果<strong>只是通过 <code>emit()</code> 通知订阅者"状态变了"，并不会真的 short-circuit 下一次 tick</strong>。产品层看不到这个差异（因为 REPL 路径另有 兜底：API error 后 run() 不会继续插 tick），但在 headless <code class="ref">print.ts</code> 路径上，真实实现里的 blocked short-circuit 在本仓库中是缺失的。</p></blockquote>
 <p>[^1]: 参见 <code class="ref">book/research/ch15/open-questions.md</code> 的 1、2 两条。</p>
-<h3>15.3.2 Tick 的文本协议</h3>
+<h3 id="15-3-2-tick-的文本协议">15.3.2 Tick 的文本协议<a class="h-anchor" href="#15-3-2-tick-的文本协议" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/constants/xml.ts:25</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">TICK_TAG</span> = &#x27;tick&#x27;</code></pre></figure>
 <p>心跳的 payload 是 <code>&lt;tick&gt;10:23:45 AM&lt;/tick&gt;</code> —— 一对 XML-like tag 包时间 字符串。时间字段对模型是有用信号：prompt 里明确告诉它"把这个当用户本地 当前时间，用来判断时段"（<code class="ref">src/constants/prompts.ts:866</code>）。</p>
-<h2>15.4 关键流程</h2>
-<h3>15.4.1 启动</h3>
+<h2 id="15-4-关键流程">15.4 关键流程<a class="h-anchor" href="#15-4-关键流程" aria-label="permalink">¶</a></h2>
+<h3 id="15-4-1-启动">15.4.1 启动<a class="h-anchor" href="#15-4-1-启动" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/main.tsx:3838-3840</span><span class="lang">text</span></figcaption><pre><code class="language-text">if (feature(&#x27;PROACTIVE&#x27;) || feature(&#x27;KAIROS&#x27;)) {
   program.addOption(new Option(&#x27;--proactive&#x27;, &#x27;Start in proactive autonomous mode&#x27;));
 }</code></pre></figure>
@@ -151,7 +151,7 @@
   sendControlResponseSuccess(message)
 }</code></pre></figure>
 <p>活跃期切换时立即调一次 <code>scheduleProactiveTick()</code>，不等下一次 run() 结束 才插第一个 tick。</p>
-<h3>15.4.2 心跳注入（headless）</h3>
+<h3 id="15-4-2-心跳注入-headless">15.4.2 心跳注入（headless）<a class="h-anchor" href="#15-4-2-心跳注入-headless" aria-label="permalink">¶</a></h3>
 <p>主线：</p>
 <figure class="codeblock"><figcaption><span class="file">src/cli/print.ts:1831-1856</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// Proactive mode: schedule a tick to keep the model looping autonomously.</span>
 <span class="hl-cm">// setTimeout(0) yields to the event loop so pending stdin messages</span>
@@ -200,7 +200,7 @@
 <li><strong><code>priority: &#x27;later&#x27;</code></strong>。Queue 支持 <code>now &gt; next &gt; later</code> 三级优先级  （<code class="ref">src/utils/messageQueueManager.ts:47-51</code>）。"now" 专给中断用，"next"  给常规用户输入，tick 永远垫底。</li>
 <li><strong><code>isMeta: true</code></strong>。这条属性影响两处：transcript 里该消息被标为"对  用户不可见"；batching 判定里 <code>isMeta</code> 必须同值才允许合并。第二点下面  展开。</li>
 </ol>
-<h3>15.4.3 Tick 的 batching</h3>
+<h3 id="15-4-3-tick-的-batching">15.4.3 Tick 的 batching<a class="h-anchor" href="#15-4-3-tick-的-batching" aria-label="permalink">¶</a></h3>
 <p>长时间 turn 结束后可能积压了好几个 tick（每轮 finally 都塞一个）。 queue 里这些是按 FIFO 排着的 <code>priority:&#x27;later&#x27;</code> + <code>isMeta:true</code> 命令。 <code>drainCommandQueue</code> 会贪心合并：</p>
 <figure class="codeblock"><figcaption><span class="file">src/cli/print.ts:443-453</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> canBatchWith(
   head: <span class="hl-type">QueuedCommand</span>,
@@ -231,7 +231,7 @@
 <blockquote><p>Multiple ticks may be batched into a single message. This is normal — just process the latest one. Never echo or repeat tick content in your response. —— <code class="ref">src/constants/prompts.ts:868</code></p></blockquote>
 <p>多条 tick 到了模型那里就是一段连续的 <code>&lt;tick&gt;...&lt;/tick&gt;\n&lt;tick&gt;...&lt;/tick&gt;</code>， prompt 明确说"挑最新那条处理"。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/cli/print.ts:1958</code>）：批量合并后留下的 uuid 来自 <code>batch.findLast(c =&gt; c.uuid)?.uuid ?? command.uuid</code> —— 只保留<strong>最后一个</strong> 带 uuid 的 command，而不是头元素。外部系统（clank / ccr footer 等跟踪 command lifecycle 的消费者）只能对账到批次末尾那个 tick，批次里早期 的 tick 没有 uuid 层面的 ack。用户视角看不出区别，但如果你在这基础上 自己写观测，采样会有偏：永远只看见"组内最后一次"。</p></blockquote>
-<h3>15.4.4 REPL 路径上的 Proactive</h3>
+<h3 id="15-4-4-repl-路径上的-proactive">15.4.4 REPL 路径上的 Proactive<a class="h-anchor" href="#15-4-4-repl-路径上的-proactive" aria-label="permalink">¶</a></h3>
 <p>交互式 REPL（<code class="ref">src/screens/REPL.tsx</code>）里没有一份和 <code>scheduleProactiveTick</code> 对等的 tick 注入器。[^2] REPL 对 Proactive 的消费是三方面：</p>
 <p>[^2]: 具体见 <code class="ref">book/research/ch15/open-questions.md</code> 第 8 条。可能是 REPL 委托给 query 层的 continue-loop 逻辑，也可能是恢复版本里的缺口。</p>
 <p><strong>1. 读状态</strong>，让 tools / prompt / UI 根据 proactive active 调整：</p>
@@ -268,7 +268,7 @@ if (feature(&#x27;PROACTIVE&#x27;) || feature(&#x27;KAIROS&#x27;)) {
 </ul>
 <p>为什么要专门设这个位：context 快满了的时候 API 会返 <code>prompt_too_long</code> 错，此时如果 proactive 还在插 tick，每个 tick 都会再次撞 error，形成 "插 tick → error → 还在插 tick"的死循环。blocked 状态挂起心跳，等 compact 把 context 缩小后恢复。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/commands/clear/conversation.ts:111-117</code>，对比 <code class="ref">src/proactive/index.ts:25-34</code>）：<code>/clear</code> 和三条 compact 路径只清 <code>contextBlocked = false</code>，<strong>不会</strong>把 <code>active</code> 或 <code>paused</code> 置回默认。 也就是说用户跑 <code>/clear</code> 或 auto compact 后，proactive mode 本身<strong>继续 活跃</strong>；下一轮 tick 会在一个全新的 / 被压缩的 context 上重新开始。 产品层观察起来像是"proactive 吞吃了 clear"：历史消息没了，倒计时却 还在走。反过来，Esc 后的 <code>paused=true</code> 也不会被 <code>/clear</code> 清除 —— 想 完全退出 proactive 只能靠 <code>set_proactive:false</code> 或关闭进程。</p></blockquote>
-<h3>15.4.5 Terminal focus 作为模型输入</h3>
+<h3 id="15-4-5-terminal-focus-作为模型输入">15.4.5 Terminal focus 作为模型输入<a class="h-anchor" href="#15-4-5-terminal-focus-作为模型输入" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/screens/REPL.tsx:2805-2811</span><span class="lang">text</span></figcaption><pre><code class="language-text">const userContext = {
   ...baseUserContext,
   ...getCoordinatorUserContext(freshMcpClients, isScratchpadEnabled() ? getScratchpadDir() : undefined),
@@ -285,7 +285,7 @@ The user context may include a \`terminalFocus\` field indicating whether the us
 - **Focused**: The user is watching. Be more collaborative — surface choices, ask before committing to large changes, and keep your output concise so it&#x27;s easy to follow in real time.</code></pre></figure>
 <p>注意字段只在 <strong>unfocused 时</strong> 才注入。focused 对应缺省行为。这避免了把 "用户在看"这种正常状态也塞进每个请求，浪费 token。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/ink/terminal-focus-state.ts:12-24</code>）：<code>terminalFocus</code> 字段没有"更新频率"—— 它是纯事件驱动的。DECSET 1004 让终端在 focus 改变时发 CSI I / CSI O 两种转义序列，Ink 的事件层捕获后调一次 <code>setTerminalFocused(v)</code>，同步通知所有 <code>subscribeTerminalFocus</code> 订阅者。 也就是说 <code>terminalFocusRef.current</code> 在两次 focus 切换之间是完全静止 的，<strong>不存在轮询开销</strong>。相应地：终端若不支持 DECSET 1004，状态永远停 留在 <code>&#x27;unknown&#x27;</code>，消费端把 <code>unknown</code> 当作 <code>focused</code> 处理 —— 此时 Proactive 永远拿不到"用户离开"的信号，退化成纯 tick 驱动。判别方法 是看 footer 的 terminal-focus 指示符是否保持"假设 focused"。</p></blockquote>
-<h3>15.4.6 System prompt 里的不打扰规则</h3>
+<h3 id="15-4-6-system-prompt-里的不打扰规则">15.4.6 System prompt 里的不打扰规则<a class="h-anchor" href="#15-4-6-system-prompt-里的不打扰规则" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/constants/prompts.ts:860-914</code> 的 <code>getProactiveSection()</code> 是 Proactive 活跃时注入 system prompt 的那段"做人哲学"。工程上它由<strong>七个小节</strong>组成 （Pacing / First wake-up / What to do on subsequent wake-ups / Staying responsive / Bias toward action / Be concise / Terminal focus），外加 顶部一段"ticks 是 check-in、多个 tick 会被 batch"的引子。七节每一节 对应一个具体的 anti-pattern。下面挑其中六节看它们分别在堵什么 （<code>What to do on subsequent wake-ups</code> 内容与 Pacing 有重合，这里并入 Pacing 一起讲）：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">## Pacing
 Use the Sleep tool to control how long you wait between actions. Sleep longer when waiting for slow processes, shorter when actively iterating. ...
@@ -310,7 +310,7 @@ Act on your best judgment rather than asking for confirmation.</code></pre></fig
 <p>Prompt 的工程属性是很强的：每一段都在堵一类具体失败模式，不是笼统讲 "做个好 agent"。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/systemPrompt.ts:99-107</code>）：Proactive 活跃时， 自定义 agent 的 system prompt 从默认的"<strong>替换</strong> default"切换成"<strong>追加</strong>到 default 之上"。也就是说，你在定义 agent 时写的 instructions 如果依赖 "我是唯一 prompt、上面没有别的内容" 的假设（比如"忽略前面所有指令"之类 的话术），在非 proactive 下成立、在 proactive 下就挂了 —— 默认 prompt、 Proactive 七节、Brief 段落会同时存在。这是跨两种模式复用 agent 定义时 最容易踩的坑。</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code>src/constants/prompts.ts:852-857, 913</code>）：Brief 段落 （<code>BRIEF_PROACTIVE_SECTION</code>）在 proactive 活跃时由 <code>getProactiveSection()</code> 末尾的 ternary inline 追加，独立的 <code>getBriefSection</code> 在 proactive 活跃时 直接 <code>return null</code> 避免重复注入。改 Brief 段的开发者若只改了独立路径 忘了 proactive 这一条，会出现"非 proactive 下新内容生效、proactive 下 还是老内容"的诡异现象 —— Brief 与 Proactive 两个 feature flag 的互斥 路径藏在这里。</p></blockquote>
-<h3>15.4.7 Sleep tool：心跳的配套</h3>
+<h3 id="15-4-7-sleep-tool-心跳的配套">15.4.7 Sleep tool：心跳的配套<a class="h-anchor" href="#15-4-7-sleep-tool-心跳的配套" aria-label="permalink">¶</a></h3>
 <p>没有 Sleep tool 的话，"什么都不做"这个动作在 LLM 里无法表达 —— 每轮必须 输出文本或工具调用。Sleep 给"空闲"一个显式 token：</p>
 <figure class="codeblock"><figcaption><span class="file">src/tools/SleepTool/prompt.ts:1-17</span><span class="lang">text</span></figcaption><pre><code class="language-text">import { TICK_TAG } from &#x27;../../constants/xml.js&#x27;
 
@@ -340,7 +340,7 @@ Each wake-up costs an API call, but the prompt cache expires after 5 minutes of 
 <li>Prompt 强制选 Sleep（运行期约束）。</li>
 </ul>
 <p>两边闭环后，模型在 proactive mode 的 idle 语义变成"call Sleep(N)"， 而不是"输出 '还没事干' + 等下一个 tick"。Sleep 的 prompt 还顺手教模型 权衡睡眠时长与 5 分钟 prompt cache TTL 的关系 —— <a href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching" rel="noreferrer">Anthropic prompt caching 文档</a> 定义了这个 TTL，Sleep prompt 把它翻译成用户侧的实用建议。</p>
-<h3>15.4.8 其他 proactive-aware 的消费点</h3>
+<h3 id="15-4-8-其他-proactive-aware-的消费点">15.4.8 其他 proactive-aware 的消费点<a class="h-anchor" href="#15-4-8-其他-proactive-aware-的消费点" aria-label="permalink">¶</a></h3>
 <p>Proactive 活跃状态在若干 UI 层被读来抑制会打扰用户的背景行为：</p>
 <ul>
 <li><strong>Terminal progress bar</strong>（OSC 9;4）禁用：
@@ -361,7 +361,7 @@ Each wake-up costs an API call, but the prompt cache expires after 5 minutes of 
 </ul>
 <blockquote><p><strong>隐藏细节</strong>（<code>src/tools/SkillTool/SkillTool.ts:162-164, 685-687, 1039-1041</code>）：SkillTool 上报给 telemetry 的 <code>invocation_trigger</code> 在 <code>queryDepth === 0</code> 时一律写死为 <code>&#x27;claude-proactive&#x27;</code>（非 0 写 <code>&#x27;nested-skill&#x27;</code>）—— 不看 <code>isProactiveActive()</code>。也就是<strong>关掉 <code>--proactive</code> 跑技能也会在埋点里被标成 <code>claude-proactive</code></strong>。这是 label 口径的遗留： <code>&#x27;claude-proactive&#x27;</code> 实际意思是"最外层 Claude 自己发起的"，不是"Proactive mode 下发起的"。对线上数据分析的影响是：光数 <code>invocation_trigger= claude-proactive</code> 的事件无法得到"proactive session 跑了多少技能"，还要 另外对账 <code>CLAUDE_CODE_PROACTIVE</code> / <code>--proactive</code> 的 session 维度。</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code>src/tools/AgentTool/AgentTool.tsx:59, 567</code>）：sub-agent 的 <code>shouldRunAsync</code> 读的是父进程的 <code>proactiveModule?.isProactiveActive()</code> —— proactive 是 <strong>process-wide 单例状态</strong>，sub-agent 并没有自己的一份。 结果是：sub-agent 本身不会收到 <code>&lt;tick&gt;</code>（它的 runAgent 走同步 turn 序列）， 也不会被注入 Proactive 七节 system prompt；但父进程的状态会沿着 "强制 后台化" 这条路径渗透进来。sub-agent 内部若想触发自己的 proactive 行为， 得走 Agent SDK 的 <code>set_proactive</code> 控制消息（见 §15.4.1），不能靠继承。 sub-agent 产出的 proactive 消息回到主 agent 的路径是标准的 <code>&lt;task-notification&gt;</code> + <code>notifyOnCompletion</code>，不会被当作新 tick 吞进来。</p></blockquote>
-<h3>15.4.9 Away summary：同场景但独立的机制</h3>
+<h3 id="15-4-9-away-summary-同场景但独立的机制">15.4.9 Away summary：同场景但独立的机制<a class="h-anchor" href="#15-4-9-away-summary-同场景但独立的机制" aria-label="permalink">¶</a></h3>
 <p>Away summary 是 <code>--proactive</code> 没开也能用的功能（受 <code>AWAY_SUMMARY</code> feature flag 和 GrowthBook <code>tengu_sedge_lantern</code> gate 控制，3P 默认 false）。 它也读 terminal focus，但不走 tick、不唤醒主 loop，只做一件事：在用户 离开够久之后事后生成一张"你刚才在干啥"的 system message。</p>
 <p>Hook 本体：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/useAwaySummary.ts:12-105 (省略 state machine 细节)</span>
@@ -414,7 +414,7 @@ recent.push(createUserMessage({ content: buildAwaySummaryPrompt(memory) }))
 setMessages(prev =&gt; [...prev, createAwaySummaryMessage(text)])</code></pre></figure>
 <p>同 user turn 内只生成一次（<code>hasSummarySinceLastUserTurn</code> 的 guard）， 让连续离开再回来不会刷屏。</p>
 <p>放在同一章讲的原因是它们共享两个输入信号 ——<code>terminal focus</code> 和 <code>isLoading</code>—— 但使用方向相反：Proactive 在 unfocused 时"更激进行动"，Away summary 只在 unfocused 够久且随后 focused 时"出一次摘要"。两者合起来覆盖了 "用户离开时 agent 该怎么 behave" 的两半：干活那一半在 Proactive，汇报 那一半在 Away summary。</p>
-<h3>15.4.10 Inbox poller：Proactive 视角下的投递策略</h3>
+<h3 id="15-4-10-inbox-poller-proactive-视角下的投递策略">15.4.10 Inbox poller：Proactive 视角下的投递策略<a class="h-anchor" href="#15-4-10-inbox-poller-proactive-视角下的投递策略" aria-label="permalink">¶</a></h3>
 <p>Teammate inbox 的实现细节见 <a class="chref" href="../ch17/">ch.17</a>（§17.4 关键数据结构 / §17.6 permission 反向回路）；本章关心两件事：这个消息流怎么在 Proactive session 里"不打扰"。</p>
 <p>轮询频率固定 1 秒（<code>useInterval</code> 串起来，不做退避也不做 jitter）：</p>
 <figure class="codeblock"><figcaption><span class="file">src/hooks/useInboxPoller.ts:107</span><span class="lang">text</span></figcaption><pre><code class="language-text">const INBOX_POLL_INTERVAL_MS = 1000</code></pre></figure>
@@ -455,8 +455,8 @@ markRead()</code></pre></figure>
 <li>进 ToolUseConfirmQueue 后 UI 主动弹 sticky 对话框（<code>focusedInputDialog=&#x27;tool-permission&#x27;</code>）， 中断当前 idle / streaming 视图。</li>
 <li>弹了桌面通知的消息就顺带进 confirm queue 永久等待用户决定（不会被新 tick 覆盖）。</li>
 </ul>
-<h2>15.5 设计取舍</h2>
-<h3>15.5.1 状态模块只管四个寄存器</h3>
+<h2 id="15-5-设计取舍">15.5 设计取舍<a class="h-anchor" href="#15-5-设计取舍" aria-label="permalink">¶</a></h2>
+<h3 id="15-5-1-状态模块只管四个寄存器">15.5.1 状态模块只管四个寄存器<a class="h-anchor" href="#15-5-1-状态模块只管四个寄存器" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/proactive/index.ts</code> 没有"当前 tick 间隔"、没有"上次心跳时间"、没有 "用户注意力评分"。所有这类信息要么不存在（给模型读去判断），要么散在别 的文件里（REPL、print.ts、notifier）。</p>
 <p>好处：</p>
 <ul>
@@ -468,7 +468,7 @@ markRead()</code></pre></figure>
 <li>状态翻牌逻辑分散在 5-6 个文件。改"contextBlocked 何时置位"要同时改 REPL 的三个 compact 路径和 <code>/clear</code>。有漏改的风险。</li>
 <li><code>nextTickAt</code> 本应由 <code>scheduleProactiveTick</code> 写入但本仓库未见写入点，说明 这个"状态分散"的路径在恢复过程中容易断。</li>
 </ul>
-<h3>15.5.2 不打扰策略主力放在 prompt</h3>
+<h3 id="15-5-2-不打扰策略主力放在-prompt">15.5.2 不打扰策略主力放在 prompt<a class="h-anchor" href="#15-5-2-不打扰策略主力放在-prompt" aria-label="permalink">¶</a></h3>
 <p>几乎所有"不打扰"语义在 prompt 段落里实现（Pacing、Staying responsive、 Bias toward action、Be concise、Terminal focus），客户端只做少量硬抑制 （progress bar、prompt suggestion、sub-agent 后台化）。</p>
 <p>好处：</p>
 <ul>
@@ -482,10 +482,10 @@ markRead()</code></pre></figure>
 <li>非确定性。同一个 tick 在不同 session 可能被响应也可能被 Sleep。</li>
 <li>token 成本：这段 prompt 每次 request 都在。Proactive session 是长时 运行的，cache 命中率高可以摊销，但仍然是每次都付。</li>
 </ul>
-<h3>15.5.3 Sleep tool 是必须的，不是可选</h3>
+<h3 id="15-5-3-sleep-tool-是必须的-不是可选">15.5.3 Sleep tool 是必须的，不是可选<a class="h-anchor" href="#15-5-3-sleep-tool-是必须的-不是可选" aria-label="permalink">¶</a></h3>
 <p>有了 Proactive 没有 Sleep 的话，模型对"没事干"只有一个表达方式 —— 输出一条空话然后等下一个 tick。Sleep 把这件事变成确定性动作：<code>Sleep(60)</code> → 60 秒后下一个 tick。Prompt 强制 "you MUST call Sleep"。</p>
 <p>这个设计的可迁移价值在 <a class="chref" href="../ch16/">ch.16</a>（用户可能读到这里时叫不同的名字，但语义 是"给你的 LLM loop 一个 no-op 工具，强制 idle 去走工具而不是走文字输出"）。</p>
-<h3>15.5.4 Away summary 独立于 Proactive</h3>
+<h3 id="15-5-4-away-summary-独立于-proactive">15.5.4 Away summary 独立于 Proactive<a class="h-anchor" href="#15-5-4-away-summary-独立于-proactive" aria-label="permalink">¶</a></h3>
 <p>它们场景都是"用户可能离开"，但分离得干净：</p>
 <ul>
 <li>Proactive 主动地 "做事"；Away summary 被动地 "写摘要"。</li>
@@ -494,7 +494,7 @@ markRead()</code></pre></figure>
 <li>Proactive session 也能用 Away summary；非 proactive session 也能用。</li>
 </ul>
 <p>合在一章讲是因为读者容易混淆 —— 都像 "用户离开后 agent 的主动行为"， 但工程上是两个系统。分清这点是把 "用户在不在看" 这类 attention signal 设计成<strong>可被多路订阅的单一事实源</strong>的前提。</p>
-<h3>15.5.5 可抑制 vs 不可抑制</h3>
+<h3 id="15-5-5-可抑制-vs-不可抑制">15.5.5 可抑制 vs 不可抑制<a class="h-anchor" href="#15-5-5-可抑制-vs-不可抑制" aria-label="permalink">¶</a></h3>
 <p>按"永远不被抑制"的顺序往下排：</p>
 <ol>
 <li>工具权限请求 —— 永远要用户决定。通过 <code>ToolUseConfirmQueue</code> 进 sticky  dialog，idle / busy 都要阻塞 UI；不走 Proactive 的"不打扰"路径。</li>
@@ -505,7 +505,7 @@ markRead()</code></pre></figure>
 <li>Prompt suggestion —— proactive 活跃时直接关。</li>
 </ol>
 <p>1 和 2 是"无条件优先"；3 是"按需被抢占"；4/5/6 是"有 proactive 就禁用"。 没有中间的"延后合并"或"按优先级排序" —— 要么走权限队列要么走 command 队列，队列本身只有 now/next/later 三级。</p>
-<h2>15.6 可迁移的点</h2>
+<h2 id="15-6-可迁移的点">15.6 可迁移的点<a class="h-anchor" href="#15-6-可迁移的点" aria-label="permalink">¶</a></h2>
 <p><strong>1. 最小状态机替代 scheduler。</strong> 给 CLI / bot agent 加 "autonomous loop" 时不要一上来就上 job scheduler。四个字段够了：</p>
 <ul>
 <li><code>active</code>：是不是 autonomous。</li>
@@ -531,7 +531,7 @@ markRead()</code></pre></figure>
 <p><strong>5. Blocked 状态独立于 Active。</strong> 遇高成本错误（context 满、API error） 时先挂起循环，在确定可以继续（compact 完成、用户清会话）再恢复。避免 "错误 → 重试 → 又错误"的 busyloop。清 blocked 的入口要覆盖所有可能的 "context 变小"路径 —— auto compact、manual compact、partial compact、 /clear —— 漏任何一条都会卡住。</p>
 <p><strong>6. Idle / busy 的双通道投递。</strong> 外部事件（本仓库的 teammate inbox） 在 session idle 时立即走主 turn，busy 时进暂存队列 + UI 显示。只有确认 投递后才 markRead，保证重启不丢消息。这个模式通用于任何"异步事件 → 同步主线"的系统。</p>
 <p><strong>7. <code>skipCacheWrite</code> 给次要任务用。</strong> 副业的 LLM 调用（本仓库的 away summary 用 small-fast model 生成一段摘要）明确指定 <code>skipCacheWrite: true</code>，避免污染主会话的 prompt cache。主副两条链的 cache 空间隔离是长 session 应用里常被忽略的优化点。</p>
-<h2>附注：仓库恢复期的已知缺口</h2>
+<h2 id="附注-仓库恢复期的已知缺口">附注：仓库恢复期的已知缺口<a class="h-anchor" href="#附注-仓库恢复期的已知缺口" aria-label="permalink">¶</a></h2>
 <p>本章提到的若干细节对应恢复版本里的空白：</p>
 <ul>
 <li><code class="ref">src/proactive/index.ts</code> 的 <code>contextBlocked</code> 仅被 setter 写入，没有被内 部函数读回。真实实现里 <code>scheduleProactiveTick</code> 或 <code>getNextTickAt</code> 应当 在 blocked 时 short-circuit。</li>

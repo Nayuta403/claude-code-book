@@ -40,7 +40,7 @@
 <article class="article">
   <div class="prose">
 <blockquote><p>本章是全书索引。目标不是深入任何一个能力，而是把 Claude Code 面向用户的所有能力清点一遍，给每一项一个 canonical 名称 + 源码入口 + 官方文档坐标。后续 22 章会反复回引这里。</p></blockquote>
-<h2>1.1 为什么专门开一章做清单</h2>
+<h2 id="1-1-为什么专门开一章做清单">1.1 为什么专门开一章做清单<a class="h-anchor" href="#1-1-为什么专门开一章做清单" aria-label="permalink">¶</a></h2>
 <p class="drop">很多开源项目可以用一句话概括 —— "这是一个 X"。Claude Code 不行。它同时是：一个终端 TUI、一个 MCP server、一个远程会话 broker、一个 cron 调度器、一个 git worktree 管理器、一个 plugin 宿主、一个多设备 handoff 协议实现、一个浏览器扩展伙伴、一个桌面 app 启动器，外加几十个模型可以直接调的工具。</p>
 <p>这种体量带来两个麻烦。第一，从"功能"跳到"代码"需要先知道功能叫什么。第二，同一件事在官方文档里叫 A、在代码里叫 B、在 bundled skill 里又叫 C；不对齐名称后面的章节写起来就散。</p>
 <p>本章承担两件事：</p>
@@ -49,7 +49,7 @@
 <li>每项都附源码入口（<code>path/file.ts:line</code>）与官方文档 URL（访问于 2026-04-19），读者可以直接跳进去读代码或看文档。</li>
 </ol>
 <p>约束：本章<strong>只枚举和定位</strong>，不展开实现。每一项后续会在 Part-2 的独立章节里讲。</p>
-<h2>1.2 入口：从 <code>bootstrap-entry</code> 到斜杠命令</h2>
+<h2 id="1-2-入口-从-bootstrap-entry-到斜杠命令">1.2 入口：从 <code>bootstrap-entry</code> 到斜杠命令<a class="h-anchor" href="#1-2-入口-从-bootstrap-entry-到斜杠命令" aria-label="permalink">¶</a></h2>
 <p>理解 Claude Code 的第一步是认清两张总清单。</p>
 <p>第一张是斜杠命令总清单 <code class="ref">src/commands.ts</code>。文件顶部是一长串静态 <code>import</code>（<code class="ref">src/commands.ts:2-58</code>），紧接着是一段靠 <code>feature(&#x27;...&#x27;)</code> 做编译期条件装入的 <code>require</code> 段（<code class="ref">src/commands.ts:60-123</code>）。</p>
 <p>真正运行时的命令池由 <code>COMMANDS()</code> 函数按顺序拼出（<code class="ref">src/commands.ts:258-346</code>），最后被 <code>loadAllCommands()</code> 与 <code>bundled skills</code> / <code>builtin plugin skills</code> / <code>skillDir commands</code> / <code>workflow commands</code> / <code>plugin commands</code> 合并（<code class="ref">src/commands.ts:449-469</code>）。</p>
@@ -70,7 +70,7 @@
 </ul>
 <p>后面讲 Remote Session（<a class="chref" href="../ch17/">ch.17</a>）/ Chrome / Computer Use（<a class="chref" href="../ch18/">ch.18</a>）时会回到这些入口。</p>
 <p>两张清单与一条分派路径 —— 本章剩下的结构都挂在这三者上。</p>
-<h2>1.3 Feature flag、GrowthBook 与 shim：读代码前的地图</h2>
+<h2 id="1-3-feature-flag-growthbook-与-shim-读代码前的地图">1.3 Feature flag、GrowthBook 与 shim：读代码前的地图<a class="h-anchor" href="#1-3-feature-flag-growthbook-与-shim-读代码前的地图" aria-label="permalink">¶</a></h2>
 <p>在列命令和工具之前，必须先提醒读者：<strong>不是每条命令都对每个用户可见</strong>。</p>
 <p>仓库里的可见性决策分三层：</p>
 <ul>
@@ -85,7 +85,7 @@
 <span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">ReviewArtifactTool</span> = <span class="hl-kw">null</span></code></pre></figure>
 <p>读本章给的指针，若打开文件第一行看到上面两种模式之一，就是 shim。章末 §1.11 会专门列出当前已知的 shim 清单。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/commands.ts:417-443</code>）：<code>meetsAvailabilityRequirement</code> 刻意 <strong>不</strong> memoize，每次读取命令池都会实时问一次 auth state —— 注释写"auth state can change mid-session"。产品层看不到，但它决定了用户在会话中 <code>/login</code> / <code>/logout</code> 切账号后，斜杠命令清单能立刻响应，而不用重启 CLI。</p></blockquote>
-<h2>1.4 核心 Agent 能力</h2>
+<h2 id="1-4-核心-agent-能力">1.4 核心 Agent 能力<a class="h-anchor" href="#1-4-核心-agent-能力" aria-label="permalink">¶</a></h2>
 <div class="table-wrap"><table><thead><tr><th>能力</th><th>canonical</th><th>入口</th><th>官方文档</th><th>状态</th></tr></thead><tbody><tr><td>Agent Loop（详见 <a class="chref" href="../ch03/">ch.03</a>）</td><td>Agent Loop</td><td><code class="ref">src/QueryEngine.ts</code>、<code class="ref">src/query.ts</code>、<code class="ref">src/Task.ts</code></td><td>无独立页，散落在 <code>/en/how-claude-code-works</code>、<code>/en/context-window</code></td><td>✅</td></tr>
 <tr><td>sub-agent 工具（详见 <a class="chref" href="../ch04/">ch.04</a>）</td><td><code>AgentTool</code>（legacy 名 <code>Task</code>）</td><td><code class="ref">src/tools/AgentTool/AgentTool.tsx</code>；常量 <code class="ref">src/tools/AgentTool/constants.ts:1-3</code></td><td><a href="https://code.claude.com/docs/en/sub-agents" rel="noreferrer">https://code.claude.com/docs/en/sub-agents</a></td><td>✅</td></tr>
 <tr><td>sub-agent 配置 UI</td><td><code>/agents</code></td><td><code class="ref">src/commands/agents/index.ts:3-8</code></td><td>同上</td><td>✅</td></tr>
@@ -97,9 +97,9 @@
 <tr><td>记忆（CLAUDE.md + auto-memory，详见 <a class="chref" href="../ch07/">ch.07</a>）</td><td><code>memdir</code></td><td><code class="ref">src/memdir/memdir.ts</code>、<code class="ref">paths.ts</code>、<code class="ref">findRelevantMemories.ts</code>、<code class="ref">memoryAge.ts</code>、<code class="ref">memoryScan.ts</code>、<code class="ref">teamMemPaths.ts</code>（<code>TEAMMEM</code>）</td><td><a href="https://code.claude.com/docs/en/memory" rel="noreferrer">https://code.claude.com/docs/en/memory</a></td><td>✅</td></tr>
 <tr><td>Coordinator Mode</td><td>Coordinator Mode</td><td><code class="ref">src/coordinator/coordinatorMode.ts:1-29</code>、<code class="ref">src/coordinator/workerAgent.ts</code>；门控 <code>feature(&#x27;COORDINATOR_MODE&#x27;)</code> + <code>isCoordinatorMode()</code>（<code class="ref">src/tools.ts:120-122</code>）</td><td>无公开文档</td><td>🔒</td></tr></tbody></table></div>
 <p>注意 <code>AgentTool</code> 有 canonical 名 <code>Agent</code> 和 legacy 名 <code>Task</code>（<code class="ref">src/tools/AgentTool/constants.ts:1-3</code>）；本书正文统一称 <code>AgentTool</code> 或 "sub-agent 工具"，不再写 <code>Task</code>。</p>
-<h2>1.5 工具系统与扩展</h2>
+<h2 id="1-5-工具系统与扩展">1.5 工具系统与扩展<a class="h-anchor" href="#1-5-工具系统与扩展" aria-label="permalink">¶</a></h2>
 <p>工具系统本身是 Claude Code 最重要的设计面，后续会有独立章节专门讲 <code>buildTool</code> + <code>Tool</code> 接口。本节仅列清单。</p>
-<h3>1.5.1 基础工具（默认注册）</h3>
+<h3 id="1-5-1-基础工具-默认注册">1.5.1 基础工具（默认注册）<a class="h-anchor" href="#1-5-1-基础工具-默认注册" aria-label="permalink">¶</a></h3>
 <p>以 canonical 名 + <code>searchHint</code> 形式列出；<code>searchHint</code> 是每个工具自带的一行自述，用于 <code>ToolSearch</code> 的检索描述：</p>
 <div class="table-wrap"><table><thead><tr><th>名称</th><th>searchHint</th><th>入口</th></tr></thead><tbody><tr><td><code>Bash</code></td><td><code>execute shell commands</code></td><td><code class="ref">src/tools/BashTool/BashTool.tsx:421-422</code></td></tr>
 <tr><td><code>Read</code></td><td><code>read files, images, PDFs, notebooks</code></td><td><code class="ref">src/tools/FileReadTool/FileReadTool.ts:338-339</code></td></tr>
@@ -118,7 +118,7 @@
 <tr><td><code>ExitPlanMode</code></td><td><code>present plan for approval and start coding (plan mode only)</code></td><td><code class="ref">src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts:149</code></td></tr></tbody></table></div>
 <p>默认还会注册 <code>TaskStop</code>、<code>ListMcpResourcesTool</code>、<code>ReadMcpResourceTool</code>、<code>SendUserMessage</code>（即 <code>BriefTool</code>，<code class="ref">src/tools/BriefTool/prompt.ts:1-2</code>）；以及 <code>SyntheticOutputTool</code>（canonical 名 <code>StructuredOutput</code>，<code class="ref">src/tools/SyntheticOutputTool/SyntheticOutputTool.ts:20</code>）作为特殊"返回结构化 JSON"的最终响应工具。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/tools.ts:272-298</code> 与 <code class="ref">src/tools.ts:312-323</code>）：两个运行时开关会悄悄<strong>裁剪</strong>工具集 —— <code>CLAUDE_CODE_SIMPLE=1</code> 下只保留 <code>Bash</code> / <code>Read</code> / <code>Edit</code> 三件套；<code>REPL</code> 模式启用时反而会隐藏原语文件工具。用户只会感到"奇怪，模型好像不会读文件"，看不出是环境把工具池收紧了。</p></blockquote>
-<h3>1.5.2 条件工具</h3>
+<h3 id="1-5-2-条件工具">1.5.2 条件工具<a class="h-anchor" href="#1-5-2-条件工具" aria-label="permalink">¶</a></h3>
 <div class="table-wrap"><table><thead><tr><th>名称</th><th>门控</th><th>入口</th></tr></thead><tbody><tr><td><code>TaskCreate</code> / <code>TaskGet</code> / <code>TaskUpdate</code> / <code>TaskList</code></td><td><code>isTodoV2Enabled()</code></td><td><code class="ref">src/tools/TaskCreateTool/constants.ts:1</code> 等</td></tr>
 <tr><td><code>EnterWorktree</code> / <code>ExitWorktree</code></td><td><code>isWorktreeModeEnabled()</code></td><td><code class="ref">src/tools.ts:225</code></td></tr>
 <tr><td><code>SendMessage</code></td><td>默认加入，与 swarm 协议配对</td><td><code class="ref">src/tools/SendMessageTool/constants.ts:1</code></td></tr>
@@ -137,7 +137,7 @@
 <tr><td><code>TaskCapture</code> / <code>terminal_capture</code></td><td><code>feature(&#x27;TERMINAL_PANEL&#x27;)</code></td><td><code class="ref">src/tools/TerminalCaptureTool/prompt.ts:1</code></td></tr>
 <tr><td><code>discover_skills</code></td><td>内部</td><td><code class="ref">src/tools/DiscoverSkillsTool/prompt.ts:1</code></td></tr>
 <tr><td><code>snip</code></td><td><code>feature(&#x27;HISTORY_SNIP&#x27;)</code></td><td><code class="ref">src/tools/SnipTool/prompt.ts:1</code></td></tr></tbody></table></div>
-<h3>1.5.3 Skills 系统</h3>
+<h3 id="1-5-3-skills-系统">1.5.3 Skills 系统<a class="h-anchor" href="#1-5-3-skills-系统" aria-label="permalink">¶</a></h3>
 <p>Skills 是 Claude Code 的扩展主干（详见 <a class="chref" href="../ch10/">ch.10</a>）。一个 skill 是"一段 Markdown + 可选 frontmatter + 可选支持文件"，既可以被用户 <code>/foo</code> 触发，也可以由 Claude 根据 <code>description</code> / <code>when_to_use</code> 自动调起。官方说明："A file at <code class="ref">.claude/commands/deploy.md</code> and a skill at <code class="ref">.claude/skills/deploy/SKILL.md</code> both create <code>/deploy</code> and work the same way"（<a href="https://code.claude.com/docs/en/skills" rel="noreferrer">https://code.claude.com/docs/en/skills</a>，访问于 2026-04-19）。</p>
 <p>仓库里的 skill 来源四种：</p>
 <ol>
@@ -177,14 +177,14 @@
 <tr><td><code>/claude-api</code></td><td><code class="ref">src/skills/bundled/claudeApi.ts</code>，<code>feature(&#x27;BUILDING_CLAUDE_APPS&#x27;)</code></td><td>commands 页</td></tr>
 <tr><td><code>/claude-in-chrome</code></td><td><code class="ref">src/skills/bundled/claudeInChrome.ts</code>，<code>shouldAutoEnableClaudeInChrome()</code></td><td><a href="https://code.claude.com/docs/en/chrome" rel="noreferrer">https://code.claude.com/docs/en/chrome</a></td></tr>
 <tr><td><code>/run-skill-generator</code></td><td><code class="ref">src/skills/bundled/runSkillGenerator.ts</code>，<code>feature(&#x27;RUN_SKILL_GENERATOR&#x27;)</code></td><td>未公开</td></tr></tbody></table></div>
-<h3>1.5.4 权限、Plugins、MCP、Hooks</h3>
+<h3 id="1-5-4-权限-plugins-mcp-hooks">1.5.4 权限、Plugins、MCP、Hooks<a class="h-anchor" href="#1-5-4-权限-plugins-mcp-hooks" aria-label="permalink">¶</a></h3>
 <ul>
 <li><strong>权限</strong>（详见 <a class="chref" href="../ch09/">ch.09</a>）：<code>/permissions</code>（别名 <code>/allowed-tools</code>）—— <code class="ref">src/commands/permissions/index.ts:3-9</code>；运行时过滤 <code>filterToolsByDenyRules()</code>（<code class="ref">src/tools.ts:262-269</code>）与工具级 <code>getDenyRuleForTool()</code>。官方：<a href="https://code.claude.com/docs/en/permissions" rel="noreferrer">https://code.claude.com/docs/en/permissions</a>。</li>
 <li><strong>Plugins</strong>（详见 <a class="chref" href="../ch11/">ch.11</a>）：<code>/plugin</code>（别名 <code>/plugins</code>、<code>/marketplace</code>）—— <code class="ref">src/commands/plugin/index.tsx:2-9</code>；built-in plugin 注册 <code>registerBuiltinPlugin()</code>（<code class="ref">src/plugins/builtinPlugins.ts:28-32</code>）；初始化占位 <code>initBuiltinPlugins()</code>（<code class="ref">src/plugins/bundled/index.ts:20-23</code>，目前尚无已注册的 built-in plugin —— 文件里有注释说这是"scaffolding for migrating bundled skills that should be user-toggleable"）。<code>/reload-plugins</code> —— <code class="ref">src/commands/reload-plugins/index.ts:9-10</code>。官方：<a href="https://code.claude.com/docs/en/plugins" rel="noreferrer">https://code.claude.com/docs/en/plugins</a>。</li>
 <li><strong>MCP</strong>（详见 <a class="chref" href="../ch12/">ch.12</a>）：<code>/mcp</code> —— <code class="ref">src/commands/mcp/index.ts:5-6</code>；工具 <code>ListMcpResourcesTool</code> / <code>ReadMcpResourceTool</code>（<code class="ref">src/tools/ListMcpResourcesTool/prompt.ts:1</code>、<code class="ref">src/tools/ReadMcpResourceTool/ReadMcpResourceTool.ts:60</code>）。另一边 Claude Code 自己可以<strong>作为</strong> MCP server 被外部调用：<code class="ref">src/entrypoints/mcp.ts:35-40</code>，此入口只曝露了 <code>[review]</code> 作为 MCP 命令（<code class="ref">src/entrypoints/mcp.ts:33</code>）。官方：<a href="https://code.claude.com/docs/en/mcp" rel="noreferrer">https://code.claude.com/docs/en/mcp</a>。</li>
 <li><strong>Hooks</strong>（详见 <a class="chref" href="../ch14/">ch.14</a>）：<code>/hooks</code> —— <code class="ref">src/commands/hooks/index.ts:3-9</code>；skill / plugin / settings 三层都可配置 hook，<code>BundledSkillDefinition.hooks</code> 字段在 <code class="ref">src/skills/bundledSkills.ts:26</code>。官方：<a href="https://code.claude.com/docs/en/hooks" rel="noreferrer">https://code.claude.com/docs/en/hooks</a>。</li>
 </ul>
-<h2>1.6 异步与自动化</h2>
+<h2 id="1-6-异步与自动化">1.6 异步与自动化<a class="h-anchor" href="#1-6-异步与自动化" aria-label="permalink">¶</a></h2>
 <p>Claude Code 把"异步"拆成几种不同粒度（定时任务整体详见 <a class="chref" href="../ch13/">ch.13</a>；后台任务详见 <a class="chref" href="../ch16/">ch.16</a>；proactive 详见 <a class="chref" href="../ch15/">ch.15</a>）：</p>
 <ol>
 <li><strong>会话内重复</strong>：<code>/loop</code> bundled skill（<code class="ref">src/skills/bundled/loop.ts</code>）。官方解释："Run a prompt repeatedly while the session stays open. Omit the interval and Claude self-paces between iterations"（commands 页 <code>/loop</code> 条目，访问于 2026-04-19）。</li>
@@ -196,9 +196,9 @@
 <li><strong>Push 推送</strong>：<code>PushNotificationTool</code>（<code class="ref">src/tools/PushNotificationTool/PushNotificationTool.ts</code>），<code>KAIROS</code> / <code>KAIROS_PUSH_NOTIFICATION</code> 下注册，用于会话离线时把异步信号推给用户。</li>
 <li><strong>Job classifier</strong>：<code class="ref">src/jobs/classifier.ts:1-3</code> 目前为 shim，返回 <code>null</code>。</li>
 </ol>
-<h2>1.7 协作与远程</h2>
+<h2 id="1-7-协作与远程">1.7 协作与远程<a class="h-anchor" href="#1-7-协作与远程" aria-label="permalink">¶</a></h2>
 <p>这是 Claude Code 与同类终端 agent 最大的区分面。</p>
-<h3>1.7.1 Remote Session / Bridge</h3>
+<h3 id="1-7-1-remote-session-bridge">1.7.1 Remote Session / Bridge<a class="h-anchor" href="#1-7-1-remote-session-bridge" aria-label="permalink">¶</a></h3>
 <p>一条"把本地终端变成云会话对端"的通路（详见 <a class="chref" href="../ch17/">ch.17</a>）：</p>
 <ul>
 <li>CLI 子命令：<code>claude remote-control</code>（别名 <code>rc</code> / <code>remote</code> / <code>sync</code> / <code>bridge</code>，<code class="ref">src/entrypoints/cli.tsx:112-159</code>）。走 <code class="ref">src/bridge/bridgeMain.ts</code> —— bridge 模块列表见 <code>src/bridge/</code> 目录（33 个 <code>.ts</code> 文件）。</li>
@@ -209,7 +209,7 @@
 <li>命令桥安全清单：<code>BRIDGE_SAFE_COMMANDS</code>（<code class="ref">src/commands.ts:651-660</code>）允许远端推 <code>/compact</code>、<code>/clear</code>、<code>/cost</code>、<code>/summary</code>、<code>/release-notes</code>、<code>/files</code>；<code>REMOTE_SAFE_COMMANDS</code>（<code class="ref">src/commands.ts:619-637</code>）定义远程模式下可用的 TUI 局部命令。官方：<a href="https://code.claude.com/docs/en/remote-control" rel="noreferrer">https://code.claude.com/docs/en/remote-control</a>。</li>
 </ul>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/commands.ts:619-637</code> vs <code class="ref">src/commands.ts:651-660</code>）：<code>REMOTE_SAFE_COMMANDS</code>（17 条）与 <code>BRIDGE_SAFE_COMMANDS</code>（6 条）是<strong>两套独立</strong>白名单，过滤时机也不同 —— 前者在 REPL 渲染前一次性剪裁命令池（防止远程用户在 TUI 里误点），后者在消息抵达时逐条过滤（防止远端伪造 <code>/exit</code> 之类破坏性命令）。产品层只呈现"远端能跑几个命令"，看不到这其实分了两层。</p></blockquote>
-<h3>1.7.2 Teleport / Web / Mobile / Desktop</h3>
+<h3 id="1-7-2-teleport-web-mobile-desktop">1.7.2 Teleport / Web / Mobile / Desktop<a class="h-anchor" href="#1-7-2-teleport-web-mobile-desktop" aria-label="permalink">¶</a></h3>
 <ul>
 <li><code>/teleport</code>（别名 <code>/tp</code>）—— 从 web / iOS 会话拉回终端。当前仓库为 stub（<code class="ref">src/commands/teleport/index.js:1</code>）；官方：<a href="https://code.claude.com/docs/en/claude-code-on-the-web#from-web-to-terminal" rel="noreferrer">https://code.claude.com/docs/en/claude-code-on-the-web#from-web-to-terminal</a>。</li>
 <li><code>/web-setup</code> —— 用本机 <code>gh</code> CLI 凭据连接 web 会话（<code class="ref">src/commands/remote-setup/index.ts:7</code>，name <code>web-setup</code>，门控 <code>feature(&#x27;CCR_REMOTE_SETUP&#x27;)</code>）。</li>
@@ -217,20 +217,20 @@
 <li><code>/desktop</code>（别名 <code>/app</code>，仅 darwin 或 win32 x64）—— <code class="ref">src/commands/desktop/index.ts:13-24</code>。</li>
 <li><code>/mobile</code>（别名 <code>/ios</code>、<code>/android</code>）—— <code class="ref">src/commands/mobile/index.ts:3-8</code>。</li>
 </ul>
-<h3>1.7.3 IDE / Chrome / Computer Use</h3>
+<h3 id="1-7-3-ide-chrome-computer-use">1.7.3 IDE / Chrome / Computer Use<a class="h-anchor" href="#1-7-3-ide-chrome-computer-use" aria-label="permalink">¶</a></h3>
 <p>以下三个入口合并在 <a class="chref" href="../ch18/">ch.18</a> 展开。</p>
 <ul>
 <li><code>/ide</code> —— <code class="ref">src/commands/ide/index.ts:3-8</code>，管理 VS Code / JetBrains / 其它集成。</li>
 <li><code>/chrome</code> —— <code class="ref">src/commands/chrome/index.ts:1-12</code>。另一边 CLI 有两个 Chrome 相关子命令：<code>--claude-in-chrome-mcp</code>（<code class="ref">src/entrypoints/cli.tsx:72-78</code>）与 <code>--chrome-native-host</code>（<code class="ref">src/entrypoints/cli.tsx:79-85</code>），这是浏览器扩展与 CLI 之间的 Native Messaging 通道。Chrome MCP 的 shim 见 <code>shims/ant-claude-for-chrome-mcp/</code>（<code class="ref">package.json:26</code>）。</li>
 <li><code>--computer-use-mcp</code>（<code class="ref">src/entrypoints/cli.tsx:86-93</code>）—— Computer Use 的 MCP server 入口，<code>feature(&#x27;CHICAGO_MCP&#x27;)</code> 门控。shim 见 <code>shims/ant-computer-use-mcp/</code>（<code class="ref">package.json:27-29</code>）。</li>
 </ul>
-<h3>1.7.4 SSH / 直连</h3>
+<h3 id="1-7-4-ssh-直连">1.7.4 SSH / 直连<a class="h-anchor" href="#1-7-4-ssh-直连" aria-label="permalink">¶</a></h3>
 <ul>
 <li><code class="ref">src/ssh/createSSHSession.ts</code>、<code class="ref">src/ssh/SSHSessionManager.ts</code> —— 外部 SSH 会话管理。</li>
 <li><code class="ref">src/server/createDirectConnectSession.ts</code>、<code class="ref">directConnectManager.ts</code> —— 直连会话服务端。</li>
 <li><code class="ref">src/upstreamproxy/upstreamproxy.ts</code>、<code class="ref">relay.ts</code> —— 上游代理，用于穿越 proxy。</li>
 </ul>
-<h3>1.7.5 GitHub / Slack / PR</h3>
+<h3 id="1-7-5-github-slack-pr">1.7.5 GitHub / Slack / PR<a class="h-anchor" href="#1-7-5-github-slack-pr" aria-label="permalink">¶</a></h3>
 <ul>
 <li><code>/install-github-app</code> —— <code class="ref">src/commands/install-github-app/index.ts:5-7</code>。官方：<a href="https://code.claude.com/docs/en/github-actions" rel="noreferrer">https://code.claude.com/docs/en/github-actions</a>。</li>
 <li><code>/install-slack-app</code> —— <code class="ref">src/commands/install-slack-app/index.ts:5-6</code>。官方：<a href="https://code.claude.com/docs/en/slack" rel="noreferrer">https://code.claude.com/docs/en/slack</a>。</li>
@@ -239,9 +239,9 @@
 <li><code>/security-review</code> —— <code class="ref">src/commands/security-review.ts:199</code>。</li>
 <li><code>/commit</code> / <code>/commit-push-pr</code> —— <code class="ref">src/commands/commit.ts:59-60</code>、<code class="ref">src/commands/commit-push-pr.ts:110-111</code>，内部命令（<code>INTERNAL_ONLY_COMMANDS</code>，<code class="ref">src/commands.ts:225-254</code>）。</li>
 </ul>
-<h2>1.8 交互</h2>
+<h2 id="1-8-交互">1.8 交互<a class="h-anchor" href="#1-8-交互" aria-label="permalink">¶</a></h2>
 <p>TUI、语音、键绑定、伙伴 —— 这些是"让 CLI 用起来不那么像 CLI"的部分。</p>
-<h3>1.8.1 Buddy</h3>
+<h3 id="1-8-1-buddy">1.8.1 Buddy<a class="h-anchor" href="#1-8-1-buddy" aria-label="permalink">¶</a></h3>
 <p><code>src/buddy/</code> 是一个小型虚拟伙伴系统（详见 <a class="chref" href="../ch19/">ch.19</a>）。类型在 <code class="ref">src/buddy/types.ts:1-149</code>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/buddy/types.ts:101-124</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">CompanionBones</span> = {
   rarity: <span class="hl-type">Rarity</span>
@@ -261,7 +261,7 @@
 <span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">StoredCompanion</span> = <span class="hl-type">CompanionSoul</span> &amp; { hatchedAt: number }</code></pre></figure>
 <p><code>bones</code> 从 <code>hash(userId)</code> 派生（每次读配置时重新生成），<code>soul</code>（名字 + 个性）是模型生成后持久化。官方文档没有专页讲 Buddy，但 <code>feature(&#x27;BUDDY&#x27;)</code> 条件加载了 <code>/buddy</code> 命令（<code class="ref">src/commands.ts:118-122</code>）。归类：🔒 未公开 / 内部。</p>
 <p>伙伴生成代码见 <code class="ref">src/buddy/companion.ts:15-60</code>（mulberry32 PRNG + weighted rarity roll），渲染用 <code class="ref">src/buddy/CompanionSprite.tsx</code>，通知 <code class="ref">src/buddy/useBuddyNotification.tsx</code>。</p>
-<h3>1.8.2 Voice / Vim / Keybindings / Ink</h3>
+<h3 id="1-8-2-voice-vim-keybindings-ink">1.8.2 Voice / Vim / Keybindings / Ink<a class="h-anchor" href="#1-8-2-voice-vim-keybindings-ink" aria-label="permalink">¶</a></h3>
 <p>Voice / Vim / Keybindings 在 <a class="chref" href="../ch20/">ch.20</a> 合并展开，Ink 自绘渲染器在 <a class="chref" href="../ch21/">ch.21</a> 独立展开。</p>
 <ul>
 <li><code>/voice</code> —— <code class="ref">src/commands/voice/index.ts:7-20</code>，<code>feature(&#x27;VOICE_MODE&#x27;)</code> + <code>isVoiceGrowthBookEnabled()</code>。官方：<a href="https://code.claude.com/docs/en/voice-dictation" rel="noreferrer">https://code.claude.com/docs/en/voice-dictation</a>。</li>
@@ -269,7 +269,7 @@
 <li><code>/keybindings</code> —— <code class="ref">src/commands/keybindings/index.ts:5-6</code>。DSL：<code class="ref">src/keybindings/schema.ts</code>、<code class="ref">parser.ts</code>、<code class="ref">resolver.ts</code>、<code class="ref">defaultBindings.ts</code>、<code class="ref">match.ts</code>、<code class="ref">validate.ts</code>。</li>
 <li>Ink 定制渲染器：<code class="ref">src/ink/ink.tsx</code> 与周边 40+ 文件（见 <code>src/ink/</code> 目录），替代了上游 Ink 库的默认实现，支持 fullscreen / 自适应列宽 / 终端焦点 / 超链接等。</li>
 </ul>
-<h3>1.8.3 配置 / 展示类命令</h3>
+<h3 id="1-8-3-配置-展示类命令">1.8.3 配置 / 展示类命令<a class="h-anchor" href="#1-8-3-配置-展示类命令" aria-label="permalink">¶</a></h3>
 <p>这些命令本身行为简单，但合起来撑起 TUI 体验：</p>
 <div class="table-wrap"><table><thead><tr><th>命令</th><th>描述</th><th>入口</th></tr></thead><tbody><tr><td><code>/config</code>（别名 <code>/settings</code>）</td><td>Open config panel</td><td><code class="ref">src/commands/config/index.ts:3-8</code></td></tr>
 <tr><td><code>/theme</code></td><td>Change the theme</td><td><code class="ref">src/commands/theme/index.ts:5-6</code></td></tr>
@@ -290,8 +290,8 @@
 <tr><td><code>/resume</code>（别名 <code>/continue</code>）</td><td>Resume a conversation</td><td><code class="ref">src/commands/resume/index.ts:5-6</code></td></tr>
 <tr><td><code>/rewind</code>（别名 <code>/checkpoint</code>）</td><td>Restore to previous point</td><td><code class="ref">src/commands/rewind/index.ts:3-10</code></td></tr>
 <tr><td><code>/exit</code>（别名 <code>/quit</code>）</td><td>Exit REPL</td><td><code class="ref">src/commands/exit/index.ts:5-7</code></td></tr></tbody></table></div>
-<h2>1.9 工程支撑</h2>
-<h3>1.9.1 Cost / Usage / 观测</h3>
+<h2 id="1-9-工程支撑">1.9 工程支撑<a class="h-anchor" href="#1-9-工程支撑" aria-label="permalink">¶</a></h2>
+<h3 id="1-9-1-cost-usage-观测">1.9.1 Cost / Usage / 观测<a class="h-anchor" href="#1-9-1-cost-usage-观测" aria-label="permalink">¶</a></h3>
 <p>账单、使用量与 OpenTelemetry 观测栈合并在 <a class="chref" href="../ch22/">ch.22</a> 展开。</p>
 <ul>
 <li><code>/cost</code> —— <code class="ref">src/commands/cost/index.ts:10-11</code>。</li>
@@ -302,7 +302,7 @@
 <li><code>/rate-limit-options</code> —— <code class="ref">src/commands/rate-limit-options/index.ts:6-7</code>。</li>
 <li>OpenTelemetry 初始化：<code class="ref">src/entrypoints/init.ts:4-13</code>（<code>@opentelemetry/api</code>、<code>getSessionCounter</code>、<code>setMeter</code>）。</li>
 </ul>
-<h3>1.9.2 启动 / 诊断 / 账户</h3>
+<h3 id="1-9-2-启动-诊断-账户">1.9.2 启动 / 诊断 / 账户<a class="h-anchor" href="#1-9-2-启动-诊断-账户" aria-label="permalink">¶</a></h3>
 <div class="table-wrap"><table><thead><tr><th>命令</th><th>描述</th><th>入口</th></tr></thead><tbody><tr><td><code>/init</code></td><td>初始化 <code class="ref">CLAUDE.md</code>（<code>NEW_INIT</code> feature 下可扩展）</td><td><code class="ref">src/commands/init.ts:226-253</code></td></tr>
 <tr><td><code>/doctor</code></td><td>诊断安装与设置</td><td><code class="ref">src/commands/doctor/index.ts:5-6</code></td></tr>
 <tr><td><code>/upgrade</code></td><td>升级到 Max</td><td><code class="ref">src/commands/upgrade/index.ts:7-8</code></td></tr>
@@ -324,9 +324,9 @@
 <tr><td><code>/agents</code></td><td>管理 agent 配置</td><td><code class="ref">src/commands/agents/index.ts:3-8</code></td></tr>
 <tr><td><code>/plan</code></td><td>进计划模式</td><td><code class="ref">src/commands/plan/index.ts:3-9</code></td></tr>
 <tr><td><code>/thinkback</code> / <code>/thinkback-play</code></td><td>2025 年度回顾动画</td><td><code class="ref">src/commands/thinkback/index.ts:6-7</code>、<code class="ref">src/commands/thinkback-play/index.ts:8-9</code></td></tr></tbody></table></div>
-<h3>1.9.3 Agent SDK</h3>
+<h3 id="1-9-3-agent-sdk">1.9.3 Agent SDK<a class="h-anchor" href="#1-9-3-agent-sdk" aria-label="permalink">¶</a></h3>
 <p><code>src/entrypoints/sdk/</code> 是对外暴露的 SDK 类型接口（详见 <a class="chref" href="../ch23/">ch.23</a>）：<code class="ref">controlSchemas.ts</code>、<code class="ref">controlTypes.ts</code>、<code class="ref">coreSchemas.ts</code>、<code class="ref">coreTypes.generated.ts</code>、<code class="ref">coreTypes.ts</code>、<code class="ref">runtimeTypes.ts</code>、<code class="ref">sdkUtilityTypes.ts</code>、<code class="ref">settingsTypes.generated.ts</code>、<code class="ref">toolTypes.ts</code>。远程会话的 SDK 消息适配器 <code class="ref">src/remote/sdkMessageAdapter.ts</code>。官方：<a href="https://code.claude.com/docs/en/agent-sdk/overview" rel="noreferrer">https://code.claude.com/docs/en/agent-sdk/overview</a>。</p>
-<h2>1.10 与后续章节的对应关系</h2>
+<h2 id="1-10-与后续章节的对应关系">1.10 与后续章节的对应关系<a class="h-anchor" href="#1-10-与后续章节的对应关系" aria-label="permalink">¶</a></h2>
 <p>本章每一类能力都会在 Part-2 的独立章节里展开。下表给出初步 cross-ref（最终由 Editor 在 <code class="ref">book/cross-ref-registry.md</code> 统一维护）：</p>
 <div class="table-wrap"><table><thead><tr><th>本章子节</th><th>展开章节</th></tr></thead><tbody><tr><td>§1.4 Agent Loop</td><td><a class="chref" href="../ch03/">ch.03</a> <code>agent-loop</code></td></tr>
 <tr><td>§1.4 sub-agent</td><td><a class="chref" href="../ch04/">ch.04</a> <code>sub-agents</code></td></tr>
@@ -351,28 +351,28 @@
 <tr><td>§1.8 Ink</td><td><a class="chref" href="../ch21/">ch.21</a> <code>ink</code></td></tr>
 <tr><td>§1.9.1 Cost / Observability</td><td><a class="chref" href="../ch22/">ch.22</a> <code>cost-observability</code></td></tr>
 <tr><td>§1.9.3 Agent SDK</td><td><a class="chref" href="../ch23/">ch.23</a> <code>agent-sdk</code></td></tr></tbody></table></div>
-<h2>1.11 还原仓库的 shim / 降级清单</h2>
+<h2 id="1-11-还原仓库的-shim-降级清单">1.11 还原仓库的 shim / 降级清单<a class="h-anchor" href="#1-11-还原仓库的-shim-降级清单" aria-label="permalink">¶</a></h2>
 <p>本仓库是 source-map 还原的，部分模块当前是占位或空 stub。写后续章节时，若触及下列文件，请不要把它当"真实实现"讲。</p>
-<h3>1.11.1 <code>src/commands/</code> 下的 stub 目录</h3>
+<h3 id="1-11-1-src-commands-下的-stub-目录">1.11.1 <code>src/commands/</code> 下的 stub 目录<a class="h-anchor" href="#1-11-1-src-commands-下的-stub-目录" aria-label="permalink">¶</a></h3>
 <p>以下目录的 <code class="ref">index.js</code> 首行均为 <code>export default { isEnabled: () =&gt; false, isHidden: true, name: &#x27;stub&#x27; };</code>：</p>
 <p><code>autofix-pr</code>、<code>backfill-sessions</code>、<code>break-cache</code>、<code>bughunter</code>、<code>ctx_viz</code>、<code>debug-tool-call</code>、<code>env</code>、<code>good-claude</code>、<code>issue</code>、<code>mock-limits</code>、<code>oauth-refresh</code>、<code>onboarding</code>、<code>perf-issue</code>、<code>reset-limits</code>、<code>share</code>、<code>summary</code>、<code>teleport</code>、<code>ant-trace</code>。例：<code class="ref">src/commands/teleport/index.js:1</code>。</p>
-<h3>1.11.2 <code>src/tools/</code> 下被还原为 <code>null</code> 的工具</h3>
+<h3 id="1-11-2-src-tools-下被还原为-null-的工具">1.11.2 <code>src/tools/</code> 下被还原为 <code>null</code> 的工具<a class="h-anchor" href="#1-11-2-src-tools-下被还原为-null-的工具" aria-label="permalink">¶</a></h3>
 <ul>
 <li><code>ReviewArtifactTool</code>（<code class="ref">src/tools/ReviewArtifactTool/ReviewArtifactTool.ts:1</code>）</li>
 <li><code>OverflowTestTool</code>（<code class="ref">src/tools/OverflowTestTool/OverflowTestTool.ts:1</code>）</li>
 <li><code>WorkflowTool</code>（<code class="ref">src/tools/WorkflowTool/WorkflowTool.ts:1</code>）</li>
 <li><code>MonitorTool</code>（<code class="ref">src/tools/MonitorTool/MonitorTool.ts:1</code>）</li>
 </ul>
-<h3>1.11.3 其它 shim</h3>
+<h3 id="1-11-3-其它-shim">1.11.3 其它 shim<a class="h-anchor" href="#1-11-3-其它-shim" aria-label="permalink">¶</a></h3>
 <ul>
 <li><code class="ref">src/proactive/useProactive.ts:1-6</code> —— 硬编码返回 <code>{active:false, paused:false}</code>；真实 React 集成缺失。</li>
 <li><code class="ref">src/jobs/classifier.ts:1-3</code> —— <code>runClassifier()</code> 永远返回 <code>null</code>。</li>
 <li><code class="ref">src/moreright/useMoreRight.tsx:1-25</code> —— 文件注释明确写了 "Stub for external builds — the real hook is internal only"。</li>
 <li><code>shims/ant-claude-for-chrome-mcp/</code>、<code>shims/ant-computer-use-mcp/</code>、<code>shims/ant-computer-use-input/</code>、<code>shims/ant-computer-use-swift/</code>、<code>shims/color-diff-napi/</code>、<code>shims/modifiers-napi/</code>、<code>shims/url-handler-napi/</code>（<code class="ref">package.json:24-97</code>）—— 私有包与 native binding 的本地替身。</li>
 </ul>
-<h3>1.11.4 官方文档有、仓库未找到的命令</h3>
+<h3 id="1-11-4-官方文档有-仓库未找到的命令">1.11.4 官方文档有、仓库未找到的命令<a class="h-anchor" href="#1-11-4-官方文档有-仓库未找到的命令" aria-label="permalink">¶</a></h3>
 <p><code>/powerup</code>、<code>/focus</code>、<code>/tui</code>、<code>/recap</code>、<code>/team-onboarding</code>、<code>/setup-bedrock</code>、<code>/setup-vertex</code>、<code>/fewer-permission-prompts</code>（官方 commands 页访问于 2026-04-19）在 <code>src/commands/</code> 下没有对应 index 文件或 bundled skill 注册。这是还原的缺口；后续章节若涉及到它们，请依官方文档描述行为、在脚注注明"实现不在本仓库里"。</p>
-<h2>1.12 怎么读这个仓库</h2>
+<h2 id="1-12-怎么读这个仓库">1.12 怎么读这个仓库<a class="h-anchor" href="#1-12-怎么读这个仓库" aria-label="permalink">¶</a></h2>
 <p>三条建议给进入后续章节的读者：</p>
 <ol>
 <li><strong>先读 <code class="ref">src/commands.ts</code> + <code class="ref">src/tools.ts</code> 两张总清单</strong>。它们决定了"今天这个二进制对用户暴露了什么"。任何时候搞不清一个能力是什么，回到这两张表找起点。</li>

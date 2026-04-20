@@ -45,7 +45,7 @@
 <li><code>src/bridge/</code>：claude.ai 的 Remote Control 中继，做 session 生命周期管理，只顺手透传 <code>mcp_config</code> 字段（真实归属详见 <a class="chref" href="../ch17/">ch.17</a>）。</li>
 </ul>
 <p>这两个目录在第 10 节会再用一页澄清，读者只需记住：<strong>本章聚焦 MCP 协议本身</strong>。</p></blockquote>
-<h2>1. 先说一段 MCP 是什么</h2>
+<h2 id="1-先说一段-mcp-是什么">1. 先说一段 MCP 是什么<a class="h-anchor" href="#1-先说一段-mcp-是什么" aria-label="permalink">¶</a></h2>
 <p class="drop">MCP（Model Context Protocol）是 Anthropic 主推的一套 JSON-RPC 2.0 协议，把"给 LLM 接外部能力"这件事标准化。Host（LLM 应用）里跑 MCP client，client 连 MCP server。server 给 client 三类东西——tools（函数）、resources（数据）、prompts（模板）——client 也能给 server 回手：sampling、roots、elicitation。规范主页在 <a href="https://modelcontextprotocol.io/specification/2025-06-18" rel="noreferrer">https://modelcontextprotocol.io/specification/2025-06-18</a>（访问于 2026-04-19），方法列表简短：<code>tools/list</code>、<code>tools/call</code>、<code>resources/list</code>、<code>resources/read</code>、<code>resources/subscribe</code>、<code>prompts/list</code> 等，都是 JSON-RPC 名字空间里的普通请求。</p>
 <p>本章不讲 MCP 本身的语义细节。本章要讲清三件事：</p>
 <ol>
@@ -53,11 +53,11 @@
 <li>外部 MCP server 的工具怎么变成 Claude Code 内部的 <code>Tool</code>——这是<strong>本章最值得借鉴的一点</strong>。</li>
 <li><code>src/upstreamproxy/</code> 和 <code>src/bridge/</code> 这两个名字带"proxy/bridge"的目录和 MCP <strong>没关系</strong>，本章顺手澄清。</li>
 </ol>
-<h2>2. Claude Code 的三重 MCP 身份</h2>
+<h2 id="2-claude-code-的三重-mcp-身份">2. Claude Code 的三重 MCP 身份<a class="h-anchor" href="#2-claude-code-的三重-mcp-身份" aria-label="permalink">¶</a></h2>
 <p>把源码里的 MCP 相关入口都摸一遍，Claude Code 在协议里至少扮演三种角色：</p>
-<h3>2.1 MCP client（主线）</h3>
+<h3 id="2-1-mcp-client-主线">2.1 MCP client（主线）<a class="h-anchor" href="#2-1-mcp-client-主线" aria-label="permalink">¶</a></h3>
 <p>这是绝大多数用户接触到的那一面。<code class="ref">src/services/mcp/client.ts</code> 整个文件（3348 行）的大头是 client：连外部 server，拉工具清单，把外部工具包成内部 <code>Tool</code>，维持连接、刷 token、重连。</p>
-<h3>2.2 MCP server</h3>
+<h3 id="2-2-mcp-server">2.2 MCP server<a class="h-anchor" href="#2-2-mcp-server" aria-label="permalink">¶</a></h3>
 <p><code>claude mcp serve</code> 子命令启动一个 stdio MCP server，把 Claude Code 自己的内建工具（Read/Write/Bash/...）暴露给别的 host 用。入口：</p>
 <figure class="codeblock"><figcaption><span class="file">src/entrypoints/mcp.ts:47-57</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> server = <span class="hl-kw">new</span> <span class="hl-type">Server</span>(
   { name: &#x27;claude/tengu&#x27;, version: <span class="hl-type">MACRO</span>.<span class="hl-type">VERSION</span> },
@@ -69,7 +69,7 @@
 <span class="hl-cm">// TODO: Also re-expose any MCP tools</span></code></pre></figure>
 <p>Claude Code 作为 server 时<strong>不会</strong>把自己连的外部 MCP 工具再转发出去。这是有意为之——防止"我是 A 的 MCP server、A 又是 B 的 MCP server、B 又是我的 MCP client"形成循环，也防止 tool namespace 被外部污染。</p>
 <p>启动链路：<code class="ref">src/main.tsx:3901</code> 注册子命令 → <code class="ref">src/cli/handlers/mcp.tsx:60-67</code> 调用 → <code class="ref">src/entrypoints/mcp.ts:35</code> 的 <code>startMCPServer(cwd, debug, verbose)</code>。</p>
-<h3>2.3 MCP sub-client（针对 claude.ai 托管的 connectors）</h3>
+<h3 id="2-3-mcp-sub-client-针对-claude-ai-托管的-connectors">2.3 MCP sub-client（针对 claude.ai 托管的 connectors）<a class="h-anchor" href="#2-3-mcp-sub-client-针对-claude-ai-托管的-connectors" aria-label="permalink">¶</a></h3>
 <p>第三重身份比较绕。<code class="ref">src/services/mcp/types.ts:116-122</code> 定义了一个特殊配置类型：</p>
 <figure class="codeblock"><figcaption><span class="file">src/services/mcp/types.ts:116-122</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">McpClaudeAIProxyServerConfigSchema</span> = lazySchema(() =&gt;
   z.object({
@@ -89,7 +89,7 @@
 <p>任何一项不满足，<code>fetchClaudeAIMcpConfigsIfEligible</code> 静默返回空 map，用户在 <code>/mcp</code> 里什么也看不到，日志里只留一行 debug。这是本章第一个典型的"踩坑点"：</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/services/mcp/claudeai.ts:42-74</code>）：claudeai-proxy transport 需要 OAuth token 带 <code>user:mcp_servers</code> scope 才会激活，scope 缺失时 <code>fetchClaudeAIMcpConfigsIfEligible</code> 返回 <code>{}</code> 而不报错。用户登录了 claude.ai 但仍看不到 Gmail / Drive 等 connectors 时，通常是这个 scope 没给到——产品层面没有提示，只能靠 <code>--debug</code> 日志 <code>[claudeai-mcp] Missing user:mcp_servers scope</code> 定位。</p></blockquote>
 <p>本章后续主要围绕身份 A 讲。身份 B 用第 8 节单独收尾。身份 C 作为"client 处理异形 server"的一个例子，第 5 节简单带过。</p>
-<h2>3. 为什么挑"工具适配层"出来讲</h2>
+<h2 id="3-为什么挑-工具适配层-出来讲">3. 为什么挑"工具适配层"出来讲<a class="h-anchor" href="#3-为什么挑-工具适配层-出来讲" aria-label="permalink">¶</a></h2>
 <p>MCP 协议本身简单——5 个方法能覆盖 90% 场景。真正工程上值得看的是：</p>
 <ul>
 <li><strong>外部 MCP server 的 tools 形状是未知的</strong>。每个 server 自定义 name / description / inputSchema / annotations。</li>
@@ -97,8 +97,8 @@
 <li>两者的形状不同，数量不同，随时在变（MCP 支持 <code>list_changed</code> 通知），且最终要被 <a class="chref" href="../ch08/">ch.08</a> 的工具合并、<a class="chref" href="../ch09/">ch.09</a> 的权限、<a class="chref" href="../ch10/">ch.10</a> 的 Skills 无差别消费。</li>
 </ul>
 <p>本章要讲的设计取舍就是：Claude Code 用 JS 对象的 spread-and-override 把未知形状的远端工具一次一个包成固定形状的本地 <code>Tool</code>，<strong>主干调用路径（<code>tool.call(args, ctx, ...)</code>）对 MCP 几乎无感</strong>——这里特意从"完全"改成"几乎"，因为 <code class="ref">src/services/tools/toolExecution.ts</code> 里确实有多处 <code>isMcpTool(tool)</code> / <code>tool.isMcp</code> 分支点（1377 / 1477 / 1495 / 1498 / 1540 / 1670 等行）。权限 / 遥测 / 特定展开路径会用这些分支做增量处理（工具合并逻辑见 <a class="chref" href="../ch08/">ch.08</a>，权限判定见 <a class="chref" href="../ch09/">ch.09</a>），但这些是 cross-cutting 关注点，不是主干分裂（见 5.2 末尾的措辞修正）。</p>
-<h2>4. 关键数据结构</h2>
-<h3>4.1 连接的五态</h3>
+<h2 id="4-关键数据结构">4. 关键数据结构<a class="h-anchor" href="#4-关键数据结构" aria-label="permalink">¶</a></h2>
+<h3 id="4-1-连接的五态">4.1 连接的五态<a class="h-anchor" href="#4-1-连接的五态" aria-label="permalink">¶</a></h3>
 <p>MCP server 不是"连上/没连上"两态，是五态：</p>
 <figure class="codeblock"><figcaption><span class="file">src/services/mcp/types.ts:221-226</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">MCPServerConnection</span> =
   | <span class="hl-type">ConnectedMCPServer</span>    <span class="hl-cm">// 已连上，带 Client 实例 + capabilities</span>
@@ -107,7 +107,7 @@
   | <span class="hl-type">PendingMCPServer</span>      <span class="hl-cm">// 正在连或重连</span>
   | <span class="hl-type">DisabledMCPServer</span>     <span class="hl-cm">// 用户禁用</span></code></pre></figure>
 <p><code>NeedsAuthMCPServer</code> 这一态之所以值得单独存在，是因为 Claude Code 会为它生成一个<strong>伪工具</strong>，而不是"提示用户跑命令"。第 7 节展开。</p>
-<h3>4.2 Transport 是八路分发</h3>
+<h3 id="4-2-transport-是八路分发">4.2 Transport 是八路分发<a class="h-anchor" href="#4-2-transport-是八路分发" aria-label="permalink">¶</a></h3>
 <p>用户眼里 <code>claude mcp add --transport</code> 就三个选项（stdio / http / sse；SSE 已 deprecated，见 <a href="https://code.claude.com/docs/en/mcp" rel="noreferrer">https://code.claude.com/docs/en/mcp</a>，访问于 2026-04-19）。源码里 <code>McpServerConfig</code> 的 union 是八种：</p>
 <ul>
 <li><code>stdio</code> — 子进程 stdio pipe</li>
@@ -120,7 +120,7 @@
 <li><code>claudeai-proxy</code> — 经 claude.ai 中继</li>
 </ul>
 <p>对应 <code class="ref">src/services/mcp/client.ts:700-961</code> 里一条很长的 if/else 链，其中 <code>claudeai-proxy</code> 分支起于 <code class="ref">src/services/mcp/client.ts:868-904</code>（下一节看）。</p>
-<h3>4.3 MCPTool 模板：故意留白的占位对象</h3>
+<h3 id="4-3-mcptool-模板-故意留白的占位对象">4.3 MCPTool 模板：故意留白的占位对象<a class="h-anchor" href="#4-3-mcptool-模板-故意留白的占位对象" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/tools/MCPTool/MCPTool.ts:27-77</code> 定义了一个叫 <code>MCPTool</code> 的 Tool 实例。每个方法几乎都有一行注释：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/tools/MCPTool/MCPTool.ts:27-55 (节选)</span>
 <span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">MCPTool</span> = buildTool({
@@ -137,8 +137,8 @@
   ...
 })</code></pre></figure>
 <p>这个对象不是被直接使用的工具——它是一个<strong>模板</strong>。真正的 MCP 工具由 <code>fetchToolsForClient</code> 用 <code>{ ...MCPTool, name: ..., async call() {...}, ... }</code> spread 出来。模板保证所有 MCP 包出来的工具共享相同的 UI renderer（<code>renderToolUseMessage</code> / <code>renderToolResultMessage</code>）、结果大小上限、截断策略，只覆盖跟"这是哪个外部 server 的哪个 tool"相关的几个方法。</p>
-<h2>5. 关键流程</h2>
-<h3>5.1 配置聚合到连接</h3>
+<h2 id="5-关键流程">5. 关键流程<a class="h-anchor" href="#5-关键流程" aria-label="permalink">¶</a></h2>
+<h3 id="5-1-配置聚合到连接">5.1 配置聚合到连接<a class="h-anchor" href="#5-1-配置聚合到连接" aria-label="permalink">¶</a></h3>
 <p>Claude Code 的 MCP 配置来自七个源：<code>local</code>（项目本地 user config）/ <code>user</code>（全局）/ <code>project</code>（<code class="ref">.mcp.json</code>）/ <code>dynamic</code>（运行时注入）/ <code>enterprise</code>（<code class="ref">managed-mcp.json</code>）/ <code>claudeai</code>（账号关联 connectors）/ <code>managed</code> + 还有 <code>plugin</code> 注入的。每个条目带上 <code>scope</code> 字段后合成一张扁平的 <code>Record&lt;name, ScopedMcpServerConfig&gt;</code>。</p>
 <p>连接阶段按 <code>serverRef.type</code> 分发 transport，主干是这一段（只贴骨架）：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/services/mcp/client.ts:700-961 (节选)</span>
@@ -167,7 +167,7 @@
   })
 }</code></pre></figure>
 <p>所有分支的共同出口是一个 <code>transport</code> 对象 + 一个 <code>Client</code>（MCP SDK 的类），二者连上，就拿到了一个 <code>ConnectedMCPServer</code>。</p>
-<h3>5.2 tools/list → 工具池适配（本章核心）</h3>
+<h3 id="5-2-tools-list-工具池适配-本章核心">5.2 tools/list → 工具池适配（本章核心）<a class="h-anchor" href="#5-2-tools-list-工具池适配-本章核心" aria-label="permalink">¶</a></h3>
 <p>现在到这一节的主角。<code class="ref">src/services/mcp/client.ts:1743-2115</code> 的 <code>fetchToolsForClient</code> 是整条链路的适配层。它是一个 <code>memoizeWithLRU</code> 函数，输入是一个 connection，输出是一批 Claude Code <code>Tool</code>。</p>
 <p>先发请求：</p>
 <figure class="codeblock"><figcaption><span class="file">src/services/mcp/client.ts:1752-1758</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> result = (<span class="hl-kw">await</span> client.client.request(
@@ -221,7 +221,7 @@
 <p><strong>其二，annotations 到内部语义是 1:1 直接透传</strong>。MCP 规范 tools 章节（同 URL，访问于 2026-04-19）定义了 <code>readOnlyHint</code> / <code>destructiveHint</code> / <code>openWorldHint</code> 等 annotation。Claude Code 没有另起术语，直接把这些字段映射到自己的 <code>isReadOnly</code> / <code>isDestructive</code> / <code>isOpenWorld</code>。两个系统的接口稳定性锚点就是这几个规范字段名。值得注意：MCP 规范明文写 "clients MUST consider tool annotations to be untrusted unless they come from trusted servers"——Claude Code 这里用了 <code>?? false</code> 兜底，没有把 annotation 当成硬保证，它们只是"提示"。真正的权限决定在 <a class="chref" href="../ch09/">ch.09</a> 的 Permission 系统里做。</p>
 <p><strong>其三，inputSchema 不二次校验</strong>。外部 server 给的 <code>tool.inputSchema</code> 是 JSON Schema，这里直接当 <code>inputJSONSchema</code> 塞给模型。Claude Code 没有把它翻成 zod 再在本地做 runtime 校验——因为每个 MCP 工具的 schema 形状未知，运行时动态生成 zod validator 的成本不划算，直接让 server 自己 validate（MCP 规范也强制 server 必须验证）。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/services/mcp/client.ts:1779-1785</code>）：MCP 规范的 <code>tool._meta</code> 是开放字段，Anthropic 在里头偷偷占了 <code>anthropic/*</code> 命名空间——<code>anthropic/searchHint</code> 和 <code>anthropic/alwaysLoad</code>——让自家 MCP server 能影响 Claude Code 的 <code>ToolSearch</code> 行为（<code>searchHint</code> 进来前还会被 <code>replace(/\s+/g, &#x27; &#x27;)</code> 压成单空格，防止 <code>\n</code> 把 deferred 工具清单行切坏）。第三方 MCP server 不知道这个约定，也就享受不到 searchHint / alwaysLoad 的影响权——这是协议层"开放 <code>_meta</code>"被客户端默默解释成"私有命名空间"的典型现象。</p></blockquote>
-<h3>5.3 工具名怎么来的，以及一个 prompt cache 的细节</h3>
+<h3 id="5-3-工具名怎么来的-以及一个-prompt-cache-的细节">5.3 工具名怎么来的，以及一个 prompt cache 的细节<a class="h-anchor" href="#5-3-工具名怎么来的-以及一个-prompt-cache-的细节" aria-label="permalink">¶</a></h3>
 <p>工具名走 <code>buildMcpToolName</code>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/services/mcp/mcpStringUtils.ts:50-52</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> buildMcpToolName(serverName: string, toolName: string): string {
   <span class="hl-kw">return</span> <span class="hl-str">`${getMcpPrefix(serverName)}${normalizeNameForMCP(toolName)}`</span>
@@ -242,7 +242,7 @@
 )</code></pre></figure>
 <p>这是很典型的"服务端设计向客户端传导"案例：为了命中 prompt cache，客户端必须维持工具列表的特定结构（内建工具作为连续前缀）。如果不知道这个约束，随手改成 <code>tools.sort()</code> 扁平排，每次加 MCP server 就会让 cache 失效一次。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/tools.ts:354-361</code>）：服务端的 <code>claude_code_system_cache_policy</code> 在"最后一个匹配前缀的内建工具"处放一个全局 cache breakpoint；<code>assembleToolPool</code> 必须把内建工具作为连续前缀、MCP 工具单独拼在后面，否则 MCP 工具插进内建工具中间会让下游所有 cache 失效。产品层面你看不到这条约束，但它解释了为什么"装了一个新 MCP server 之后，下一次请求意外地贵了一截"——cache 命中率被工具列表重排打穿了。</p></blockquote>
-<h3>5.4 in-process transport：避免 spawn 一个 300MB 的子进程</h3>
+<h3 id="5-4-in-process-transport-避免-spawn-一个-300mb-的子进程">5.4 in-process transport：避免 spawn 一个 300MB 的子进程<a class="h-anchor" href="#5-4-in-process-transport-避免-spawn-一个-300mb-的子进程" aria-label="permalink">¶</a></h3>
 <p>两个特殊 server 不走 stdio，而是直接塞在同一进程里。分支在 <code class="ref">src/services/mcp/client.ts:905-943</code>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/services/mcp/client.ts:905-943 (节选)</span>
 } <span class="hl-kw">else</span> <span class="hl-kw">if</span> (
@@ -276,7 +276,7 @@
 }</code></pre></figure>
 <p><code>createLinkedTransportPair</code> 返回两头互指的实例，一头给 client、一头给 server，两个对象在同一个 Node event loop 里跑。成本：省掉 spawn + IPC 的开销（Chrome MCP 子进程~325MB 内存、启动时间不小）；代价：server 崩了会把 client 一起带崩（同进程）。对"自家一定稳"的 MCP server 值得；对第三方 server 绝对不行。</p>
 <p>这是值得借鉴的小模式：MCP SDK 的 <code>Transport</code> 接口抽象得够薄，用户可以按需自己写变种。stdio/http/ws 都是网络层，in-process 就是一组 microtask。</p>
-<h3>5.5 运行时调用链</h3>
+<h3 id="5-5-运行时调用链">5.5 运行时调用链<a class="h-anchor" href="#5-5-运行时调用链" aria-label="permalink">¶</a></h3>
 <p>模型生成一个工具调用 <code>mcp__github__create_issue({...})</code> 后，链路是：</p>
 <ol>
 <li>Agent Loop 在合并工具池里按 name 查到刚才 <code>fetchToolsForClient</code> 包出来的 <code>Tool</code> 实例；</li>
@@ -327,7 +327,7 @@
   }),
 )</code></pre></figure>
 <p>MCP 规范允许 resource 返回任意 mimeType 的二进制 blob（base64 编码）。塞进 agent context 没用——模型看不懂一堆 base64。这里的处理是<strong>拦截 blob 字段落盘</strong>：写成带 mime 扩展名的本地文件，返回路径给模型。模型拿到 <code>blobSavedTo: /tmp/.../mcp-resource-...jpg</code> 之后可以用 Read 或 Bash 工具处理。这是协议层 blob 到 agent context 的 narrow waist——tool call 结果里永远只传 text 或 file path。</p>
-<h2>7. MCP 认证：把 OAuth 包装成一个伪工具</h2>
+<h2 id="7-mcp-认证-把-oauth-包装成一个伪工具">7. MCP 认证：把 OAuth 包装成一个伪工具<a class="h-anchor" href="#7-mcp-认证-把-oauth-包装成一个伪工具" aria-label="permalink">¶</a></h2>
 <p>remote MCP server 通常要 OAuth。如果是 IDE 插件或桌面客户端，OAuth 流无非就是开浏览器→跳 authorization URL→等回调。问题是 Claude Code 的 agent loop 里只有"工具调用"这一种和外部世界交互的原语——不存在"这里停一下等用户浏览器回来"这种事件。</p>
 <p><code class="ref">src/tools/McpAuthTool/McpAuthTool.ts</code> 的设计是：当 server 处于 <code>needs-auth</code> 状态时，给这个 server 插入一个<strong>伪工具</strong> <code>mcp__&lt;server&gt;__authenticate</code>，工具的实现就是 OAuth 流。</p>
 <p>模板文件头注释说得很直白：</p>
@@ -399,7 +399,7 @@
 <li>XAA（Cross-App Access，基于 SEP-990）是 Anthropic 内部的扩展，<code class="ref">src/services/mcp/xaa.ts</code> / <code class="ref">xaaIdpLogin.ts</code> 实现，允许共享 IdP token 跨 MCP server 使用。本章不展开（公开文档未找到）。</li>
 </ul>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/services/mcp/auth.ts:467-576</code>，<code>ClaudeAuthProvider.saveTokens</code> at <code>:1704</code>）：MCP OAuth token 的生命周期和 session 解耦——token 写进 OS 钥匙串（macOS Keychain / Windows Credential Manager / Linux keyring）后没有 TTL，没有"session 退出自动清理"这一步。清除路径只有一条：显式调 <code>revokeServerTokens(serverName, ...)</code>（例如 <code>/mcp</code> UI 里的 "Clear Auth"），它会先 RFC 7009 best-effort 服务端吊销，再 <code>clearServerTokensFromLocalStorage</code> 抹掉本地；除此之外 token 会一直留在钥匙串里，跨 CLI 多开共享。产品层面你感知不到，但如果你换了一台机器、改了账号、或者重装 CLI，旧 token 可能仍在钥匙串里，除非手动清。</p></blockquote>
-<h2>8. Claude Code 作为 MCP server</h2>
+<h2 id="8-claude-code-作为-mcp-server">8. Claude Code 作为 MCP server<a class="h-anchor" href="#8-claude-code-作为-mcp-server" aria-label="permalink">¶</a></h2>
 <p>回到身份 B：<code>claude mcp serve</code>。相关代码只有 196 行，值得整段看（删去了样板）：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/entrypoints/mcp.ts:47-97 (骨架)</span>
 <span class="hl-kw">const</span> server = <span class="hl-kw">new</span> <span class="hl-type">Server</span>(
@@ -458,19 +458,19 @@ server.setRequestHandler(
 <p><strong>outputSchema 兼容性坑</strong>。MCP SDK 要求 outputSchema 根是 <code>type: &quot;object&quot;</code>。Claude Code 内部很多工具用了 <code>z.union</code> / <code>z.discriminatedUnion</code>，转 JSON Schema 后是 <code>anyOf</code> / <code>oneOf</code>，不合规。处理是直接 skip 这些工具的 outputSchema（70-81 行），附了 issue 链接 <code>https://github.com/anthropics/claude-code/issues/8014</code>（该 URL 由源码注释原样转载，Editor 核对当天 issue 页标题已变，无须据此做二次断言）。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/entrypoints/mcp.ts:119-120</code>）：<code>claude mcp serve</code> 起的 server 在调用内建工具时，构造的 <code>toolUseContext</code> 里 <code>mcpClients: []</code> / <code>mcpResources: {}</code> 是硬编码空的。即便父进程是一个 Claude Code session 自己连着一堆外部 MCP server，暴露给下游 host 的内建工具也拿不到这些 client 引用——配合 62 / 103 行的 <code>// TODO: Also re-expose any MCP tools</code>，构成一道双保险：外部 MCP 能力既不被 re-expose、也不被内建工具"间接透传"出去。</p></blockquote>
 <p>这一节讲到这里就够了。<code>claude mcp serve</code> 被谁消费（IDE 插件？Agent SDK？其他 host？）放到 Agent SDK 章（详见 <a class="chref" href="../ch23/">ch.23</a>）；Agent SDK 里还有个反向能力——<code>createSdkMcpServer</code> 让用户代码直接在内存里塞一个 MCP server 给同进程 Claude Code 用，也在 <a class="chref" href="../ch23/">ch.23</a> 讲。IDE / Chrome / Computer Use 这几个"自家 MCP consumer"的用户侧接入路径详见 <a class="chref" href="../ch18/">ch.18</a>；Skills 系统从 MCP 工具做包装的那一层详见 <a class="chref" href="../ch10/">ch.10</a>。</p>
-<h2>9. shims 下的两个 MCP：只讲怎么接入</h2>
+<h2 id="9-shims-下的两个-mcp-只讲怎么接入">9. shims 下的两个 MCP：只讲怎么接入<a class="h-anchor" href="#9-shims-下的两个-mcp-只讲怎么接入" aria-label="permalink">¶</a></h2>
 <p><code>shims/ant-computer-use-mcp/</code> 和 <code>shims/ant-claude-for-chrome-mcp/</code> 是仓库的恢复期兼容层。<code class="ref">package.json</code> 里 <code>&quot;version&quot;: &quot;0.0.0-restored&quot;</code> 已经标明。真实实现在 Anthropic 的私有仓（分别是 <code>packages/desktop/computer-use-mcp</code> 和 Chrome 扩展）。本章只讲这两个包<strong>作为 MCP server 怎么被连接起来</strong>、<strong>暴露什么工具目录</strong>。具体 Computer Use / Chrome 扩展能干什么、用户权限流程在 <a class="chref" href="../ch18/">ch.18</a>。</p>
-<h3>9.1 暴露的工具目录</h3>
+<h3 id="9-1-暴露的工具目录">9.1 暴露的工具目录<a class="h-anchor" href="#9-1-暴露的工具目录" aria-label="permalink">¶</a></h3>
 <p>Computer Use MCP 声明 23 个工具（<code class="ref">shims/ant-computer-use-mcp/index.ts:77-114</code>），包括： <code>request_access</code> / <code>list_granted_applications</code> / <code>screenshot</code> / <code>zoom</code> / <code>cursor_position</code> / <code>mouse_move</code> / <code>left_click</code> / <code>right_click</code> / <code>middle_click</code> / <code>double_click</code> / <code>triple_click</code> / <code>left_mouse_down</code> / <code>left_mouse_up</code> / <code>left_click_drag</code> / <code>scroll</code> / <code>type</code> / <code>key</code> / <code>hold_key</code> / <code>read_clipboard</code> / <code>write_clipboard</code> / <code>open_application</code> / <code>wait</code> / <code>computer_batch</code>。</p>
 <p>Chrome MCP 声明 17 个浏览器工具（<code class="ref">shims/ant-claude-for-chrome-mcp/index.ts:18-87</code>）： <code>navigate</code> / <code>read_page</code> / <code>get_page_text</code> / <code>find</code> / <code>form_input</code> / <code>computer</code> / <code>javascript_tool</code> / <code>tabs_context_mcp</code> / <code>tabs_create_mcp</code> / <code>resize_window</code> / <code>upload_image</code> / <code>read_console_messages</code> / <code>read_network_requests</code> / <code>shortcuts_list</code> / <code>shortcuts_execute</code> / <code>gif_creator</code> / <code>update_plan</code>。</p>
 <p>脚注：上列工具目录是恢复仓 shim 里的声明。shim 的 <code>createXxxMcpServer</code> 函数只是打 warn 日志的 stub（<code class="ref">shims/ant-computer-use-mcp/index.ts:120-144</code>；<code class="ref">shims/ant-claude-for-chrome-mcp/index.ts:89-113</code>），真实工具实现在私有包里，数量可能有增减。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">shims/ant-computer-use-mcp/index.ts:120-144</code> / <code class="ref">shims/ant-claude-for-chrome-mcp/index.ts:89-113</code>）：shim 下的 <code>createClaudeForChromeMcpServer</code> / <code>createComputerUseMcpServerForCli</code> 是<strong>只写 warning 的空壳</strong>——它们返回的 server 对象实现了 MCP SDK 接口，但 <code>tools/call</code> 处理器永远 fallback 到"not implemented"分支。这意味着在恢复仓编译出来的 Claude Code 里，把 Chrome/Computer Use MCP "连上"是能成功的（in-process transport 不会失败），但真正跑工具会拿到空结果或错误。真实实现来自 Anthropic 私有包 <code>@ant/claude-for-chrome-mcp</code> / <code>@ant/computer-use-mcp</code>，本章贴的工具清单只是 shim 声明的<strong>形状约束</strong>，不是运行时行为（Chrome/Computer Use 的用户侧行为详见 <a class="chref" href="../ch18/">ch.18</a>）。</p></blockquote>
-<h3>9.2 接入路径</h3>
+<h3 id="9-2-接入路径">9.2 接入路径<a class="h-anchor" href="#9-2-接入路径" aria-label="permalink">¶</a></h3>
 <p>对这两个 server，<code class="ref">src/services/mcp/client.ts:905-943</code> 走的是 5.4 节讲过的 in-process transport 分支：不 spawn 子进程、不走 stdio，<code>createLinkedTransportPair</code> 把 client 和 server 连在同一进程。Chrome MCP 的存在就是省掉 ~325MB 的子进程启动开销（注释直接写在 909 行）。</p>
 <p>从本章视角讲清的点只有：<strong>它们是普通 MCP server，只不过 transport 用 in-process 代替了 stdio</strong>。工具调用链路跟任何外部 MCP server 完全一样（都走 JSON-RPC），只是 JSON-RPC 消息不过 pipe 过 microtask。</p>
-<h2>10. 名字容易混的两个目录：bridge 和 upstreamproxy</h2>
+<h2 id="10-名字容易混的两个目录-bridge-和-upstreamproxy">10. 名字容易混的两个目录：bridge 和 upstreamproxy<a class="h-anchor" href="#10-名字容易混的两个目录-bridge-和-upstreamproxy" aria-label="permalink">¶</a></h2>
 <p>STATE.json 的 source_hints 把 <code>src/bridge/</code> 和 <code>src/upstreamproxy/</code> 也列进了本章材料。Owner 读完后判断：<strong>这两个目录和 MCP 没关系</strong>。本节用不到一页澄清，防止读者误会。</p>
-<h3>10.1 <code>src/bridge/</code> = Remote Control</h3>
+<h3 id="10-1-src-bridge-remote-control">10.1 <code>src/bridge/</code> = Remote Control<a class="h-anchor" href="#10-1-src-bridge-remote-control" aria-label="permalink">¶</a></h3>
 <p>这是 claude.ai 网页/移动端向本地 CLI 下发任务的中继。代码主体在 <code class="ref">src/bridge/bridgeMain.ts</code>（2999 行）、<code class="ref">src/bridge/replBridge.ts</code>（2406 行），全部是 session 生命周期管理：环境注册、长轮询派发、session ingress WebSocket、权限回调路由。核心数据是 <code>WorkSecret</code>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/bridge/types.ts:33-51 (节选)</span>
 <span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">WorkSecret</span> = {
@@ -486,7 +486,7 @@ server.setRequestHandler(
 }</code></pre></figure>
 <p>唯一跟 MCP 沾边的是 <code>mcp_config?: unknown | null</code> 字段——服务端可以下发一份 MCP server 配置给本地 session 用。但这是<strong>配置透传</strong>，不是协议代理。bridge 不解 JSON-RPC、不转发 <code>tools/call</code>，它只是把一段 JSON 放进 session 的 MCP 配置树。真正的协议流依然由 <code class="ref">src/services/mcp/client.ts</code> 在本地进程里处理。</p>
 <p>Remote Control 完整机制见 <a class="chref" href="../ch17/">ch.17</a>。</p>
-<h3>10.2 <code>src/upstreamproxy/</code> = CCR 容器 HTTPS 出站代理</h3>
+<h3 id="10-2-src-upstreamproxy-ccr-容器-https-出站代理">10.2 <code>src/upstreamproxy/</code> = CCR 容器 HTTPS 出站代理<a class="h-anchor" href="#10-2-src-upstreamproxy-ccr-容器-https-出站代理" aria-label="permalink">¶</a></h3>
 <p>这个也不是 MCP 代理。文件头注释自己说得很清楚：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/upstreamproxy/upstreamproxy.ts:1-20 (节选翻译)</span>
 <span class="hl-cm">// CCR upstreamproxy —— container-side wiring.</span>
@@ -500,7 +500,7 @@ server.setRequestHandler(
 <p>和 <code class="ref">src/upstreamproxy/relay.ts</code> 一起看（455 行）：本地 TCP listener 接受 HTTP CONNECT 请求（curl / gh / kubectl 这些），把字节用 protobuf <code>UpstreamProxyChunk</code> 封装后通过 WebSocket 隧道到 CCR 服务端，服务端 MITM 终止 TLS 注入机构配置的凭据（比如 <code>DD-API-KEY</code>）再转发到真上游。</p>
 <p>走的协议是 HTTP CONNECT + WebSocket，<strong>不是 JSON-RPC</strong>。消费者是 agent 子进程里任何发 HTTPS 请求的工具（curl / gh / Python requests / npm...），<strong>不是 MCP server</strong>。</p>
 <p>所以这个目录跟 MCP 唯一的共同点是名字里有"proxy"。本章点到为止。上游代理机制若要展开，属于 <a class="chref" href="../ch17/">ch.17</a>（远程 session / 容器化）。</p>
-<h2>11. 可迁移的设计点</h2>
+<h2 id="11-可迁移的设计点">11. 可迁移的设计点<a class="h-anchor" href="#11-可迁移的设计点" aria-label="permalink">¶</a></h2>
 <p>读完全章，有几个点值得带走用到自己的项目：</p>
 <p><strong>一、未知形状能力的适配：spread-and-override 模板</strong>。当你要接入 N 种外部能力、每种能力形状不同、但最终要被统一的内部接口消费——用一个基对象（<code>MCPTool</code>）定义共享字段（UI renderer、大小上限等），然后运行时 <code>{ ...base, ...perItemOverride }</code> spread 出 N 个实例。主干代码只见内部接口，不感知适配层。</p>
 <p><strong>二、协议字段到内部语义 1:1 透传</strong>。MCP 规范 annotations（<code>readOnlyHint</code> / <code>destructiveHint</code> / <code>openWorldHint</code>）被 Claude Code 原样映射成 <code>isReadOnly</code> / <code>isDestructive</code> / <code>isOpenWorld</code>，没另起术语。两个系统的接口稳定性锚点就是规范字段名。你要接第三方协议时，尽量用规范里的字段名做内部方法名，换版本时兼容性最好。</p>

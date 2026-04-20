@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2>1. 用户看到什么</h2>
+<h2 id="1-用户看到什么">1. 用户看到什么<a class="h-anchor" href="#1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">按下 Shift+Tab 两次，终端状态行从 <code>⏵⏵ accept edits on</code> 切到 <code>⏸ plan mode on</code>。Claude 此后读代码、跑 <code>git</code>、查结构，但<strong>不会</strong>动源文件——它会把思考过程写进一个 plan 文件，最后弹出一个"Exit plan mode?"对话框等你批准；批准后进入实现阶段，并把整份计划连同"你已批准，现在可以开始写代码"的提示一并送回模型。</p>
 <p>三条入口等价：</p>
 <ul>
@@ -48,7 +48,7 @@
 <li>agent 自己调用 <code>EnterPlanMode</code> 工具（<code class="ref">src/tools/EnterPlanModeTool/EnterPlanModeTool.ts:77-102</code>）。</li>
 </ul>
 <p>还有一条启动期入口：<code>claude --permission-mode plan</code>，由 CLI flag 直接起在 plan 里（官方 CLI 参考：<a href="https://code.claude.com/docs/en/cli-reference" rel="noreferrer">https://code.claude.com/docs/en/cli-reference</a>，访问于 2026-04-19）。</p>
-<h2>2. 为什么挑这个设计出来讲</h2>
+<h2 id="2-为什么挑这个设计出来讲">2. 为什么挑这个设计出来讲<a class="h-anchor" href="#2-为什么挑这个设计出来讲" aria-label="permalink">¶</a></h2>
 <p>"先计划后执行"是 agent 领域的公论。值得研究的是 Claude Code <strong>如何把这个约束真正保持住</strong>。读完源码后最反直觉的发现是：代码里几乎没有"plan 模式下禁止 FileEdit"这类硬检查。只读约束靠三件事叠加：</p>
 <ol>
 <li>一个会话级的 <code>toolPermissionContext.mode = &#x27;plan&#x27;</code> 状态。</li>
@@ -57,8 +57,8 @@
 </ol>
 <p>这三件事单独都不算强，叠起来却把"阶段"这个抽象做实了。下面把每一层拆开看。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/permissions/permissions.ts:1268-1281</code>）：整仓没有"plan 模式 &amp;&amp; 写工具 → deny"分支——独立 Grep 过 <code>mode === &#x27;plan&#x27;</code> 全部出现，没有一处在写工具的拒绝路径上。相反，<code>shouldBypassPermissions</code> 里有一条 <code>mode === &#x27;plan&#x27; &amp;&amp; isBypassPermissionsModeAvailable</code> 的<strong>叠加放行</strong>：用 <code>--permission-mode bypassPermissions</code> 启动的会话切到 plan，写工具不仅不 ask，直接 allow。产品层看不到，但会削弱"plan = 只读保证"的心智模型（权限层全貌详见 <a class="chref" href="../ch09/">ch.09</a>）。</p></blockquote>
-<h2>3. 关键数据结构</h2>
-<h3>3.1 <code>PermissionMode</code> 枚举</h3>
+<h2 id="3-关键数据结构">3. 关键数据结构<a class="h-anchor" href="#3-关键数据结构" aria-label="permalink">¶</a></h2>
+<h3 id="3-1-permissionmode-枚举">3.1 <code>PermissionMode</code> 枚举<a class="h-anchor" href="#3-1-permissionmode-枚举" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/utils/permissions/PermissionMode.ts:42-91</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> <span class="hl-type">PERMISSION_MODE_CONFIG</span>: <span class="hl-type">Partial</span>&lt;
   <span class="hl-type">Record</span>&lt;<span class="hl-type">PermissionMode</span>, <span class="hl-type">PermissionModeConfig</span>&gt;
 &gt; = {
@@ -76,7 +76,7 @@
   ...(feature(&#x27;<span class="hl-type">TRANSCRIPT_CLASSIFIER</span>&#x27;) ? { auto: { ... } } : {}),
 }</code></pre></figure>
 <p><code>plan</code> 和其他模式平级。切换逻辑集中在一个结构体上，UI 配色、短标题、SDK 外部名都挂在同一张表——这是把"mode 是一个一等概念"这件事实在类型层面落地的做法。</p>
-<h3>3.2 <code>ToolPermissionContext</code> 里多出来的 <code>prePlanMode</code></h3>
+<h3 id="3-2-toolpermissioncontext-里多出来的-preplanmode">3.2 <code>ToolPermissionContext</code> 里多出来的 <code>prePlanMode</code><a class="h-anchor" href="#3-2-toolpermissioncontext-里多出来的-preplanmode" aria-label="permalink">¶</a></h3>
 <p>进入 plan 前是什么模式，会被记下来，以便退出时还原：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/permissions/permissionSetup.ts:1462-1493</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> prepareContextForPlanMode(
   context: <span class="hl-type">ToolPermissionContext</span>,
@@ -87,7 +87,7 @@
   <span class="hl-kw">return</span> { ...context, prePlanMode: currentMode }
 }</code></pre></figure>
 <p><code>ExitPlanMode</code> 出来时从 <code>prePlanMode</code> 读回目标模式（<code class="ref">src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts:357-403</code>）。如果用户刚刚是 acceptEdits，plan 结束后自动回到 acceptEdits；如果是 default，就回 default。</p>
-<h3>3.3 <code>plan_mode</code> attachment</h3>
+<h3 id="3-3-plan_mode-attachment">3.3 <code>plan_mode</code> attachment<a class="h-anchor" href="#3-3-plan_mode-attachment" aria-label="permalink">¶</a></h3>
 <p>这是本章的主角之一——一个<strong>消息附件类型</strong>，每轮对话前可能被插进上下文：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/attachments.ts:1232-1239</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">attachments.push({
   <span class="hl-kw">type</span>: &#x27;plan_mode&#x27;,
@@ -97,7 +97,7 @@
   planExists: existingPlan !== <span class="hl-kw">null</span>,
 })</code></pre></figure>
 <p><code>reminderType</code> 在 <code>&#x27;full&#x27;</code> 和 <code>&#x27;sparse&#x27;</code> 之间轮转（下节详述）。此外还有两个兄弟附件：<code>plan_mode_reentry</code>（<code class="ref">attachments.ts:1215-1219</code>）在用户 exit 后<strong>再次</strong>进入 plan 模式时一次性发出重入指引；<code>plan_mode_exit</code>（<code class="ref">attachments.ts:1248-1273</code>）在批准退出后通知"你已退出 plan 模式"。三种附件一起构成 plan 状态机的三个边。</p>
-<h3>3.4 Plan 文件路径</h3>
+<h3 id="3-4-plan-文件路径">3.4 Plan 文件路径<a class="h-anchor" href="#3-4-plan-文件路径" aria-label="permalink">¶</a></h3>
 <p>每会话一个词袋 slug，sub-agent 带 agentId 后缀：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/plans.ts:119-129</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> getPlanFilePath(agentId?: <span class="hl-type">AgentId</span>): string {
   <span class="hl-kw">const</span> planSlug = getPlanSlug(getSessionId())
@@ -107,9 +107,9 @@
   <span class="hl-kw">return</span> join(getPlansDirectory(), <span class="hl-str">`${planSlug}-agent-${agentId}.md`</span>)
 }</code></pre></figure>
 <p>默认目录 <code>~/.claude/plans/</code>。slug 在首次需要时生成，重试 10 次避免撞名（<code class="ref">src/utils/plans.ts:32-49</code>）。</p>
-<h2>4. 关键流程</h2>
+<h2 id="4-关键流程">4. 关键流程<a class="h-anchor" href="#4-关键流程" aria-label="permalink">¶</a></h2>
 <p>从"按下 Shift+Tab"到"计划被注入执行阶段"，一条主干：</p>
-<h3>4.1 进入 plan 模式</h3>
+<h3 id="4-1-进入-plan-模式">4.1 进入 plan 模式<a class="h-anchor" href="#4-1-进入-plan-模式" aria-label="permalink">¶</a></h3>
 <p>Shift+Tab → <code>handleCycleMode</code>（<code class="ref">src/components/PromptInput/PromptInput.tsx:1410</code>）→ <code>cyclePermissionMode</code>（<code class="ref">src/utils/permissions/getNextPermissionMode.ts:88-101</code>）。循环次序：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/permissions/getNextPermissionMode.ts:38-62</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">switch</span> (toolPermissionContext.mode) {
   <span class="hl-kw">case</span> &#x27;<span class="hl-kw">default</span>&#x27;:     <span class="hl-kw">return</span> &#x27;acceptEdits&#x27;
@@ -118,7 +118,7 @@
   ...
 }</code></pre></figure>
 <p>三个入口最后都归并到同一个调用：<code>applyPermissionUpdate(prepareContextForPlanMode(ctx), { type: &#x27;setMode&#x27;, mode: &#x27;plan&#x27;, destination: &#x27;session&#x27; })</code>。<code>/plan</code> 命令里是这段（<code class="ref">src/commands/plan/plan.tsx:74-82</code>）；<code>EnterPlanMode</code> 工具批准弹窗里也是同一段（<code class="ref">src/components/permissions/EnterPlanModePermissionRequest/EnterPlanModePermissionRequest.tsx:30-34</code> 的 <code>toolUseConfirm.onAllow({}, [{ type: &#x27;setMode&#x27;, mode: &#x27;plan&#x27;, destination: &#x27;session&#x27; }])</code>）。</p>
-<h3>4.2 每轮 prompt 前的 reminder 注入</h3>
+<h3 id="4-2-每轮-prompt-前的-reminder-注入">4.2 每轮 prompt 前的 reminder 注入<a class="h-anchor" href="#4-2-每轮-prompt-前的-reminder-注入" aria-label="permalink">¶</a></h3>
 <p>下一轮消息构造时，<code>getPlanModeAttachments</code> 决定是否发送附件：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/attachments.ts:1186-1208</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">async</span> <span class="hl-kw">function</span> getPlanModeAttachments(
   messages: <span class="hl-type">Message</span>[] | <span class="hl-kw">undefined</span>,
@@ -151,7 +151,7 @@ changing configs or making commits), or otherwise make any changes to
 the system. This supercedes any other instructions you have received.</code></pre></figure>
 <p>见 <code class="ref">src/utils/messages.ts:3227-3232</code>。之后是 5 阶段（或 interview 变体）的工作流指令 + 当前 plan 文件路径。sparse 版本（<code class="ref">messages.ts:3385-3397</code>）只有一句"Plan mode still active ... Read-only except plan file"。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/messages.ts:3227-3293</code>）：full 版 plan-mode system-reminder 整段约 4700 字节、约 1K–1.3K tokens；sparse 版不到它的 1/10。<code>PLAN_MODE_ATTACHMENT_CONFIG</code> 配了 <code>TURNS_BETWEEN_ATTACHMENTS: 5</code> 和 <code>FULL_REMINDER_EVERY_N_ATTACHMENTS: 5</code>（<code class="ref">attachments.ts:259-261</code>）——也就是每 5 个人类 turn 发一次 attachment，其中每 5 次里只有 1 次发 full。长对话里 full reminder 的 token 开销是"稀释到几乎不计"，但足以把"你在 plan 模式"这件事周期性压回模型注意力窗口。节流窗口之外，attachment 完全不发。</p></blockquote>
-<h3>4.3 plan 文件的读写</h3>
+<h3 id="4-3-plan-文件的读写">4.3 plan 文件的读写<a class="h-anchor" href="#4-3-plan-文件的读写" aria-label="permalink">¶</a></h3>
 <p>工作流明确告诉模型用 <code>FileWriteTool</code> / <code>FileEditTool</code> 往 plan 文件路径写。普通路径的写请求在 plan 模式下会走到标准的权限"ask"弹框——官方文档把这一条写成 "<strong>Permission prompts still apply the same as default mode</strong>"（<a href="https://code.claude.com/docs/en/permission-modes" rel="noreferrer">https://code.claude.com/docs/en/permission-modes</a>，访问于 2026-04-19）。对 plan 文件路径的放行是<strong>唯一的硬性例外</strong>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/permissions/filesystem.ts:1487-1497</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (isSessionPlanFile(normalizedPath)) {
   <span class="hl-kw">return</span> {
@@ -165,7 +165,7 @@ the system. This supercedes any other instructions you have received.</code></pr
 }</code></pre></figure>
 <p><code>checkEditableInternalPath</code> 被所有写工具的 <code>checkPermissions</code> 上游调用（<code class="ref">src/utils/permissions/filesystem.ts:1205-1250</code> 的 <code>checkWritePermissionForTool</code>）。plan 文件从而是<strong>任何模式下</strong>都不需要 ask 的——它不是"plan 模式下的特权"，而是"属于本会话的 agent 内部存储"。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/permissions/filesystem.ts:245-255</code>）：<code>isSessionPlanFile</code> 的判定是 <code>startsWith({plansDir}/{planSlug})</code> + <code>endsWith(&#x27;.md&#x27;)</code>。主会话 <code>{slug}.md</code> 和 sub-agent <code>{slug}-agent-{agentId}.md</code> 都天然命中（工具过滤相关详见 <a class="chref" href="../ch08/">ch.08</a>）；但任何以 <code>{slug}</code> 为前缀、<code>.md</code> 为后缀的路径都会放行——比如 <code>{slug}-foo.md</code>、<code>{slug}-notes/dump.md</code>。要利用这个放松，模型得先从 attachment 里读到 slug。没有已知的自发利用路径，但这是可写白名单里的一条"前缀匹配而非精确匹配"的边界。</p></blockquote>
-<h3>4.4 <code>ExitPlanMode</code>：唯一的合法出口</h3>
+<h3 id="4-4-exitplanmode-唯一的合法出口">4.4 <code>ExitPlanMode</code>：唯一的合法出口<a class="h-anchor" href="#4-4-exitplanmode-唯一的合法出口" aria-label="permalink">¶</a></h3>
 <p>当模型认为计划完成，它调用 <code>ExitPlanMode</code> 工具。这个工具的两个守卫很关键：</p>
 <figure class="codeblock"><figcaption><span class="file">src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts:195-220</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">async</span> validateInput(_input, { getAppState, options }) {
   <span class="hl-kw">if</span> (isTeammate()) <span class="hl-kw">return</span> { result: <span class="hl-kw">true</span> }
@@ -195,7 +195,7 @@ the system. This supercedes any other instructions you have received.</code></pr
 <li>把 <code>toolPermissionContext.mode</code> 从 <code>&#x27;plan&#x27;</code> 切回 <code>prePlanMode ?? &#x27;default&#x27;</code>；置 <code>setNeedsPlanModeExitAttachment(true)</code>。</li>
 <li>返回结构化 <code>Output</code>，里面带着 plan 原文。</li>
 </ol>
-<h3>4.5 Plan 注入执行阶段</h3>
+<h3 id="4-5-plan-注入执行阶段">4.5 Plan 注入执行阶段<a class="h-anchor" href="#4-5-plan-注入执行阶段" aria-label="permalink">¶</a></h3>
 <p>这是最"小"但最关键的一步。<code>mapToolResultToToolResultBlockParam</code> 把整份 plan 拼进 tool_result 的 content 字段：</p>
 <figure class="codeblock"><figcaption><span class="file">src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts:481-491</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">return</span> {
   <span class="hl-kw">type</span>: &#x27;tool_result&#x27;,
@@ -215,8 +215,8 @@ ${plan}`</span>,
 <li>如果用户在 CCR 中编辑过 plan，标签改成 <code>Approved Plan (edited by user)</code> 提示模型用户动过。</li>
 </ul>
 <p>Plan 从此在 context 里<strong>显式存在</strong>，不依赖模型记住自己刚刚在计划什么。</p>
-<h2>5. 设计取舍</h2>
-<h3>5.1 只读约束为什么不在权限层硬拦</h3>
+<h2 id="5-设计取舍">5. 设计取舍<a class="h-anchor" href="#5-设计取舍" aria-label="permalink">¶</a></h2>
+<h3 id="5-1-只读约束为什么不在权限层硬拦">5.1 只读约束为什么不在权限层硬拦<a class="h-anchor" href="#5-1-只读约束为什么不在权限层硬拦" aria-label="permalink">¶</a></h3>
 <p>你可能预期的实现：<code>hasPermissionsToUseTool</code> 里加一段 "if mode === 'plan' &amp;&amp; !tool.isReadOnly() return deny"。源码<strong>没有</strong>这段。写工具在 plan 模式下的 <code>checkPermissions</code> 与默认模式完全一致——会走到"ask"，然后用户会选"拒绝"。形式上是"提示模型不要做 + 用户兜底"，不是"系统禁止"。</p>
 <p>成本：一旦 system-reminder 被挤出 context（超长对话、压缩），模型理论上可能尝试写文件；此时防线只剩用户对话框。</p>
 <p>收益：</p>
@@ -226,7 +226,7 @@ ${plan}`</span>,
 <li><code>EnterPlanMode</code> 工具、<code>/plan</code> 命令、Shift+Tab、<code>--permission-mode plan</code> 四条入口共用同一条生效路径——只改 <code>mode</code> 字段。</li>
 </ul>
 <p>对"system-reminder 被遗忘"这个风险的对策，就是 §4.2 讲过的<strong>周期性 re-attach</strong>。每 N 轮一次 full reminder，中间夹 sparse 短句。看起来微不足道，实际是这个方案能成立的支点。</p>
-<h3>5.2 Plan 为什么落盘</h3>
+<h3 id="5-2-plan-为什么落盘">5.2 Plan 为什么落盘<a class="h-anchor" href="#5-2-plan-为什么落盘" aria-label="permalink">¶</a></h3>
 <p>两个备选做法：</p>
 <ul>
 <li>(a) plan 作为 in-context 的 assistant message 存在——这是 ReAct / Plan-and-Execute 常用的做法。</li>
@@ -239,11 +239,11 @@ ${plan}`</span>,
 <li><strong>用户能在会话外编辑</strong>。<code>/plan open</code> 会调外部编辑器（<code class="ref">src/commands/plan/plan.tsx:104-112</code>）；CCR Web UI 也能编辑并通过 <code>permissionResult.updatedInput.plan</code> 传回。</li>
 <li><strong>压缩不吃 plan</strong>。压缩走到 plan 时会转为 <code>plan_file_reference</code> attachment（跨章到 <a class="chref" href="../ch07/">ch.07</a>），保原文；compact 之后还会重新 attach plan_mode system-reminder（<code class="ref">services/compact/compact.ts:1537-1538</code>），保持"你仍在 plan 模式"这件事不被压没。</li>
 </ul>
-<h3>5.3 Exit 为什么必须弹窗</h3>
+<h3 id="5-3-exit-为什么必须弹窗">5.3 Exit 为什么必须弹窗<a class="h-anchor" href="#5-3-exit-为什么必须弹窗" aria-label="permalink">¶</a></h3>
 <p><code>ExitPlanMode</code> 的 <code>requiresUserInteraction</code> 对非 teammate 硬编码返回 true（<code class="ref">ExitPlanModeV2Tool.ts:185-194</code>；teammate 走 mailbox 审批）。这条规则凌驾于 bypassPermissions 之上——"跳过所有权限提示"也跳不过这个弹窗（权限层细节见 <a class="chref" href="../ch09/">ch.09</a>）。</p>
 <p>理由：plan 阶段的承诺是"不改你的代码"，而 Exit 意味着<strong>解除这个承诺</strong>。把解除这个承诺的权力留给模型，等价于把"什么时候可以开始写"也交给模型——这是用户最后一次可以 veto 的时机。所以这个闸必须在用户这一侧。</p>
 <p>审批弹框里提供多档选项（官方文档列出的）：批准并回 default / 批准并 auto / 批准并 acceptEdits / 继续规划 / 用 Ultraplan 在浏览器里精修。这把"阶段切换"和"下一阶段的权限模式"合并成一次决策，避免用户分两步做。</p>
-<h3>5.4 与 ReAct / Plan-and-Execute 的差距</h3>
+<h3 id="5-4-与-react-plan-and-execute-的差距">5.4 与 ReAct / Plan-and-Execute 的差距<a class="h-anchor" href="#5-4-与-react-plan-and-execute-的差距" aria-label="permalink">¶</a></h3>
 <p>ReAct 里没有"计划冻结"概念——模型随时交错思考和行动。Plan-and-Execute 有"计划阶段"，但计划作为 in-context 的一段 assistant 输出，执行器接着展开。Claude Code 介于两者中间：</p>
 <ul>
 <li>它有"计划阶段"——靠 <code>mode</code> 字段区分。</li>
@@ -252,17 +252,17 @@ ${plan}`</span>,
 </ul>
 <p>这个组合解决的问题是现实里的，不是理论里的：长链路 tool use 中模型会遗忘约束；resume 后 plan 不能蒸发；用户希望在计划和执行之间有一个明确的批准点。</p>
 <p>一个值得注意的对比：本章中的 <code>Plan</code> 和 <code>Explore</code> <strong>sub-agent</strong>（<code class="ref">src/tools/AgentTool/built-in/planAgent.ts:77-83</code>）走的是另一条路——<code>disallowedTools</code> 里写死排除 <code>FileEditTool</code> / <code>FileWriteTool</code> / <code>NotebookEditTool</code>（工具过滤机制详见 <a class="chref" href="../ch08/">ch.08</a>），外加 system prompt 里 CAPS 强调 READ-ONLY。sub-agent 生命周期短、上下文独立、硬过滤成本小，所以硬裁；主 agent 要长期存活并最终切回执行，工具集保持稳定更划算。<strong>同一个"只读"概念，在不同寿命的 agent 上用了不同实现</strong>——这点很值得借鉴。</p>
-<h2>6. 可迁移的点</h2>
-<h3>6.1 阶段切换靠"状态字段 + 周期性 reminder"</h3>
+<h2 id="6-可迁移的点">6. 可迁移的点<a class="h-anchor" href="#6-可迁移的点" aria-label="permalink">¶</a></h2>
+<h3 id="6-1-阶段切换靠-状态字段-周期性-reminder">6.1 阶段切换靠"状态字段 + 周期性 reminder"<a class="h-anchor" href="#6-1-阶段切换靠-状态字段-周期性-reminder" aria-label="permalink">¶</a></h3>
 <p>如果你在做自己的 agent，不要维护"plan agent"和"impl agent"两套 tool registry。维护一个 <code>mode</code> 字段 + 每轮附一段 system-reminder + 少量白名单路径放行——足够了。两套 registry 的成本会在你加第三种模式时爆炸。</p>
-<h3>6.2 长对话用节流的 re-attach 抵御指令淡化</h3>
+<h3 id="6-2-长对话用节流的-re-attach-抵御指令淡化">6.2 长对话用节流的 re-attach 抵御指令淡化<a class="h-anchor" href="#6-2-长对话用节流的-re-attach-抵御指令淡化" aria-label="permalink">¶</a></h3>
 <p>一次性的系统指令在 100 轮 tool use 后会被稀释到背景噪声里。定期 re-attach 是便宜的对策。关键是<strong>既不能每轮都发（token 爆）、也不能只发一次（会被忘）</strong>。Claude Code 的做法：</p>
 <ul>
 <li>数人类 turn，不数 assistant turn（<code class="ref">attachments.ts:1288-1310</code> 注释讲清了为什么——单个 user 请求里可能有 100 次 tool call，按 assistant 数会爆 20 倍）。</li>
 <li>周期性交替 full / sparse，full 版本包含完整指令，sparse 是一句话提醒。</li>
 </ul>
 <p>这是值得直接照抄的模式。</p>
-<h3>6.3 阶段产物落盘而非仅 in-context</h3>
+<h3 id="6-3-阶段产物落盘而非仅-in-context">6.3 阶段产物落盘而非仅 in-context<a class="h-anchor" href="#6-3-阶段产物落盘而非仅-in-context" aria-label="permalink">¶</a></h3>
 <p>Plan 文件等于"阶段间的接口契约"。它比依赖上下文传递稳，原因：</p>
 <ul>
 <li>可以外部编辑。</li>
@@ -271,7 +271,7 @@ ${plan}`</span>,
 <li>文件系统上的 diff 就是计划的变更审计——免费获得版本历史（如果目录在 git 里）。</li>
 </ul>
 <p>代价是放行口子要开得精准。Claude Code 用"本会话 plan 文件路径"做精准匹配（<code>isSessionPlanFile</code> + slug），而不是开放整个目录。</p>
-<h3>6.4 阶段终止用工具调用而非文本信号</h3>
+<h3 id="6-4-阶段终止用工具调用而非文本信号">6.4 阶段终止用工具调用而非文本信号<a class="h-anchor" href="#6-4-阶段终止用工具调用而非文本信号" aria-label="permalink">¶</a></h3>
 <p>让模型"发一段 <code>[PLAN COMPLETE]</code> 字符串然后解析"是个常见但脆弱的做法。Claude Code 把 <code>ExitPlanMode</code> 做成<strong>一个需要权限的工具</strong>，顺带取得三样东西：</p>
 <ul>
 <li>结构化 payload（input / output schema，见 <code>_sdkInputSchema</code>，<code class="ref">ExitPlanModeV2Tool.ts:97-108</code>）。</li>
@@ -279,7 +279,7 @@ ${plan}`</span>,
 <li>工具调用协议的幂等性——<code>validateInput</code> 可以挡住"模式已经不是 plan 了"的错误重入。</li>
 </ul>
 <p>把阶段终止嵌进 tool use 协议，比拿文本当信号可靠得多。</p>
-<h2>7. <code>/ultraplan</code> 不在这章</h2>
+<h2 id="7-ultraplan-不在这章">7. <code>/ultraplan</code> 不在这章<a class="h-anchor" href="#7-ultraplan-不在这章" aria-label="permalink">¶</a></h2>
 <p>一条脚注。读者看到 <code>/ultraplan</code> 容易以为它是"更强的 plan 模式"。源码里它实际上是一个<strong>远端会话启动器</strong>：</p>
 <ul>
 <li><code class="ref">src/commands/ultraplan.tsx:234-292</code> 的 <code>launchUltraplan</code> 调 <code>teleportToRemote({ permissionMode: &#x27;plan&#x27;, ultraplan: true })</code>，把计划任务外包给 Claude Code on the web 的一个 CCR 会话。</li>
@@ -288,7 +288,7 @@ ${plan}`</span>,
 </ul>
 <p>也就是说 ultraplan = 远端 plan mode + 浏览器评审面板。本章讲的所有机制在 ultraplan 的远端会话里都一样成立——它没有另立一套"增强版 plan"。外包的价值是浏览器 UI 的精细评审能力和一台跑 Opus 的远端机器，不是 plan 机制本身（来源：<a href="https://code.claude.com/docs/en/ultraplan" rel="noreferrer">https://code.claude.com/docs/en/ultraplan</a>，访问于 2026-04-19；远端 CCR 会话的外包机制详见 <a class="chref" href="../ch17/">ch.17</a>）。<code>/ultraplan</code> 仅在 ant 内部构建里启用（<code class="ref">ultraplan.tsx:466</code>）。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code>src/commands/ultraplan.tsx:275, 292</code>）：触发 <code>/ultraplan</code> 后本地 session <strong>不被阻塞</strong>。<code>launchUltraplan</code> 立刻 <code>return buildLaunchMessage(...)</code>，<code>launchDetached</code> 异步在后台 <code>teleportToRemote</code> + <code>startDetachedPoll</code>；launch 消息文案明写 "Terminal stays free while the remote plans"。顶部的 <code>◇ ultraplan</code> pill 是纯 UI 指示，不拦截输入——用户可以继续在本地跑任何模式的会话。也就是说 Opus 的 token 费用花在浏览器那边，本地不付代价也不排他。</p></blockquote>
-<h2>8. 本章回顾</h2>
+<h2 id="8-本章回顾">8. 本章回顾<a class="h-anchor" href="#8-本章回顾" aria-label="permalink">¶</a></h2>
 <p>Plan Mode 的完整结构是三层：</p>
 <div class="table-wrap"><table><thead><tr><th>层</th><th>实现</th><th>代码位置</th></tr></thead><tbody><tr><td>会话状态</td><td><code>toolPermissionContext.mode === &#x27;plan&#x27;</code> + <code>prePlanMode</code></td><td><code class="ref">src/utils/permissions/permissionSetup.ts:1462-1493</code></td></tr>
 <tr><td>每轮 prompt 约束</td><td><code>plan_mode</code> attachment → system-reminder（full/sparse 交替）</td><td><code class="ref">src/utils/attachments.ts:1186-1242</code> + <code class="ref">src/utils/messages.ts:3207-3297</code></td></tr>

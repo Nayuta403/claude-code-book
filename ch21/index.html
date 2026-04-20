@@ -39,14 +39,14 @@
 
 <article class="article">
   <div class="prose">
-<h2>21.1 用户看到什么</h2>
+<h2 id="21-1-用户看到什么">21.1 用户看到什么<a class="h-anchor" href="#21-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">默认启动后，终端进入 alt-screen buffer。整个视口被一块 React 树占满：顶部一条可选 sticky prompt header，中间一块可滚动的消息列表，底部固定一条 PromptInput（外加 slash 补全、notifications、permission 面板等浮层），右下角偶尔跳出 Buddy 的气泡（见 <a class="chref" href="../ch19/">ch.19</a> §19.8）。</p>
 <p>按上/下能滚 scrollback 几千条消息；按住 PageUp 不动，内容不会白屏，而是在"边缘 mounted 内容"那里停一下继续追；resize 终端宽度时所有文本重新 wrap，不闪；粘贴一段带 <code>\r</code> 的多行脚本，被识别成一条粘贴而不是 N 次 Enter；Ctrl+K / Ctrl+Y / Alt+Y 组合 Emacs 风格的 kill-ring。</p>
 <p>模式选择由 <code>CLAUDE_CODE_NO_FLICKER</code> 控制，但变量名并不是字面意思："no-flicker" 指的是"打开无闪烁的 alt-screen 模式"。<code class="ref">src/utils/fullscreen.ts:107-129</code> 的 <code>isFullscreenEnvEnabled()</code> 规则：<code>CLAUDE_CODE_NO_FLICKER=1</code> 强制<strong>打开</strong> fullscreen（alt-screen + 鼠标 tracking + 虚拟滚动），<code>=0</code> 强制退回 inline；未设置时 ant 用户默认 fullscreen、外部用户默认 inline（即 <code>USER_TYPE === &#x27;ant&#x27;</code> 决定默认值）。</p>
 <p>外加一个自动禁用分支：tmux <code>-CC</code>（iTerm2 integration mode）下无论环境变量如何都退到 inline。<code class="ref">src/utils/fullscreen.ts:56-99</code> 的 <code>probeTmuxControlModeSync</code> 会 sync spawn <code>tmux display-message -p &#x27;#{client_control_mode}&#x27;</code> 探测一次（~5 ms）——因为 <code>-CC</code> 模式下双击会破坏终端状态、滚轮也无响应。</p>
 <p>此外 <code class="ref">src/utils/fullscreen.ts:140-152</code> 还提供两个独立开关：<code>CLAUDE_CODE_DISABLE_MOUSE=1</code> 关掉 SGR mouse tracking 但保留虚拟滚动（留给 tmux/kitty 原生复制用户），<code>CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1</code> 只禁点击和拖拽、滚轮仍生效。</p>
 <blockquote><p><strong>隐藏细节</strong>（src/utils/fullscreen.ts:56-99）：tmux <code>-CC</code> 模式会触发一次 ~5 ms 的 sync <code>spawnSync(&#x27;tmux&#x27;,&#x27;display-message&#x27;,&#x27;-p&#x27;,&#x27;#{client_control_mode}&#x27;)</code> 探测，一次缓存终身复用。探测放在 render 之前的 gate 上——曾经用 async 探测时会输给 React 渲染次序，让 <code>-CC</code> 用户短暂进入无法滚动的 alt-screen。用户在 ssh + tmux <code>-CC</code> 下看到"怎么没进 fullscreen"就是这个分支在兜底。</p></blockquote>
-<h2>21.2 为什么讲这个</h2>
+<h2 id="21-2-为什么讲这个">21.2 为什么讲这个<a class="h-anchor" href="#21-2-为什么讲这个" aria-label="permalink">¶</a></h2>
 <p>Ink 本身的定位是"React renderer for CLI applications"（来源：<a href="https://github.com/vadimdemedes/ink" rel="noreferrer">https://github.com/vadimdemedes/ink</a>，访问于 2026-04-19）。它用 React reconciler 把 JSX 翻译成 Yoga flex layout，再把 Yoga 计算出的 bbox 刷成字符矩阵。核心 primitives 只有 <code>&lt;Text&gt;</code> / <code>&lt;Box&gt;</code> / <code>&lt;Newline&gt;</code> / <code>&lt;Static&gt;</code>。</p>
 <p>这个库解决的是"能不能用 React 写 CLI"。但 Claude Code 要解决的问题大了一档：</p>
 <ul>
@@ -58,7 +58,7 @@
 </ul>
 <p>本章讲的就是这一层"超出 upstream Ink 能力上限"的工程。本章<strong>不</strong>教 Ink 基础——读者请直接读 Ink 官方 README（<a href="https://github.com/vadimdemedes/ink" rel="noreferrer">https://github.com/vadimdemedes/ink</a>，访问于 2026-04-19）。</p>
 <p>也顺便划一条边界：本章所有内容只适用于 CLI REPL。Agent SDK 的 headless 入口不跑 Ink，只把 <code>SDKMessage</code> 以 NDJSON 形式吐到 stdout 交给宿主程序（见 <a class="chref" href="../ch23/">ch.23</a> §23.6）——所以下面讲的双缓冲、虚拟滚动、alt-screen 这些东西，在以 SDK 方式嵌入 Claude Code 的场景里全部不存在。</p>
-<h2>21.3 <code>src/ink/</code> 是 fork，不是扩展</h2>
+<h2 id="21-3-src-ink-是-fork-不是扩展">21.3 <code>src/ink/</code> 是 fork，不是扩展<a class="h-anchor" href="#21-3-src-ink-是-fork-不是扩展" aria-label="permalink">¶</a></h2>
 <p>先把这个关键事实确认清楚。</p>
 <p><code class="ref">package.json:66</code> 里列了 <code>&quot;ink&quot;: &quot;*&quot;</code> 作为依赖，但业务代码 0 处 <code>from &#x27;ink&#x27;</code>。全仓只有一处字符串命中：</p>
 <figure class="codeblock"><figcaption><span class="file">src/ink/hooks/use-input.ts:25</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"> * <span class="hl-kw">import</span> {useInput} <span class="hl-kw">from</span> &#x27;ink&#x27;;</code></pre></figure>
@@ -88,14 +88,14 @@
 <li><strong>CJK / IME</strong>：upstream 有 #759（2025-08）记录 CJK 掉字和光标偏移，仍 open。Claude Code 自己实现 <code class="ref">stringWidth.ts</code>，优先走 <code>Bun.stringWidth</code>。</li>
 </ul>
 <p>所以这是个<strong>必须 fork</strong> 的选择——不是魔改 upstream 能到的地方。下面的章节都建立在这个事实上。</p>
-<h2>21.4 关键数据结构</h2>
-<h3>Frame：双缓冲字符矩阵</h3>
+<h2 id="21-4-关键数据结构">21.4 关键数据结构<a class="h-anchor" href="#21-4-关键数据结构" aria-label="permalink">¶</a></h2>
+<h3 id="frame-双缓冲字符矩阵">Frame：双缓冲字符矩阵<a class="h-anchor" href="#frame-双缓冲字符矩阵" aria-label="permalink">¶</a></h3>
 <p>渲染的终点是 <code>Frame</code>，里面是 cell 矩阵。Ink 类持两个：</p>
 <blockquote><figure class="codeblock"><figcaption><span class="file">src/ink/ink.tsx:196-197</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">this</span>.frontFrame = emptyFrame(<span class="hl-kw">this</span>.terminalRows, <span class="hl-kw">this</span>.terminalColumns, <span class="hl-kw">this</span>.stylePool, <span class="hl-kw">this</span>.charPool, <span class="hl-kw">this</span>.hyperlinkPool);
 <span class="hl-kw">this</span>.backFrame = emptyFrame(<span class="hl-kw">this</span>.terminalRows, <span class="hl-kw">this</span>.terminalColumns, <span class="hl-kw">this</span>.stylePool, <span class="hl-kw">this</span>.charPool, <span class="hl-kw">this</span>.hyperlinkPool);</code></pre></figure></blockquote>
 <p>每帧渲染产物先写 <code>backFrame</code>，<code>log-update</code> 对比两帧算 diff，再 swap。char / style / hyperlink 三个池化对象让重复字符不重复分配 string。每 5 分钟 reset 一次池（<code class="ref">ink.tsx:598-603</code>）防止长会话下内存无界增长。</p>
 <blockquote><p><strong>隐藏细节</strong>（src/ink/ink.tsx:598-603）：<code>if (renderStart - this.lastPoolResetTime &gt; 5 * 60 * 1000)</code> 每 5 分钟把 <code>stylePool</code> / <code>charPool</code> / <code>hyperlinkPool</code> 三个 intern 表全清一次。长会话 token 流式追加时，新字符 / 新样式持续入池，如果不 reset，进程跑几天内存会单调增长。用户从来没在 UI 上看见过这一步，却是几天不退程序仍稳定的唯一基线。</p></blockquote>
-<h3>DOMElement：React fiber 和 Yoga node 之间的那层</h3>
+<h3 id="domelement-react-fiber-和-yoga-node-之间的那层">DOMElement：React fiber 和 Yoga node 之间的那层<a class="h-anchor" href="#domelement-react-fiber-和-yoga-node-之间的那层" aria-label="permalink">¶</a></h3>
 <p>Ink 的 host instance 是自定义 <code>DOMElement</code>，不是浏览器 DOM。它带的字段已经超过了一个布局节点：</p>
 <ul>
 <li><code>yogaNode</code>：Yoga flex node。</li>
@@ -103,7 +103,7 @@
 <li><code>dirty</code>：脏位，供 <code>nodeCache.blit</code> fast path 用。</li>
 </ul>
 <p>这种"在 DOM node 上存交互状态"的设计看似反 React，但后面你会看到为什么必须这样。</p>
-<h3>ParsedKey：键盘事件 + 粘贴区分</h3>
+<h3 id="parsedkey-键盘事件-粘贴区分">ParsedKey：键盘事件 + 粘贴区分<a class="h-anchor" href="#parsedkey-键盘事件-粘贴区分" aria-label="permalink">¶</a></h3>
 <blockquote><figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/ink/parse-keypress.ts:67-81 (节选)</span>
 <span class="hl-kw">function</span> createPasteKey(content: string): <span class="hl-type">ParsedKey</span> {
   <span class="hl-kw">return</span> {
@@ -114,7 +114,7 @@
   }
 }</code></pre></figure></blockquote>
 <p><code>isPasted</code> 决定了一串字节算一次 Enter 还是一次粘贴——这是 bracketed paste 的核心语义。下游（<code>useTextInput</code>）根据这个分 mask 处理。</p>
-<h3>ScrollBoxHandle：imperative scroll API</h3>
+<h3 id="scrollboxhandle-imperative-scroll-api">ScrollBoxHandle：imperative scroll API<a class="h-anchor" href="#scrollboxhandle-imperative-scroll-api" aria-label="permalink">¶</a></h3>
 <blockquote><figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/ink/components/ScrollBox.tsx:10-62 (节选)</span>
 <span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">ScrollBoxHandle</span> = {
   scrollTo: (y: number) =&gt; <span class="hl-kw">void</span>
@@ -129,7 +129,7 @@
 }</code></pre></figure></blockquote>
 <p>关键是 <code>subscribe</code> —— <code>useVirtualScroll</code> 通过 <code>useSyncExternalStore</code> 订阅它，实现 scroll 动作和 React 渲染之间的解耦。下一节展开。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code>src/ink/components/ScrollBox.tsx:94-96, 153-165</code>）：<code>scrollTo</code> / <code>scrollBy</code> / <code>scrollToElement</code> 都直接改 DOM 字段绕开 React，<strong>只有 <code>scrollToBottom</code> 例外</strong>——它走 <code>forceRender()</code> 即 <code>useState(0)</code>，故意过一次 React commit。原因注释原文（<code>:94-96</code>）：sticky 模式是 "attribute-observed, no DOM-only path"，sticky 属性变化必须通过一次 commit 让子树的 <code>isSticky</code> snapshot 更新，否则 <code>useVirtualScroll</code> 里的 deferred range 不会 bypass，滚到底反而停在最后一条之前。"同是滚动、不同函数走不同路径"的反直觉点。</p></blockquote>
-<h2>21.5 一帧是怎么出来的</h2>
+<h2 id="21-5-一帧是怎么出来的">21.5 一帧是怎么出来的<a class="h-anchor" href="#21-5-一帧是怎么出来的" aria-label="permalink">¶</a></h2>
 <p>串起来讲一次 render，最后再挑细节。</p>
 <p><strong>阶段 1：stdin 字节 → ParsedKey。</strong> stdin 字节流先过 termio tokenizer（<code class="ref">src/ink/termio/tokenize.ts</code>），切成 escape-sequence token 和 text token。<code>parseMultipleKeypresses</code>（<code class="ref">parse-keypress.ts:213-302</code>）再把 token 翻译成 <code>ParsedKey[]</code>。这里处理 bracketed paste：看到 <code>PASTE_START</code> 进入 paste mode，所有后续 token 拼进 <code>pasteBuffer</code>；看到 <code>PASTE_END</code> 打包成一个 <code>createPasteKey</code>。</p>
 <p><strong>阶段 2：React commit。</strong> 事件经 <code class="ref">App.tsx</code> 的 EventEmitter 分发，触发 state 更新，reconciler 进 commit 阶段：</p>
@@ -173,9 +173,9 @@ resetAfterCommit(rootNode) {
 <p><strong>阶段 5：log-update diff + 原子写出。</strong> <code>this.log.render(prevFrame, frame, altScreen, SYNC_OUTPUT_SUPPORTED)</code> 产出 <code>Diff[]</code>（补丁串）。<code>SYNC_OUTPUT_SUPPORTED</code> 为真时用 DEC 2026 的 BSU/ESU 包裹，告诉终端"下面这坨是一笔"，tmux / iTerm 不会看到一半状态。最后 <code>optimize(diff)</code> → stdout.write。</p>
 <p><strong>阶段 6：swap。</strong> <code>backFrame = frontFrame; frontFrame = frame</code>（<code class="ref">ink.tsx:594-595</code>）。下一帧的 prev 就是这帧。</p>
 <p>整条管线的精神是：<strong>React → DOMElement → YogaNode → Frame(screen) → diff → stdout</strong>。React 只管到 YogaNode 这一层，后面三层不知道 React 存在。</p>
-<h2>21.6 虚拟滚动的终端式难点</h2>
+<h2 id="21-6-虚拟滚动的终端式难点">21.6 虚拟滚动的终端式难点<a class="h-anchor" href="#21-6-虚拟滚动的终端式难点" aria-label="permalink">¶</a></h2>
 <p><code class="ref">src/hooks/useVirtualScroll.ts:142</code> 整个文件 721 行，代码 / 注释比接近 1:1。这个 hook 解决三个 web 虚拟列表不会遇到的问题。</p>
-<h3>A. 宽度变了，所有高度都作废</h3>
+<h3 id="a-宽度变了-所有高度都作废">A. 宽度变了，所有高度都作废<a class="h-anchor" href="#a-宽度变了-所有高度都作废" aria-label="permalink">¶</a></h3>
 <p>Web 虚拟列表按 px 缓存高度。终端里宽度一变（用户拖窗口、tmux split），<strong>每一条消息都要 rewrap</strong>，因为 markdown 段落换行按 cell 宽算。</p>
 <p>清空缓存等于让所有条目回落到 <code>PESSIMISTIC_HEIGHT = 1</code>（最小可能高度），然后往下 walk 到 <code>viewport + 2 × overscan</code> 才收手——长会话下一次 resize 可能要 walk 近 200 条，每条跑一遍 marked.lexer + syntax highlight（~3 ms），加起来 600 ms 的 sync block。</p>
 <p>Claude Code 的做法是<strong>按比例缩放</strong>：</p>
@@ -191,7 +191,7 @@ resetAfterCommit(rootNode) {
 }</code></pre></figure></blockquote>
 <p>加两个防御：<code>skipMeasurementRef</code> 让这一帧的 <code>useLayoutEffect</code> 不要把<strong>旧宽度下的</strong> Yoga 高度写回缓存（那一帧 Yoga 是旧值）；<code>freezeRendersRef = 2</code> 两帧内冻结 mount range，避免在估算高度上反复 mount / unmount。</p>
 <p>缩放不是精确的（文本实际折行跟列数不是严格反比），但比"全清空 + pessimistic 展开"好一个量级。真实 Yoga 高度在下一帧 layout effect 就覆盖回来。</p>
-<h3>B. scroll 不能走 React state</h3>
+<h3 id="b-scroll-不能走-react-state">B. scroll 不能走 React state<a class="h-anchor" href="#b-scroll-不能走-react-state" aria-label="permalink">¶</a></h3>
 <p>用户滚轮一下钟十几个事件。如果 scrollBy 走 <code>setState</code>，每个事件都过 React commit → Yoga calculateLayout → Ink diff → stdout write，CPU 顶不住。</p>
 <p>Claude Code 的做法是 scrollTop 直接改 DOM node：</p>
 <blockquote><figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/ink/components/ScrollBox.tsx:141-150 (节选)</span>
@@ -213,7 +213,7 @@ scrollBy(dy: number) {
   <span class="hl-kw">return</span> s.isSticky() ? ~bin : bin
 })</code></pre></figure></blockquote>
 <p><code>SCROLL_QUANTUM = OVERSCAN_ROWS &gt;&gt; 1 = 40</code> 行一档。小于 40 行的滚动 <code>Object.is(bin_prev, bin_new)</code> 为真，React 根本不 re-render。视觉滚动靠 Ink 渲染层完成（它直接读 DOM scrollTop），React 只在跨越一个 quantum 档位、可能影响 mount 范围时才介入。sticky 状态塞进符号位（<code>~bin</code>），确保 sticky 切换也触发 snapshot 改变。</p>
-<h3>C. 并发模式 + Yoga 的时序</h3>
+<h3 id="c-并发模式-yoga-的时序">C. 并发模式 + Yoga 的时序<a class="h-anchor" href="#c-并发模式-yoga-的时序" aria-label="permalink">¶</a></h3>
 <p>并发 React 会中途打断 render 提交 transition。这跟 Yoga 这种"只有 commit 完才有 layout"的引擎会打架。</p>
 <p>Claude Code 用 <code>useDeferredValue</code> 把 range 增长延迟：</p>
 <blockquote><figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/useVirtualScroll.ts:503-527 (节选)</span>
@@ -238,7 +238,7 @@ scrollBy(dy: number) {
 // different spacer heights → visible flicker.</code></pre></figure></blockquote>
 <p><code>useLayoutEffect</code> 里只更新 refs，不 setState。下一帧自然收到新值。跟 web 的最佳实践同向，但终端放大了 setState 的代价——每 commit = 一次 stdout 写 = 一次可见刷新。</p>
 <blockquote><p><strong>隐藏细节</strong>（src/hooks/useVirtualScroll.ts:580-590）：当 <code>effEnd === n</code>（尾项已挂载）时 <code>clampMax = Infinity</code>，不用 <code>offsets[n] - viewportH</code>。原因是尾项在流式追加时，<code>heightCache</code> 落后 Yoga 一帧；用 <code>offsets[n]</code> clamp 会把 scrollTop 压在真正的 max 之下，sticky 一断就把流式文本挤出 viewport——就是"滚上去、响应消失"这个 bug 的源头。交给 <code>render-node-to-output</code> 自己的 <code>Math.min(cur, maxScroll)</code> 管。写错这一行，长回复回滚就会断。</p></blockquote>
-<h3>D. binary search start</h3>
+<h3 id="d-binary-search-start">D. binary search start<a class="h-anchor" href="#d-binary-search-start" aria-label="permalink">¶</a></h3>
 <p>顺带一提，从 offsets 数组里找 mount 起点是 <code>O(log n)</code>：</p>
 <blockquote><figure class="codeblock"><figcaption><span class="file">src/hooks/useVirtualScroll.ts:402-411</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">let</span> l = <span class="hl-num">0</span>
 <span class="hl-kw">let</span> r = n
@@ -249,7 +249,7 @@ scrollBy(dy: number) {
 }
 start = l</code></pre></figure></blockquote>
 <p>之前是 linear <code>while(start++)</code>，27 k 消息的会话从底向上滚动一次扫 27 k 次——可感知的卡顿。换成二分搜索后常数级。</p>
-<h2>21.7 终端尺寸响应</h2>
+<h2 id="21-7-终端尺寸响应">21.7 终端尺寸响应<a class="h-anchor" href="#21-7-终端尺寸响应" aria-label="permalink">¶</a></h2>
 <p><code>useTerminalSize</code> 本身简单到没意思：</p>
 <blockquote><figure class="codeblock"><figcaption><span class="file">src/hooks/useTerminalSize.ts:7-15</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> useTerminalSize(): <span class="hl-type">TerminalSize</span> {
   <span class="hl-kw">const</span> size = useContext(<span class="hl-type">TerminalSizeContext</span>)
@@ -283,9 +283,9 @@ start = l</code></pre></figure></blockquote>
 <p>改成同步：每个 resize 事件都立刻跑 <code>this.render(currentNode)</code>。虚拟滚动那边的 resize-scale 已经把单次 resize 的成本降下来了，不需要再防抖。</p>
 <p><strong>② 同尺寸短路。</strong> 终端经常对一次窗口调整连发 2+ 个 resize 事件（拖拽结束前的 intermediate size + 最终 size），且偶尔会有两个事件携带相同尺寸。<code>cols === this.terminalColumns &amp;&amp; rows === this.terminalRows</code> 的短路避免多余 render。</p>
 <p><strong>③ 对 alt-screen 的特殊处理。</strong> <code>needsEraseBeforePaint = true</code> 让下一帧 onRender 在 BSU/ESU 原子块内先 ERASE_SCREEN 再 paint——如果同步写 ERASE_SCREEN，那在 render() 的 ~80 ms 里整屏是空的。</p>
-<h2>21.8 TextInput 的坑</h2>
+<h2 id="21-8-textinput-的坑">21.8 TextInput 的坑<a class="h-anchor" href="#21-8-textinput-的坑" aria-label="permalink">¶</a></h2>
 <p><code>useTextInput</code>（<code class="ref">src/hooks/useTextInput.ts:73-529</code>）是所有输入框的基座。vim 模式、voice、ghost text 都从这里派生——<code>useVimInput</code> 在它外面套一层状态机（见 <a class="chref" href="../ch20/">ch.20</a> §20.4.5），voice 走独立输入路径再把结果塞回同一个 cursor 接口。挑三个有代表性的坑讲。</p>
-<h3>A. 宽字符宽度</h3>
+<h3 id="a-宽字符宽度">A. 宽字符宽度<a class="h-anchor" href="#a-宽字符宽度" aria-label="permalink">¶</a></h3>
 <p>光标要落在第 N 个字符是一回事，落在第 N 列是另一回事。CJK、emoji、变体选择子、Indic 合字都把这两个数字拆开。</p>
 <p>Claude Code 把宽度计算集中在 <code class="ref">src/ink/stringWidth.ts</code>：</p>
 <blockquote><figure class="codeblock"><figcaption><span class="file">src/ink/stringWidth.ts:220-222</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> stringWidth: (str: string) =&gt; number = bunStringWidth
@@ -304,7 +304,7 @@ start = l</code></pre></figure></blockquote>
 // we need for cursor positioning — the JS fallback&#x27;s grapheme-cluster
 // width of 1 would desync Ink&#x27;s layout from the terminal.</code></pre></figure></blockquote>
 <p>这是工程务实：终端怎么分 cell 我们就怎么数，保证 Ink 的 layout 和终端实际光标位置同步。视觉上合字占一个 glyph 是终端 glyph 渲染的事，Ink 不该违反终端的格子分配。</p>
-<h3>B. SSH 合并 Enter</h3>
+<h3 id="b-ssh-合并-enter">B. SSH 合并 Enter<a class="h-anchor" href="#b-ssh-合并-enter" aria-label="permalink">¶</a></h3>
 <p>慢网下 SSH 会把键入合并。<code>&quot;o&quot; + Enter</code> 可能作为单个 chunk <code>&quot;o\r&quot;</code> 到达 stdin，而 <code>parseKeypress</code> 只对单独 <code>\r</code> 匹配 <code>key.return</code>：</p>
 <blockquote><figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/useTextInput.ts:485-499 (节选)</span>
 <span class="hl-kw">if</span> (
@@ -318,7 +318,7 @@ start = l</code></pre></figure></blockquote>
 <p>条件拆解：长度 &gt; 1（至少 "char + \r"）、结尾是 <code>\r</code>、前面没有 <code>\r</code>（避免粘贴多行被误当 submit）、前一个字符不是 <code>\\</code>（backslash+\r 是 VS Code 遗留的 Shift+Enter 绑定，保留 <code>\r</code> 让 default 分支转成 <code>\n</code>）。</p>
 <p>同时，中间的 <code>\r</code> 是"没有 bracketed paste 的终端粘贴多行"，要转成 <code>\n</code> 而不是 submit。</p>
 <p>这是典型的"没法用一个简洁语义覆盖所有场景，只能累积条件"的现实代码。每一条 <code>&amp;&amp;</code> 背后都是一个 bug report。</p>
-<h3>C. Kill ring + yank-pop</h3>
+<h3 id="c-kill-ring-yank-pop">C. Kill ring + yank-pop<a class="h-anchor" href="#c-kill-ring-yank-pop" aria-label="permalink">¶</a></h3>
 <blockquote><figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/useTextInput.ts:224-245 (节选)</span>
 <span class="hl-kw">const</span> handleCtrl = mapInput([
   [&#x27;a&#x27;, () =&gt; cursor.startOfLine()],
@@ -338,7 +338,7 @@ start = l</code></pre></figure></blockquote>
 <p><code>killRing</code> 是模块级全局（<code class="ref">src/utils/Cursor.ts:17-24</code>），上限 10，连续 kill 累加到 <code>killRing[0]</code>，按任意非 kill 键 <code>resetKillAccumulation</code>。Alt+Y 在 yank 之后循环。</p>
 <p>这是纯粹的 CLI 用户习惯——<code>readline</code> 用户期待这套快捷键。值得借鉴的一点是：<strong>全局可变状态在这里合理</strong>，因为 kill ring 天然是"跨输入框共享"的概念（PromptInput 和 search input 共用一个 kill ring 符合用户心智），用 React context 反而会强行把它限定在 provider 树里。</p>
 <p>vim 输入模式是单独的 <code>useVimInput</code>，不在本章（详见 <a class="chref" href="../ch20/">ch.20</a> §20.4）。</p>
-<h2>21.9 屏幕组合：全屏与 inline 两套布局</h2>
+<h2 id="21-9-屏幕组合-全屏与-inline-两套布局">21.9 屏幕组合：全屏与 inline 两套布局<a class="h-anchor" href="#21-9-屏幕组合-全屏与-inline-两套布局" aria-label="permalink">¶</a></h2>
 <p><code class="ref">FullscreenLayout.tsx:270</code> 是唯一的模式分叉：</p>
 <blockquote><figure class="codeblock"><figcaption><span></span><span class="lang">tsx</span></figcaption><pre><code class="language-tsx"><span class="hl-cm">// src/components/FullscreenLayout.tsx:338 (节选)</span>
 <span class="hl-kw">if</span> (isFullscreenEnvEnabled()) {
@@ -353,7 +353,7 @@ start = l</code></pre></figure></blockquote>
 }
 <span class="hl-cm">// inline 分支</span>
 <span class="hl-kw">return</span> &lt;&gt;{scrollable}{bottom}{overlay}{modal}&lt;/&gt;</code></pre></figure></blockquote>
-<h3>全屏模式</h3>
+<h3 id="全屏模式">全屏模式<a class="h-anchor" href="#全屏模式" aria-label="permalink">¶</a></h3>
 <p>根是 <code>&lt;AlternateScreen&gt;</code>。它的实现很短但有讲究：</p>
 <blockquote><figure class="codeblock"><figcaption><span></span><span class="lang">tsx</span></figcaption><pre><code class="language-tsx"><span class="hl-cm">// src/ink/components/AlternateScreen.tsx (等价 TSX 源，非编译后)</span>
 useInsertionEffect(() =&gt; {
@@ -375,11 +375,11 @@ useInsertionEffect(() =&gt; {
 <li>Modal：position: absolute，覆盖整个 ScrollBox + bottom 区（<code class="ref">FullscreenLayout.tsx:422-426</code>）。Ink 可以做 modal，方式就是 absolute 定位，不是 portal。</li>
 </ul>
 <p>Buddy 占用 <code>bottomFloat</code> slot（<code>position: absolute, bottom: 0, right: 0</code>）浮在 ScrollBox 右下，通过 <code>companionReservedColumns</code> 主动上报自己占的列宽，PromptInput 按减法 wrap 文本（见 <a class="chref" href="../ch19/">ch.19</a> §19.8.4）。</p>
-<h3>Inline 模式</h3>
+<h3 id="inline-模式">Inline 模式<a class="h-anchor" href="#inline-模式" aria-label="permalink">¶</a></h3>
 <p><code>&lt;&gt;{scrollable}{bottom}{overlay}{modal}&lt;/&gt;</code> 纯顺序渲染，靠终端自身的滚动。这种模式下 ScrollBox、sticky header、new-message pill 都不生效（scrollable 本身不是 ScrollBox），modal 变成 inline append。好处是不抢占 scrollback buffer，坏处是没办法固定 PromptInput 在底部——对话每刷新一行，PromptInput 就随之下移。</p>
 <p>外部用户默认进入的就是这个 inline 模式；<code>CLAUDE_CODE_NO_FLICKER=0</code> 强制退回 inline（给默认是 fullscreen 的 ant 用户留个 opt-out）。反过来 <code>=1</code> 是强制打开 fullscreen 的 opt-in，主要给外部用户在 "我的终端支持 alt-screen 但 USER_TYPE 不是 ant" 的情况下切换。</p>
 <p>另外顺便一说：严格来讲 inline 分支里 modal 是 <code>&lt;&gt;{scrollable}{bottom}{overlay}{modal}&lt;/&gt;</code> 里的一个 React 节点（<code class="ref">FullscreenLayout.tsx:447-449</code>），仍走 React tree，不是 stdout <code>append</code>——只是因为没有 absolute 定位，视觉上表现为"在输出末尾追加一段"。</p>
-<h2>21.10 渲染性能：四层防抖</h2>
+<h2 id="21-10-渲染性能-四层防抖">21.10 渲染性能：四层防抖<a class="h-anchor" href="#21-10-渲染性能-四层防抖" aria-label="permalink">¶</a></h2>
 <p>Claude Code 的流畅感来自至少四层各司其职的节流：</p>
 <p><strong>① React commit 层：16 ms 节流 + microtask defer。</strong></p>
 <blockquote><figure class="codeblock"><figcaption><span class="file">src/ink/ink.tsx:213-216</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">this</span>.scheduleRender = throttle(deferredRender, <span class="hl-type">FRAME_INTERVAL_MS</span>, {
@@ -404,7 +404,7 @@ useInsertionEffect(() =&gt; {
   <span class="hl-cm">// blit from prevScreen</span>
 }</code></pre></figure></blockquote>
 <p><strong>额外：DECSTBM 硬件滚动 + BSU/ESU 原子提交。</strong> ScrollBox 的 scrollTop 单独变化时，<code>log-update</code> 能发 <code>CSI n S / CSI n T</code> 让终端自己做硬件滚动，代替逐行重写。DEC 2026 支持的终端（非 tmux）用 BSU/ESU 把整帧包成一笔，防止中间态被看到。</p>
-<h3>共享动画时钟</h3>
+<h3 id="共享动画时钟">共享动画时钟<a class="h-anchor" href="#共享动画时钟" aria-label="permalink">¶</a></h3>
 <p>多个动画组件（spinner、Buddy sprite、光标闪烁、statusline——渲染路径见 <a class="chref" href="../ch22/">ch.22</a> §22.7）如果各自开 <code>setInterval</code>，一秒十几个 setState。Claude Code 用共享时钟：</p>
 <blockquote><figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/ink/hooks/use-animation-frame.ts:30-57 (节选)</span>
 <span class="hl-kw">export</span> <span class="hl-kw">function</span> useAnimationFrame(
@@ -442,7 +442,7 @@ useInsertionEffect(() =&gt; {
   <span class="hl-kw">return</span> [ref, isVisible]
 }</code></pre></figure></blockquote>
 <p>所有 <code>useBlink</code> 消费者同步闪——因为都从同一个 clock 读同一个 <code>time</code>。终端 blur 时停时钟，省电。<code>useTerminalFocus</code> 的底层事件源是 DECSET 1004 的 focus/blur 序列；同一份信号也被 Proactive 模式读走，转成下一次请求的 <code>terminalFocus</code> userContext 字段告诉模型"用户现在不在看"（见 <a class="chref" href="../ch15/">ch.15</a> §15.4.5）——UI 层用来省电，agent 层用来调自主度，同一个位两处各取所需。</p>
-<h2>21.11 最值得借鉴的一点</h2>
+<h2 id="21-11-最值得借鉴的一点">21.11 最值得借鉴的一点<a class="h-anchor" href="#21-11-最值得借鉴的一点" aria-label="permalink">¶</a></h2>
 <p><strong>终端是 I/O 设备，不是 DOM。</strong></p>
 <p>React 的成功模型是"把 DOM 操作交给浏览器，React 只管状态到 view 的映射"。Ink 沿用这个模型往终端移植，但终端没有浏览器那样的原生 layout + paint 引擎——所以 Claude Code 在 Ink 之下把浏览器需要的东西<strong>自己也写了</strong>：</p>
 <ul>
@@ -460,7 +460,7 @@ useInsertionEffect(() =&gt; {
 </ul>
 <p>一个需求能 push 到最低合适的层处理。举个对比：upstream Ink 没分这么细，所有优化都只能在 React 层做，结果是消息多了就 clear 全屏 scrollback（#935）。</p>
 <p>要把这条原则带走：<strong>设计状态驱动的渲染系统时，把"状态"和"可见输出"之间的层数拉足够多，每层只负责一个维度的 diff。</strong>不要让 React 直接对着屏幕刷——让 React 对着一个语义层刷，语义层对着 draw-list 刷，draw-list 对着输出设备刷。</p>
-<h2>21.12 可迁移的点</h2>
+<h2 id="21-12-可迁移的点">21.12 可迁移的点<a class="h-anchor" href="#21-12-可迁移的点" aria-label="permalink">¶</a></h2>
 <ul>
 <li><strong>量化 scroll snapshot + <code>useSyncExternalStore</code></strong>：任何虚拟列表都能用，不限终端。Web 上 scroll 也同样每帧几十个事件，按像素量化到 overscan 的一半同样能把不必要的 React 渲染削掉 80%。</li>
 <li><strong>resize-scale 而非 resize-clear</strong>：响应式列表的通用技巧——宽度变了但内容还是那些内容，按比例保留估值总比 pessimistic 展开好。</li>

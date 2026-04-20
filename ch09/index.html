@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2>9.1 用户看到什么</h2>
+<h2 id="9-1-用户看到什么">9.1 用户看到什么<a class="h-anchor" href="#9-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">第一次跑 <code>rm test.log</code>，Claude Code 把面板推出来：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">Run a bash command?
 
@@ -58,11 +58,11 @@
   }
 }</code></pre></figure>
 <p>重启 Claude Code，以上规则立刻生效，而且以 <code>Shift+Tab</code> 切到 <code>plan</code> 再切回来都不会丢。</p>
-<h2>9.2 为什么挑这个设计出来讲</h2>
+<h2 id="9-2-为什么挑这个设计出来讲">9.2 为什么挑这个设计出来讲<a class="h-anchor" href="#9-2-为什么挑这个设计出来讲" aria-label="permalink">¶</a></h2>
 <p>Tool-based agent 的 UX 有个根本矛盾：<strong>安全感需要每次问，但每次问就没法用</strong>。要么像银行 app 一样每点一下敲一遍生物识别，要么像 <code>rm -rf /</code> 一样全权放手。Claude Code 的答案是把"决策权"切成八段，每一段都有机会在不打扰用户的前提下给出结论。真正走到面板那一步的，只有前面七段都不敢做主的那部分。</p>
 <p>这一章讲两件事：<strong>八段决策管线</strong>，以及<strong>让前七段真的能处理掉 90% 场景</strong>的三条支撑机制。</p>
-<h2>9.3 关键数据结构</h2>
-<h3>9.3.1 六种权限模式</h3>
+<h2 id="9-3-关键数据结构">9.3 关键数据结构<a class="h-anchor" href="#9-3-关键数据结构" aria-label="permalink">¶</a></h2>
+<h3 id="9-3-1-六种权限模式">9.3.1 六种权限模式<a class="h-anchor" href="#9-3-1-六种权限模式" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/types/permissions.ts:16-38</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">EXTERNAL_PERMISSION_MODES</span> = [
   &#x27;acceptEdits&#x27;,
   &#x27;bypassPermissions&#x27;,
@@ -78,7 +78,7 @@
 <p>外部用户五种，加上 <code>auto</code> 一种 ant-only。<code>auto</code> 的额外含义是：不是按规则做决定，而是让一个独立的分类器模型看当前对话和将要执行的动作，决定是否放行。</p>
 <p><code>Shift+Tab</code> 的循环只走 <code>default → acceptEdits → plan</code>（<code class="ref">src/utils/permissions/getNextPermissionMode.ts:38-62</code>）。<code>bypassPermissions</code> 必须用 <code>--dangerously-skip-permissions</code> 启动才进入循环，<code>dontAsk</code> 从不在循环里出现。这是刻意的：前者太危险，后者用于 CI。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/types/permissions.ts:28</code>）：<code>InternalPermissionMode</code> 类型联合里还有一个 <code>&#x27;bubble&#x27;</code>，<strong>没有</strong>被放进 <code>INTERNAL_PERMISSION_MODES</code> 的运行时列表（<code class="ref">src/utils/permissions/PermissionMode.ts:97-105</code> 的 <code>isExternalPermissionMode</code> 也排除它）。用户通过 settings.json、CLI flag、<code>Shift+Tab</code> 任何入口都到不了这个值 —— 它只是类型收敛用的旗标，产品层看不到它存在。</p></blockquote>
-<h3>9.3.2 行为三态与决策四态</h3>
+<h3 id="9-3-2-行为三态与决策四态">9.3.2 行为三态与决策四态<a class="h-anchor" href="#9-3-2-行为三态与决策四态" aria-label="permalink">¶</a></h3>
 <p>规则本身只能说 <code>allow / deny / ask</code>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/types/permissions.ts:44</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">PermissionBehavior</span> = &#x27;allow&#x27; | &#x27;deny&#x27; | &#x27;ask&#x27;</code></pre></figure>
 <p>但一次调用的"中间结果"多出一种 <code>passthrough</code>——工具 <code>checkPermissions</code> 返回它表示"我不表态，让默认流程决定"：</p>
@@ -91,7 +91,7 @@
   | <span class="hl-type">PermissionDecision</span>&lt;<span class="hl-type">Input</span>&gt;
   | { behavior: &#x27;passthrough&#x27;; message: string; ... }</code></pre></figure>
 <p><code>passthrough</code> 只在 <code>PermissionResult</code> 里合法，最终 <code>PermissionDecision</code> 只有 allow/ask/deny 三态。转换点在第 8 步（见 9.4.3）。</p>
-<h3>9.3.3 规则值和规则来源</h3>
+<h3 id="9-3-3-规则值和规则来源">9.3.3 规则值和规则来源<a class="h-anchor" href="#9-3-3-规则值和规则来源" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/types/permissions.ts:67-79</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">PermissionRuleValue</span> = {
   toolName: string
   ruleContent?: string
@@ -104,7 +104,7 @@
 }</code></pre></figure>
 <p><code>source</code> 八种：<code>userSettings | projectSettings | localSettings | flagSettings | policySettings | cliArg | command | session</code>（<code class="ref">src/types/permissions.ts:54-62</code>）。前五种是持久化的，后三种只活在内存中。</p>
 <p>磁盘层的加载顺序由 <code>SETTING_SOURCES</code> 常量（<code class="ref">src/utils/settings/constants.ts:7-22</code>）决定 —— 数组里靠后的 source 覆盖靠前的 —— 即 <code>userSettings → projectSettings → localSettings → flagSettings → policySettings</code>，policy 最高。<code>getEnabledSettingSources</code>（<code class="ref">src/utils/settings/constants.ts:159-167</code>）总是把 <code>policySettings</code> 和 <code>flagSettings</code> 强制包进来，因此 IT/CLI 层永远能压住 user 层。<code>loadAllPermissionRulesFromDisk</code>（<code class="ref">src/utils/permissions/permissionsLoader.ts:120-133</code>）在 <code>allowManagedPermissionRulesOnly</code> 开启时直接只读 policy、忽略其他所有 source。</p>
-<h3>9.3.4 运行时权限上下文</h3>
+<h3 id="9-3-4-运行时权限上下文">9.3.4 运行时权限上下文<a class="h-anchor" href="#9-3-4-运行时权限上下文" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/types/permissions.ts:427-441</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">ToolPermissionContext</span> = {
   <span class="hl-kw">readonly</span> mode: <span class="hl-type">PermissionMode</span>
   <span class="hl-kw">readonly</span> additionalWorkingDirectories: <span class="hl-type">ReadonlyMap</span>&lt;string, <span class="hl-type">AdditionalWorkingDirectory</span>&gt;
@@ -118,7 +118,7 @@
   <span class="hl-kw">readonly</span> prePlanMode?: <span class="hl-type">PermissionMode</span>
 }</code></pre></figure>
 <p>三种规则表（allow/deny/ask）各自按 source 分桶，<code>{userSettings: string[], projectSettings: string[], ...}</code>。判定时按 source 的优先级遍历。</p>
-<h3>9.3.5 变更是值</h3>
+<h3 id="9-3-5-变更是值">9.3.5 变更是值<a class="h-anchor" href="#9-3-5-变更是值" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/types/permissions.ts:98-131</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">PermissionUpdate</span> =
   | { <span class="hl-kw">type</span>: &#x27;addRules&#x27;; destination; rules; behavior }
   | { <span class="hl-kw">type</span>: &#x27;replaceRules&#x27;; destination; rules; behavior }
@@ -133,7 +133,7 @@
 <li><code>persistPermissionUpdates</code>（<code class="ref">src/utils/permissions/PermissionUpdate.ts:349-353</code>）按 destination 落盘</li>
 </ul>
 <p>两条路独立。放到 session 就只改内存；放到 localSettings 就同时改内存和磁盘；hook 返回一个 allow 带 <code>updatedPermissions: []</code>，就只授这一次权；hook 返回一个 allow 带 <code>updatedPermissions</code> 写明 destination，就既放行这次也替用户固化规则。<code>supportsPersistence</code>（<code class="ref">src/utils/permissions/PermissionUpdate.ts:208-216</code>）明确：只有 <code>userSettings / projectSettings / localSettings</code> 三档走磁盘路径，<code>session</code> 和 <code>cliArg</code> 走内存路径。</p>
-<h2>9.4 一次调用的八段决策管线</h2>
+<h2 id="9-4-一次调用的八段决策管线">9.4 一次调用的八段决策管线<a class="h-anchor" href="#9-4-一次调用的八段决策管线" aria-label="permalink">¶</a></h2>
 <p>主函数 <code>hasPermissionsToUseToolInner</code>（<code class="ref">src/utils/permissions/permissions.ts:1158-1319</code>）。我按它的注释标号：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">1a. Tool-level deny 规则？   → deny
 1b. Tool-level ask 规则？    → ask（但 Bash + sandbox auto-allow 下豁免）
@@ -147,7 +147,7 @@
 3.  passthrough 转 ask       → ask</code></pre></figure>
 <p>外层 <code>hasPermissionsToUseTool</code>（<code class="ref">src/utils/permissions/permissions.ts:473-728</code>）在上面基础上再叠一层模式改写：<strong><code>dontAsk</code> 把 ask 改成 deny</strong>（<code class="ref">permissions.ts:505-517</code>），<strong><code>auto</code> 把 ask 送去 classifier</strong>（<code class="ref">permissions.ts:518-726</code>）。</p>
 <p>再外层的 React hook <code>useCanUseTool</code>（<code class="ref">src/hooks/useCanUseTool.tsx:32-183</code>）负责 UI 调度：allow 直接 resolve；deny 抛 notification；ask 走赛跑。</p>
-<h3>9.4.1 1a → 1b → 1c：工具级规则先、工具自判后</h3>
+<h3 id="9-4-1-1a-1b-1c-工具级规则先-工具自判后">9.4.1 1a → 1b → 1c：工具级规则先、工具自判后<a class="h-anchor" href="#9-4-1-1a-1b-1c-工具级规则先-工具自判后" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/utils/permissions/permissions.ts:1171-1223</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// 1a. Entire tool is denied</span>
 <span class="hl-kw">const</span> denyRule = getDenyRuleForTool(appState.toolPermissionContext, tool)
 <span class="hl-kw">if</span> (denyRule) {
@@ -196,7 +196,7 @@
   <span class="hl-kw">return</span> { allowed: <span class="hl-kw">true</span> }
 }</code></pre></figure>
 <p><strong>这是 acceptEdits 起效的真正位置</strong>，不在 <code>hasPermissionsToUseToolInner</code> 里，而在工具侧的路径校验中。<code>acceptEdits</code> 在顶层看不到分支，因为它的语义就是"在 checkPermissions 里对工作目录的写操作直接 allow"。把模式的分支下放到工具里，是因为"什么叫工作目录"、"什么叫 write"、"什么路径算保护区"是工具自己知道的知识。</p>
-<h3>9.4.2 1d → 1e → 1f → 1g：bypass 免疫的四层兜底</h3>
+<h3 id="9-4-2-1d-1e-1f-1g-bypass-免疫的四层兜底">9.4.2 1d → 1e → 1f → 1g：bypass 免疫的四层兜底<a class="h-anchor" href="#9-4-2-1d-1e-1f-1g-bypass-免疫的四层兜底" aria-label="permalink">¶</a></h3>
 <p><code>bypassPermissions</code> 一票通过太粗暴，真实系统需要在 bypass 之前就拦住一部分危险操作。这就是 1d 到 1g：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/permissions/permissions.ts:1225-1260</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// 1d. Tool implementation denied</span>
 <span class="hl-kw">if</span> (toolPermissionResult?.behavior === &#x27;deny&#x27;) <span class="hl-kw">return</span> toolPermissionResult
@@ -231,7 +231,7 @@
 </ul>
 <p>这四层和官方文档的 "Protected paths"、"Bypass permissions mode skips permission prompts except for writes to protected directories" 是对应的。从设计上看，这是"bypass 是给环境用的，不是给人用的"—— 装 Docker 的容器内开 bypass，但 <code>.git</code> 里的 hook 文件仍要人来确认。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/permissions/permissions.ts:1171-1181</code> + <code>handleInteractivePermission</code> 的 race 结构）：<strong>PreToolUse hook 返回 <code>allow</code> 也压不住 settings 里的 <code>deny</code> 规则</strong>。原因在决策的时间顺序：1a 的 tool-level deny 在 <code>hasPermissionsToUseTool</code> 里就直接返回，根本不会走到 <code>handleInteractivePermission</code> 那一层；hook 只在外层决策出了 <code>ask</code> 之后才以并发路径参与赛跑。官方文档同样写：<em>"Hook decisions do not bypass permission rules. Deny and ask rules are evaluated regardless of what a PreToolUse hook returns"</em>（来源：<a href="https://code.claude.com/docs/en/permissions" rel="noreferrer">https://code.claude.com/docs/en/permissions</a>，访问于 2026-04-19）。反过来，hook 可以把一个 <code>ask</code> 改写成 <code>allow</code>，<strong>但不能把 deny 反否决</strong>。hook 的完整触发模型、exit code 2 的 "interrupt" 行为等见 <a class="chref" href="../ch14/">ch.14</a>。</p></blockquote>
-<h3>9.4.3 2a → 2b → 3：模式闸门、全局放行、兜底问人</h3>
+<h3 id="9-4-3-2a-2b-3-模式闸门-全局放行-兜底问人">9.4.3 2a → 2b → 3：模式闸门、全局放行、兜底问人<a class="h-anchor" href="#9-4-3-2a-2b-3-模式闸门-全局放行-兜底问人" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/utils/permissions/permissions.ts:1262-1318</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// 2a. Mode gate</span>
 <span class="hl-kw">const</span> shouldBypassPermissions =
   appState.toolPermissionContext.mode === &#x27;bypassPermissions&#x27; ||
@@ -261,7 +261,7 @@
 <p><code>2a</code> 是 bypass 模式唯一的出口。注意 <code>plan</code> 模式也可能在这里放行：如果用户曾经启用过 bypass 模式（<code>isBypassPermissionsModeAvailable: true</code>），那么即使切到 plan，也享受 bypass 的"全通"待遇。这条件之"奇怪"，是用户 launch 行为的记忆——<code>--dangerously-skip-permissions</code> 启动过的 session 里，plan 和 bypass 是同一条路。</p>
 <p><code>2b</code> 是全局放行规则。用户在 <code>/permissions</code> 里选 "Always allow Bash"，或在 settings.json 写了 <code>&quot;allow&quot;: [&quot;Bash&quot;]</code>，就在这里命中。</p>
 <p><code>3</code> 是兜底。工具的 <code>checkPermissions</code> 返回 <code>passthrough</code> —— 意思是"我没看到我关心的情况"——那就统一升格为 <code>ask</code>，去问用户。</p>
-<h3>9.4.4 外层改写：dontAsk 与 auto</h3>
+<h3 id="9-4-4-外层改写-dontask-与-auto">9.4.4 外层改写：dontAsk 与 auto<a class="h-anchor" href="#9-4-4-外层改写-dontask-与-auto" aria-label="permalink">¶</a></h3>
 <p>八步之后，外层 <code>hasPermissionsToUseTool</code> 再做一次模式改写：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/permissions/permissions.ts:505-517</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (result.behavior === &#x27;ask&#x27;) {
   <span class="hl-kw">const</span> appState = context.getAppState()
@@ -275,7 +275,7 @@
   <span class="hl-cm">// ... auto mode 走 classifier ...</span>
 }</code></pre></figure>
 <p><code>dontAsk</code> 的语义是"所有 ask 当 deny 处理"，这样 CI 脚本可以在 <code>--permission-mode dontAsk</code> 下跑：白名单里没写的一概拒绝，绝不 hang 住等人。<strong>注意这个改写放在最外层，而不是下放到每个工具</strong>。这么做的理由是：dontAsk 是跨工具的全局语义，每个工具自己判断反而会漏。这是对"分层"的一个反向选择—— acceptEdits 下放到工具，dontAsk 上提到顶层。</p>
-<h3>9.4.5 总结：八步的取舍</h3>
+<h3 id="9-4-5-总结-八步的取舍">9.4.5 总结：八步的取舍<a class="h-anchor" href="#9-4-5-总结-八步的取舍" aria-label="permalink">¶</a></h3>
 <p>按 behavior 类型分组，这八步其实就是三张"优先级表"：</p>
 <ul>
 <li><strong>deny 的优先级</strong>：1a &gt; 1d &gt; 其他（最外层 deny 规则 &gt; 工具自判 deny &gt; 模式 deny）</li>
@@ -283,8 +283,8 @@
 <li><strong>allow 的优先级</strong>：2a &gt; 2b &gt;（工具 checkPermissions 返回 allow 作为 <code>toolPermissionResult</code> 也在这条路径上）</li>
 </ul>
 <p><strong>deny 始终最高优先级，且绕不过；ask 仅在 bypass 之下几层豁免；allow 需要显式命中规则或模式</strong>。这和官方文档说的 "deny -&gt; ask -&gt; allow, first match wins" 一致（来源：<a href="https://code.claude.com/docs/en/permissions" rel="noreferrer">https://code.claude.com/docs/en/permissions</a>，访问于 2026-04-19）。</p>
-<h2>9.5 规则语法的 parse 与匹配</h2>
-<h3>9.5.1 字符串格式</h3>
+<h2 id="9-5-规则语法的-parse-与匹配">9.5 规则语法的 parse 与匹配<a class="h-anchor" href="#9-5-规则语法的-parse-与匹配" aria-label="permalink">¶</a></h2>
+<h3 id="9-5-1-字符串格式">9.5.1 字符串格式<a class="h-anchor" href="#9-5-1-字符串格式" aria-label="permalink">¶</a></h3>
 <p>settings.json 里存的 <code>&quot;Bash(npm run *)&quot;</code> 是字符串。parse 成 <code>{toolName: &#x27;Bash&#x27;, ruleContent: &#x27;npm run *&#x27;}</code> 在这里：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/permissions/permissionRuleParser.ts:93-133</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> permissionRuleValueFromString(ruleString: string): <span class="hl-type">PermissionRuleValue</span> {
   <span class="hl-kw">const</span> openParenIndex = findFirstUnescapedChar(ruleString, &#x27;(&#x27;)
@@ -327,7 +327,7 @@
 <span class="hl-kw">const</span> newRules = ruleStrings.filter(rule =&gt; !existingRulesSet.has(rule))</code></pre></figure>
 <p>加一条规则时对现存规则做 roundtrip，再用结果去重。用户多次点 "Always allow" 同一个 prefix 不会让 settings.json 膨胀；legacy 名和新名视为同一条。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/permissions/permissionsLoader.ts:163-215</code> 的 <code>deletePermissionRuleFromSettings</code>）：<strong>删除规则也走同一条 roundtrip 正规化</strong>。用户在 <code>/permissions</code> 里删一条 <code>KillShell(...)</code>，即使 settings.json 里存的是新名 <code>TaskStop(...)</code>，也能被正确删除 —— 因为 <code>normalizeEntry</code> 先把两边都 parse + 回写成 canonical 字符串再比对。反过来，<code>Bash(*)</code> 和 <code>Bash</code> 和 <code>Bash()</code> 任写一个，都能删掉用另一种写法存的同一条规则。用户层看不见 —— 他们以为只是"点了删除按钮"。</p></blockquote>
-<h3>9.5.2 Bash 命令的三种匹配形态</h3>
+<h3 id="9-5-2-bash-命令的三种匹配形态">9.5.2 Bash 命令的三种匹配形态<a class="h-anchor" href="#9-5-2-bash-命令的三种匹配形态" aria-label="permalink">¶</a></h3>
 <p>Bash 的 ruleContent 比 Edit 的路径模式更复杂，因为既要支持 <code>npm:*</code> 的老 prefix 语法，又要支持 <code>npm run *</code> 的新 wildcard 语法：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/permissions/shellRuleMatching.ts:25-37</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">ShellPermissionRule</span> =
   | { <span class="hl-kw">type</span>: &#x27;exact&#x27;; command: string }
@@ -354,10 +354,10 @@
 <span class="hl-kw">const</span> regex = <span class="hl-kw">new</span> <span class="hl-type">RegExp</span>(<span class="hl-str">`^${regexPattern}$`</span>, flags)</code></pre></figure>
 <p>特判 A 是为了让 <code>Bash(git *)</code> 既匹配 <code>git status</code>，也匹配裸 <code>git</code>——和 prefix 写法 <code>Bash(git:*)</code> 对齐。多 <code>*</code> 的模式（如 <code>Bash(* run *)</code>）不享受这个特判，以免 <code>npm run</code>（没有 trailing 参数）被误匹配。</p>
 <p>特判 B 是为了处理 heredoc。<code>splitCommand</code> 把一条多行命令拆分时会保留换行，所以 <code>.</code> 必须匹配 <code>\n</code>。</p>
-<h2>9.6 "每次都问却不烦"背后真正起作用的三条机制</h2>
+<h2 id="9-6-每次都问却不烦-背后真正起作用的三条机制">9.6 "每次都问却不烦"背后真正起作用的三条机制<a class="h-anchor" href="#9-6-每次都问却不烦-背后真正起作用的三条机制" aria-label="permalink">¶</a></h2>
 <p>到这里数据结构和决策管线都摆完了，看起来是个不错的复杂系统。但这章副标题问的是：<strong>为什么用起来真的不烦？</strong></p>
 <p>读完源码我挑出三条支撑机制，每一条单拎出来都能被其它 agent 项目直接借鉴。</p>
-<h3>9.6.1 工具自身有一等的 <code>checkPermissions</code></h3>
+<h3 id="9-6-1-工具自身有一等的-checkpermissions">9.6.1 工具自身有一等的 <code>checkPermissions</code><a class="h-anchor" href="#9-6-1-工具自身有一等的-checkpermissions" aria-label="permalink">¶</a></h3>
 <p>权限判定不是中心化的"先查规则表、再匹配工具"，而是每个工具自己实现一个 <code>checkPermissions(input, context): PermissionResult</code>。中心调度只做：</p>
 <ul>
 <li>工具级粗粒度规则（1a / 1b / 2b）</li>
@@ -378,7 +378,7 @@
 <li><code>checkPermissions</code> 默认返回 <code>{ behavior: &#x27;allow&#x27;, updatedInput: input }</code> —— 源码注释写明 "defer to general permission system"</li>
 </ul>
 <p>也就是说，<strong>工具不表态时不会被当成 ask</strong>，而是返回 allow 把判定权交还中心调度；由 2a/2b/3 决定最终结果 —— 没有命中 2b 的显式 allow 规则，才在第 3 步转为 ask。新工具 onboarding 必须显式思考"我是不是 read only"、"我的 input 里哪部分影响权限判定"，这是一个学习曲线。收益是每个工具都能给出<strong>最精确</strong>的答案，而不是在中心表里和别的工具共享一套方言。（Tool 接口的其他必实现字段、以及 <code>requiresUserInteraction</code> / <code>isConcurrencySafe</code> 的语义详见 <a class="chref" href="../ch08/">ch.08</a>。）</p>
-<h3>9.6.2 一次授权是一个值，五档 destination 任选</h3>
+<h3 id="9-6-2-一次授权是一个值-五档-destination-任选">9.6.2 一次授权是一个值，五档 destination 任选<a class="h-anchor" href="#9-6-2-一次授权是一个值-五档-destination-任选" aria-label="permalink">¶</a></h3>
 <p>用户在面板上点 "Always allow Bash(rm)"，UI 层不是直接去改 settings，而是构造一个 <code>PermissionUpdate</code>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts">{
   <span class="hl-kw">type</span>: &#x27;addRules&#x27;,
@@ -419,7 +419,7 @@
 </ul>
 <p><strong>"变更是值"让权限系统和会话、hook、sub-agent、远程设备全都用同一个 currency 通信</strong>。对比那些把"授权"写成 hardcode boolean state 的系统，这里任何授权决定都能序列化、传递、延迟应用。Agent SDK 侧 <code>canUseTool</code> 回调返回的结构也与 <code>PermissionUpdate[]</code> 同构（详见 <a class="chref" href="../ch23/">ch.23</a>）。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/tools/AgentTool/runAgent.ts:297-300</code> + <code class="ref">src/utils/forkedAgent.ts:146-167</code>）：<strong>sub-agent 默认不继承主 agent 的 session "Always" 白名单</strong>。AgentTool 在启动 worker 时会构造一个新的 <code>toolPermissionContext</code>；如果 agent 定义里写了 <code>allowedTools: [...]</code>，runAgent 用 <code>createGetAppStateWithAllowedTools</code> 把这份列表写进 worker 的 <code>alwaysAllowRules.command</code>，且<strong>替换</strong>（不合并）原先的 command 桶 —— 源码注释写明"replaces ALL allow rules so the agent only has what's explicitly listed (parent approvals don't leak through)"。也就是说主 agent 刚刚点的 "Always allow Bash(rm)" 在 sub-agent 里<strong>不算数</strong>。这个隔离结合上面的 mailbox-claim 协议（见 9.6.3）：sub-agent 自己没有白名单命中就把权限请求回传给 leader，由 leader 重新决策。sub-agent 生命周期的完整视角见 <a class="chref" href="../ch04/">ch.04</a>。</p></blockquote>
-<h3>9.6.3 面板是一场赛跑，不是串行等用户</h3>
+<h3 id="9-6-3-面板是一场赛跑-不是串行等用户">9.6.3 面板是一场赛跑，不是串行等用户<a class="h-anchor" href="#9-6-3-面板是一场赛跑-不是串行等用户" aria-label="permalink">¶</a></h3>
 <p>这是最关键的一条，也是最容易忽略的一条。</p>
 <p>当八段决策结果是 <code>ask</code>，<code>useCanUseTool</code> 把球传给 <code>handleInteractivePermission</code>（<code>src/hooks/toolPermission/handlers/interactiveHandler.ts:57-</code>）。它<strong>不是</strong>简单把面板弹出来然后 await 用户点击，而是：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">function</span> handleInteractivePermission(params, resolve) {
@@ -503,8 +503,8 @@
 </ul>
 <p>"不烦"最本质的来源是：<strong>大多数情况下用户根本看不到面板</strong>，因为 hook 或 classifier 在面板 render 完成之前就已经 claim 掉了。即使看到了，也可能几秒后自动消失（classifier 后到的批准会触发 checkmark 动画）。用户的实际体验是"偶尔问一下"，而不是 "一秒两个弹窗"。</p>
 <p>赛跑架构的代价是每个路径都要幂等、每个回调都要检查 <code>claim()</code>、每个 <code>pushToQueue</code> 都要有配套的 <code>removeFromQueue</code> 兜底、abort signal 要挂满所有订阅。<code class="ref">interactiveHandler.ts</code> 长达 536 行，大半是这种管理并发状态的代码。但这正是"每次都问却不烦"的结构性来源——取消了"必须等用户"的同步依赖，异步响应者全部能贡献。</p>
-<h2>9.7 <code>/sandbox</code> 和 <code>/permissions</code>：两套斜杠命令的分工</h2>
-<h3>9.7.1 两条命令各自做什么</h3>
+<h2 id="9-7-sandbox-和-permissions-两套斜杠命令的分工">9.7 <code>/sandbox</code> 和 <code>/permissions</code>：两套斜杠命令的分工<a class="h-anchor" href="#9-7-sandbox-和-permissions-两套斜杠命令的分工" aria-label="permalink">¶</a></h2>
+<h3 id="9-7-1-两条命令各自做什么">9.7.1 两条命令各自做什么<a class="h-anchor" href="#9-7-1-两条命令各自做什么" aria-label="permalink">¶</a></h3>
 <p><code>/permissions</code> 打开 <code>PermissionRuleList</code>，一屏编辑 <code>permissions.allow/ask/deny</code>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/commands/permissions/permissions.tsx:5-9</span><span class="lang">tsx</span></figcaption><pre><code class="language-tsx"><span class="hl-kw">export</span> <span class="hl-kw">const</span> call: <span class="hl-type">LocalJSXCommandCall</span> = <span class="hl-kw">async</span> (onDone, context) =&gt; {
   <span class="hl-kw">return</span> &lt;<span class="hl-type">PermissionRuleList</span> onExit={onDone} onRetryDenials={commands =&gt; {
@@ -539,7 +539,7 @@
     <span class="hl-cm">// ...</span>
   }
 }</code></pre></figure>
-<h3>9.7.2 耦合点：沙箱给 Bash 开的豁免</h3>
+<h3 id="9-7-2-耦合点-沙箱给-bash-开的豁免">9.7.2 耦合点：沙箱给 Bash 开的豁免<a class="h-anchor" href="#9-7-2-耦合点-沙箱给-bash-开的豁免" aria-label="permalink">¶</a></h3>
 <p>两套机制的唯一耦合点在决策管线的 1b：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/permissions/permissions.ts:1186-1206</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (askRule) {
   <span class="hl-kw">const</span> canSandboxAutoAllow =
@@ -558,10 +558,10 @@
 <p>官方文档原文：</p>
 <blockquote><p>"When sandboxing is enabled with <code>autoAllowBashIfSandboxed: true</code>, which is the default, sandboxed Bash commands run without prompting even if your permissions include <code>ask: Bash(*)</code>. The sandbox boundary substitutes for the per-command prompt."</p>
 <p>（来源：<a href="https://code.claude.com/docs/en/permissions" rel="noreferrer">https://code.claude.com/docs/en/permissions</a>，访问于 2026-04-19）</p></blockquote>
-<h3>9.7.3 <code>/sandbox exclude</code> 的反向作用</h3>
+<h3 id="9-7-3-sandbox-exclude-的反向作用">9.7.3 <code>/sandbox exclude</code> 的反向作用<a class="h-anchor" href="#9-7-3-sandbox-exclude-的反向作用" aria-label="permalink">¶</a></h3>
 <p><code>/sandbox exclude &quot;docker *&quot;</code> 把命令加到 <code>sandbox.excludedCommands</code>（<code class="ref">src/utils/sandbox/sandbox-adapter.ts:865-875</code>）。这些命令<strong>不会</strong>被沙箱包起来，所以 <code>shouldUseSandbox(input)</code> 返回 false，1b 的 <code>canSandboxAutoAllow</code> 条件不满足，流向常规的 ask 分支。</p>
 <p>反直觉但合理：<strong>"加到 <code>excludedCommands</code>" 和 "加到 <code>allow</code>" 意义相反</strong>。前者说"这个命令太复杂，不能塞进沙箱，反而要人工确认"；后者说"这个命令足够安全，沙箱里还是沙箱外都不用问"。</p>
-<h2>9.8 Plan Mode 在权限层做了什么</h2>
+<h2 id="9-8-plan-mode-在权限层做了什么">9.8 Plan Mode 在权限层做了什么<a class="h-anchor" href="#9-8-plan-mode-在权限层做了什么" aria-label="permalink">¶</a></h2>
 <p>按副标题讲的逻辑，本章也要说清 Plan Mode 在 permission 判定里的角色。我找了半天源码，得出一个可能不符合直觉的结论：</p>
 <p><strong>Plan Mode 在 permission 层几乎什么也没做</strong>。</p>
 <p>全仓扫 <code>mode === &#x27;plan&#x27;</code>，对权限判定有实际影响的只有两处：</p>
@@ -582,8 +582,8 @@ appState.toolPermissionContext.mode === &#x27;auto&#x27; ||
 </ol>
 <p>所以 plan mode 在 permission 视角下就是个"不改变任何行为但记录了一个旗标"的模式。它靠的是<strong>对模型的劝说</strong>而不是<strong>对工具的拦截</strong>。这种设计选择背后是明确的 trade-off：如果要在 permission 层硬拦，每个写工具都要加一段 <code>if (mode === &#x27;plan&#x27;) return deny</code>，而且 <code>deny</code> 的错误消息得解释给模型看。现在的做法让 plan mode 的语义完全留在对话层，工具不用知道。</p>
 <p>（Plan Mode 的完整机制、plan 文件的存储、<code>ExitPlanMode</code> 工具、5-phase plan workflow、以及 <code>ExitPlanMode</code> 被用户批准后如何切到 <code>acceptEdits</code> 等详见 <a class="chref" href="../ch05/">ch.05</a>。）</p>
-<h2>9.9 设计取舍</h2>
-<h3>9.9.1 为什么不是中心化查表</h3>
+<h2 id="9-9-设计取舍">9.9 设计取舍<a class="h-anchor" href="#9-9-设计取舍" aria-label="permalink">¶</a></h2>
+<h3 id="9-9-1-为什么不是中心化查表">9.9.1 为什么不是中心化查表<a class="h-anchor" href="#9-9-1-为什么不是中心化查表" aria-label="permalink">¶</a></h3>
 <p>最朴素的实现是做一张"工具 × 动作 × 资源"的查表，所有权限集中在一处匹配。Claude Code 没这么做。</p>
 <p>代价：每个工具都要写自己的 <code>checkPermissions</code>，新工具 onboarding 要思考权限。 收益：</p>
 <ul>
@@ -592,17 +592,17 @@ appState.toolPermissionContext.mode === &#x27;auto&#x27; ||
 <li>工具知道自己的 input schema，可以做结构化判断而不只是字符串匹配</li>
 </ul>
 <p>中心调度只做通用的 5 段：tool-level 的 deny/ask/allow 规则、模式闸门、passthrough → ask 转换。</p>
-<h3>9.9.2 为什么 <code>dontAsk</code> 下放和 <code>acceptEdits</code> 上提的方向是反的</h3>
+<h3 id="9-9-2-为什么-dontask-下放和-acceptedits-上提的方向是反的">9.9.2 为什么 <code>dontAsk</code> 下放和 <code>acceptEdits</code> 上提的方向是反的<a class="h-anchor" href="#9-9-2-为什么-dontask-下放和-acceptedits-上提的方向是反的" aria-label="permalink">¶</a></h3>
 <p><code>acceptEdits</code> 下放到工具的 <code>checkPermissions</code>（具体是 <code class="ref">pathValidation.ts:207</code>），<code>dontAsk</code> 上提到最外层 <code>hasPermissionsToUseTool</code>（<code class="ref">permissions.ts:505-517</code>）。为什么？</p>
 <p><code>acceptEdits</code> 的语义是"在工作目录里的写操作放行"——而"什么叫工作目录"、"什么叫写操作"、"哪些路径是 protected" 是工具自己知道的知识。下放让每个写工具自己判断，Edit / Write / NotebookEdit 可以各自定义 acceptEdits 的覆盖范围。</p>
 <p><code>dontAsk</code> 的语义是"所有 ask 当 deny 处理"——这是跨工具的全局语义，每个工具自己抄一遍会漏。上提让一处代码兜底所有。</p>
 <p>一个是"精细规则"，交给工具。一个是"粗粒度闸门"，交给顶层。这不是教条主义的"全下放"或"全集中"，而是按语义的宽窄决定位置。</p>
-<h3>9.9.3 赛跑架构的复杂度成本</h3>
+<h3 id="9-9-3-赛跑架构的复杂度成本">9.9.3 赛跑架构的复杂度成本<a class="h-anchor" href="#9-9-3-赛跑架构的复杂度成本" aria-label="permalink">¶</a></h3>
 <p><code>handleInteractivePermission</code> 536 行，大半是 claim 协议、abort 订阅清理、checkmark timer、queue 增删。对比一个朴素实现"弹出面板 → await 用户点击"可能 50 行就够了。</p>
 <p>这个复杂度值不值？</p>
 <p>把这 10× 的代码翻译成用户体验：每次 ask 都<strong>同时</strong>在本地、远程设备、hook、classifier 几条路径上等应答。如果 PreToolUse hook 在 10ms 内返回了 allow，用户甚至看不到面板。如果 classifier 在 300ms 内判断安全，面板弹出来立刻打钩消失。如果用户正在手机上，面板在手机的 iMessage 里先被点了。</p>
 <p><strong>减少用户看到面板的概率 = 减少用户的干预次数 = "不烦"</strong>。这个指标不线性反映在代码行数上，但会线性反映在"一个 30 分钟的会话里被问几次"上。</p>
-<h2>9.10 可迁移的点</h2>
+<h2 id="9-10-可迁移的点">9.10 可迁移的点<a class="h-anchor" href="#9-10-可迁移的点" aria-label="permalink">¶</a></h2>
 <p>做 agent、做 CLI 工具、做需要用户确认动作的系统，可以直接借走的三个做法：</p>
 <ol>
 <li><strong>决策管线分段</strong>。硬 deny 最先（没有例外）→ 工具自判 → 模式闸门 → 硬 allow → 问用户 → 外层模式改写。每一段都是一次"能不能在这里短路"的机会。不要把所有判定挤在一个函数里。</li>

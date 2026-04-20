@@ -39,14 +39,14 @@
 
 <article class="article">
   <div class="prose">
-<h2>开章须知：两个"hook"</h2>
+<h2 id="开章须知-两个-hook">开章须知：两个"hook"<a class="h-anchor" href="#开章须知-两个-hook" aria-label="permalink">¶</a></h2>
 <p class="drop">本书里 "hook" 有两层含义，读本章前先分开：</p>
 <ul>
 <li><strong>本章讲的</strong>：用户在 <code class="ref">settings.json</code> 里配的 <strong>shell hook</strong>。Claude Code 在跑到特定生命周期节点时 spawn 一个子进程，把事件信息通过 stdin 的 JSON 交给用户脚本，再根据脚本的 exit code + stdout JSON 决定下一步。PreToolUse / PostToolUse / UserPromptSubmit / Stop / SessionStart / Notification 等 <strong>27 个</strong>事件都在此列。</li>
 <li><strong>不讲的</strong>：<code>src/hooks/use*.ts(x)</code> 里的 <strong>React hook</strong>，终端 UI 层用的（<code>useTextInput</code>、<code>useNotifyAfterTimeout</code>、<code>useCostSummary</code> 等）。那部分属于 <a class="chref" href="../ch21/">ch.21</a>。</li>
 </ul>
 <p>提到二者有交叉的地方会写 "React hook" 明示。无修饰的 "hook" 一律是 shell hook。</p>
-<h2>1. 用户看到什么</h2>
+<h2 id="1-用户看到什么">1. 用户看到什么<a class="h-anchor" href="#1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p>典型配置（<code class="ref">~/.claude/settings.json</code>）：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">jsonc</span></figcaption><pre><code class="language-jsonc">{
   &quot;hooks&quot;: {
@@ -70,14 +70,14 @@
 }</code></pre></figure>
 <p>字段分三层：事件名 → <code>{matcher, hooks[]}</code> 数组 → 单个 handler 配置。上面这份 config 的语义是："模型要调 Bash 且命令以 <code>rm</code> 开头之前，先跑 <code class="ref">block-rm.sh</code>；模型改动过文件后跑 <code class="ref">run-lint.sh</code>"。</p>
 <p>脚本里能做的事跟权限面板差不多：<strong>放行、阻断、改参数、注入上下文</strong>。但跟权限面板不一样的是：这是用户自己的 shell 代码，可以跑任何本地工具——接 git、接 CI API、接组织内部的合规系统。</p>
-<h2>2. 为什么挑这个设计出来讲</h2>
+<h2 id="2-为什么挑这个设计出来讲">2. 为什么挑这个设计出来讲<a class="h-anchor" href="#2-为什么挑这个设计出来讲" aria-label="permalink">¶</a></h2>
 <p>很多 agent 工具都提供事件回调，但 Claude Code 的版本有两个非平凡的选择值得拆：</p>
 <ul>
 <li><strong>JSON-over-stdio + exit code 的双通道协议</strong>。简单场景写一行 <code>exit 2</code> 就够阻塞；复杂场景返回 stdout JSON 控制得很细——<code>permissionDecision: &#x27;allow&#x27; / &#x27;deny&#x27; / &#x27;ask&#x27;</code>、<code>updatedInput</code>（改 tool 参数）、<code>additionalContext</code>（注入 system-reminder）、<code>continue: false</code>（让 Agent Loop 停）。协议面大但读者不用一次吃完。</li>
 <li><strong>把权限决策权下放给 hook，但不是绝对</strong>。PreToolUse hook 返回 allow 能跳过权限面板，但仍要过 <code>checkRuleBasedPermissions</code>——deny 规则能反否决 hook 的 allow。hook 的 deny 才是绝对 deny。这个"不对称"是 IT 部署的护栏：用户可以写 hook 放松权限，不能写 hook 绕过 managed 层的禁令。</li>
 </ul>
-<h2>3. 关键数据结构</h2>
-<h3>3.1 事件枚举</h3>
+<h2 id="3-关键数据结构">3. 关键数据结构<a class="h-anchor" href="#3-关键数据结构" aria-label="permalink">¶</a></h2>
+<h3 id="3-1-事件枚举">3.1 事件枚举<a class="h-anchor" href="#3-1-事件枚举" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/entrypoints/sdk/coreTypes.ts:25-53</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">HOOK_EVENTS</span> = [
   &#x27;<span class="hl-type">PreToolUse</span>&#x27;, &#x27;<span class="hl-type">PostToolUse</span>&#x27;, &#x27;<span class="hl-type">PostToolUseFailure</span>&#x27;,
   &#x27;<span class="hl-type">Notification</span>&#x27;, &#x27;<span class="hl-type">UserPromptSubmit</span>&#x27;,
@@ -108,7 +108,7 @@
 <li><strong>通知</strong>：Notification</li>
 </ul>
 <p>matcher 字段不同事件看不同的输入字段（<code class="ref">src/utils/hooks.ts:1616-1669</code>）——tool 类事件 match <code>tool_name</code>，SessionStart match <code>source</code>（<code>startup/resume/clear/compact</code>），Notification match <code>notification_type</code>，Elicitation match <code>mcp_server_name</code>，诸如此类。UserPromptSubmit / Stop / TeammateIdle 这几个没有 matcher，一配就全跑。</p>
-<h3>3.2 四种 handler</h3>
+<h3 id="3-2-四种-handler">3.2 四种 handler<a class="h-anchor" href="#3-2-四种-handler" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/schemas/hooks.ts:183-189</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">return</span> z.discriminatedUnion(&#x27;<span class="hl-kw">type</span>&#x27;, [
   <span class="hl-type">BashCommandHookSchema</span>, <span class="hl-type">PromptHookSchema</span>,
   <span class="hl-type">AgentHookSchema</span>, <span class="hl-type">HttpHookSchema</span>,
@@ -134,9 +134,9 @@
 }</code></pre></figure>
 <p><code>if</code> 字段很有意思——它用 <a class="chref" href="../ch09/">ch.09</a> 的权限规则语法（<code>Bash(git *)</code>、<code>Read(*.ts)</code>）做<strong>预过滤</strong>。效果是"matcher 命中了，但 <code>if</code> 不匹配就不 spawn"。设计目的是避免给 "给 Bash 配了 hook 但 99% 的 Bash 调用跟 hook 无关" 的用户白白付 spawn 开销。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/services/tools/toolHooks.ts:372-391</code>）：PreToolUse hook 是<strong>先跑、再进权限判定</strong>的——<a class="chref" href="../ch09/">ch.09</a> 讲的 <code>checkRuleBasedPermissions</code> 跑在 hook 之后。这条顺序决定了 hook allow 会被 deny 规则反否决，但 hook deny 是绝对 deny。设计意图、对 IT 部署的影响详见 §6.2。</p></blockquote>
-<h2>4. 关键流程：一次 hook 调用的生命周期</h2>
+<h2 id="4-关键流程-一次-hook-调用的生命周期">4. 关键流程：一次 hook 调用的生命周期<a class="h-anchor" href="#4-关键流程-一次-hook-调用的生命周期" aria-label="permalink">¶</a></h2>
 <p>用 PreToolUse 做主线，其它事件差异用脚注带过。</p>
-<h3>4.1 入口</h3>
+<h3 id="4-1-入口">4.1 入口<a class="h-anchor" href="#4-1-入口" aria-label="permalink">¶</a></h3>
 <p>tool 要执行之前，<code>toolExecution</code> 调 <code>runPreToolUseHooks</code>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/services/tools/toolExecution.ts:800-810</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">for</span> <span class="hl-kw">await</span> (<span class="hl-kw">const</span> result <span class="hl-kw">of</span> runPreToolUseHooks(
   toolUseContext, tool, processedInput, toolUseID,
@@ -162,7 +162,7 @@
   tool_use_id: toolUseID,
 }</code></pre></figure>
 <p><code>createBaseHookInput</code>（<code class="ref">src/utils/hooks.ts:301-328</code>）填公共字段：<code>session_id</code> / <code>transcript_path</code> / <code>cwd</code> / <code>permission_mode</code> / <code>agent_id</code> / <code>agent_type</code>。每个 hook 都能拿到这些。</p>
-<h3>4.2 匹配 + 去重</h3>
+<h3 id="4-2-匹配-去重">4.2 匹配 + 去重<a class="h-anchor" href="#4-2-匹配-去重" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/utils/hooks.ts:1681-1686</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> filteredMatchers = matchQuery
   ? hookMatchers.filter(matcher =&gt;
       !matcher.matcher || matchesPattern(matchQuery, matcher.matcher),
@@ -183,14 +183,14 @@
 <li><code>callback</code> / <code>function</code>：不去重</li>
 </ul>
 <p>注意去重 key 比官方文档（"by command string"）更细：同一个 command 配了不同的 <code>shell</code> 或不同的 <code>if</code>，会被视为两个 hook。这是合理的——<code>shell: &#x27;powershell&#x27;</code> 和 <code>shell: &#x27;bash&#x27;</code> 的语义不一样。</p>
-<h3>4.3 信任门</h3>
+<h3 id="4-3-信任门">4.3 信任门<a class="h-anchor" href="#4-3-信任门" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/utils/hooks.ts:286-296</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> shouldSkipHookDueToTrust(): boolean {
   <span class="hl-kw">const</span> isInteractive = !getIsNonInteractiveSession()
   <span class="hl-kw">if</span> (!isInteractive) <span class="hl-kw">return</span> <span class="hl-kw">false</span>           <span class="hl-cm">// SDK / -p 隐式信任</span>
   <span class="hl-kw">return</span> !checkHasTrustDialogAccepted()      <span class="hl-cm">// 交互模式要过 trust</span>
 }</code></pre></figure>
 <p>所有 hook 在交互模式下必须等 trust dialog 通过才跑。这条源码注释写明了历史漏洞："SessionEnd hook 曾在用户拒绝 trust 时跑了 / SubagentStop hook 曾在早于 trust 时跑了"。集中在一个 gate 比每个事件各自判要稳。</p>
-<h3>4.4 并行 spawn</h3>
+<h3 id="4-4-并行-spawn">4.4 并行 spawn<a class="h-anchor" href="#4-4-并行-spawn" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/hooks.ts:2143-2198（节选）</span>
 <span class="hl-kw">const</span> hookPromises = matchingHooks.map(<span class="hl-kw">async</span> <span class="hl-kw">function</span>* (
   { hook, pluginRoot, pluginId, skillRoot },
@@ -212,7 +212,7 @@
 <ul>
 <li>纯 callback 走 fast path，直接顺序 await 不开 generator、不起 span（注释说微基准快 70%，<code class="ref">hooks.ts:2036-2067</code>）</li>
 </ul>
-<h3>4.5 子进程协议</h3>
+<h3 id="4-5-子进程协议">4.5 子进程协议<a class="h-anchor" href="#4-5-子进程协议" aria-label="permalink">¶</a></h3>
 <p>Bash 路径：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/hooks.ts:976-983</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> shell = isWindows ? findGitBashPath() : <span class="hl-kw">true</span>
 child = spawn(finalCommand, [], {
@@ -238,7 +238,7 @@ child.stdin.end()</code></pre></figure>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/hooks.ts:917-926</code>）：<code>CLAUDE_ENV_FILE</code> <strong>只对上面列的 4 个事件生效</strong>。PreToolUse / UserPromptSubmit / Stop 之类事件的 hook 即使检测到 <code>CLAUDE_ENV_FILE</code> 并往里写 export，代码也不会加载那个文件——<code>executeHooks</code> 只在这 4 个事件后 source，其它事件的写入会被默默丢掉，不报错也不告警。误用时常见症状："我的 PreToolUse hook 改了 env 怎么没生效？"</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/subprocessEnv.ts:15-53</code>）：<code>subprocessEnv()</code> 会在 <code>CLAUDE_CODE_SUBPROCESS_ENV_SCRUB</code> 开启时（GitHub Actions / <code>claude-code-action</code> 默认开）剥掉 <code>ANTHROPIC_API_KEY</code> / <code>AWS_SECRET_ACCESS_KEY</code> / <code>ACTIONS_ID_TOKEN_REQUEST_TOKEN</code> 等一组 secret。本地测试 hook 能拿到这些 env，放到 GHA 跑就拿不到——典型"产品层看不到但必踩"的陷阱，尤其是写上报脚本时容易以为 hook 进程继承了父 env。</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/hooks.ts:928-938</code>）：spawn 子进程前会对 <code>cwd</code> 做探活——如果 <code>getCwd()</code> 返回的 worktree 已被删（AsyncLocalStorage 里的状态还没跟上 <code>ExitWorktree</code>），会自动回退到 <code>getOriginalCwd()</code>。不这样做 spawn 会直接 ENOENT 失败。这条回退在 <code>/exit-worktree</code> 之后紧跟一个 hook 触发事件时才会走到，隐藏度高。</p></blockquote>
-<h3>4.6 Async hook 的握手</h3>
+<h3 id="4-6-async-hook-的握手">4.6 Async hook 的握手<a class="h-anchor" href="#4-6-async-hook-的握手" aria-label="permalink">¶</a></h3>
 <p>这个设计值得单独拎出来。Claude Code 支持把 hook "放到后台跑"，stdin/stdout 契约如下：</p>
 <ol>
 <li>hook 正常接 stdin JSON</li>
@@ -263,7 +263,7 @@ child.stdin.end()</code></pre></figure>
 <p>注释特别提醒：<strong>只能 parse 第一行</strong>。如果 hook 很快写了多行，拼起来 parse 会失败，async hook 就退化成同步阻塞。这是 streaming 解析里容易踩的坑，写在代码里给维护者看。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/utils/hooks.ts:1112-1151</code>）：async 握手要求<strong>第一次 data event 就必须是完整 JSON</strong>——不是"第一行里有 <code>async: true</code> 就行"。如果 hook 脚本分两次写 <code>printf &#x27;{&quot;async&quot;:&#x27;; sleep 0.01; printf &#x27;true}\n&#x27;</code>，第一波数据没包含 <code>}</code>，<code>firstLineOf(stdout).includes(&#x27;}&#x27;)</code> 返回 false，这次 data event 直接被跳过；等下一批到来时又带着前一批 stdout 累积，JSON parse 失败，async hook 退化成同步。单行 <code>echo &#x27;{&quot;async&quot;:true}&#x27;</code> 是安全的。</p></blockquote>
 <p>进阶版 <code>asyncRewake: true</code>：后台跑 + 退出码 2 时 <strong>唤醒模型</strong>。实现是往 <code>enqueuePendingNotification</code> 扔一条 <code>task-notification</code>，由 proactive 机制在空闲时注入成下一轮的 system-reminder（详见 <a class="chref" href="../ch15/">ch.15</a>）。用场景是长检查脚本——跑着不阻塞，跑完发现问题再唤醒 Claude 修。</p>
-<h3>4.7 输出解析</h3>
+<h3 id="4-7-输出解析">4.7 输出解析<a class="h-anchor" href="#4-7-输出解析" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/utils/hooks.ts:404-408</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (!trimmed.startsWith(&#x27;{&#x27;)) {
   <span class="hl-kw">return</span> { plainText: stdout }
 }
@@ -274,7 +274,7 @@ child.stdin.end()</code></pre></figure>
 <tr><td><code>2</code></td><td>阻塞错误，stderr 给模型看，事件被 block（PreToolUse 拦 tool / Stop 要求再跑一轮 / UserPromptSubmit 擦掉 prompt 等）</td></tr>
 <tr><td>其它</td><td>非阻塞错误，stderr 给用户看，放行</td></tr></tbody></table></div>
 <p><code>WorktreeCreate</code> 例外：任何非零都阻塞（因为 worktree 没创建成功）。</p>
-<h2>5. 响应 JSON 的三层决策通道</h2>
+<h2 id="5-响应-json-的三层决策通道">5. 响应 JSON 的三层决策通道<a class="h-anchor" href="#5-响应-json-的三层决策通道" aria-label="permalink">¶</a></h2>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/types/hooks.ts:50-65（节选）</span>
 <span class="hl-kw">export</span> <span class="hl-kw">const</span> syncHookResponseSchema = lazySchema(() =&gt;
   z.object({
@@ -287,15 +287,15 @@ child.stdin.end()</code></pre></figure>
   })
 )</code></pre></figure>
 <p>三层由粗到细：</p>
-<h3>通道 1：<code>continue: false</code></h3>
+<h3 id="通道-1-continue-false">通道 1：<code>continue: false</code><a class="h-anchor" href="#通道-1-continue-false" aria-label="permalink">¶</a></h3>
 <p>让整个 Agent Loop 停下。Stop hook 最常用这个：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">json</span></figcaption><pre><code class="language-json">{ &quot;continue&quot;: <span class="hl-kw">false</span>, &quot;stopReason&quot;: &quot;CI is red, not letting Claude stop&quot; }</code></pre></figure>
 <p>映射到 <code>HookResult.preventContinuation = true</code>（<code class="ref">hooks.ts:518-522</code>），传回 Agent Loop 后按 <code>reason: &#x27;stop_hook_prevented&#x27;</code> 退出（<code class="ref">query.ts:1278-1280</code>）。</p>
-<h3>通道 2：顶层 <code>decision: &#x27;approve&#x27; | &#x27;block&#x27;</code></h3>
+<h3 id="通道-2-顶层-decision-approve-block">通道 2：顶层 <code>decision: &#x27;approve&#x27; | &#x27;block&#x27;</code><a class="h-anchor" href="#通道-2-顶层-decision-approve-block" aria-label="permalink">¶</a></h3>
 <p>粗粒度放行 / 阻塞：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">json</span></figcaption><pre><code class="language-json">{ &quot;decision&quot;: &quot;block&quot;, &quot;reason&quot;: &quot;git push is banned on Friday&quot; }</code></pre></figure>
 <p>映射成 <code>permissionBehavior = &#x27;deny&#x27;</code> + <code>blockingError</code>（<code class="ref">hooks.ts:525-543</code>）。<code>approve</code> 映射成 <code>&#x27;allow&#x27;</code>。</p>
-<h3>通道 3：<code>hookSpecificOutput</code></h3>
+<h3 id="通道-3-hookspecificoutput">通道 3：<code>hookSpecificOutput</code><a class="h-anchor" href="#通道-3-hookspecificoutput" aria-label="permalink">¶</a></h3>
 <p>事件专属，放最细粒度的控制。PreToolUse 的例子：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">json</span></figcaption><pre><code class="language-json">{
   &quot;hookSpecificOutput&quot;: {
@@ -319,9 +319,9 @@ child.stdin.end()</code></pre></figure>
 </ul>
 <p><strong>事件名校验</strong>：<code>hookSpecificOutput.hookEventName</code> 如果跟触发事件不一致，直接抛错（<code class="ref">hooks.ts:583-590</code>）。防止用户把 PreToolUse 的 JSON 复制到 Stop hook 然后困惑为什么没效果。</p>
 <blockquote><p><strong>文档与源码差异</strong>：官方文档（<a href="https://code.claude.com/docs/en/hooks" rel="noreferrer">https://code.claude.com/docs/en/hooks</a>）在 PreToolUse 的 <code>permissionDecision</code> 里还列了 <code>&quot;defer&quot;</code>（v2.1.89+ 特性，用于可续跑的非交互流程）。本仓库的 <code>processHookJSONOutput</code> 只处理 <code>allow/deny/ask</code>，<code>defer</code> 分支走到 switch default 会直接抛 <code>Unknown hook permissionDecision type</code>（<code class="ref">src/utils/hooks.ts:555-574</code>）。如果你的 hook 用了 <code>defer</code>，要确认客户端版本对齐。</p></blockquote>
-<h2>6. 与权限系统的交界：谁说了算</h2>
+<h2 id="6-与权限系统的交界-谁说了算">6. 与权限系统的交界：谁说了算<a class="h-anchor" href="#6-与权限系统的交界-谁说了算" aria-label="permalink">¶</a></h2>
 <p>这一节是最需要读者看清的地方——<a class="chref" href="../ch09/">ch.09</a> 讲了权限判定管线，本章讲 hook 怎么插进去。</p>
-<h3>6.1 执行顺序</h3>
+<h3 id="6-1-执行顺序">6.1 执行顺序<a class="h-anchor" href="#6-1-执行顺序" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/services/tools/toolExecution.ts:800-862（节选）</span>
 <span class="hl-kw">for</span> <span class="hl-kw">await</span> (<span class="hl-kw">const</span> result <span class="hl-kw">of</span> runPreToolUseHooks(...)) {
   <span class="hl-cm">// 收集 hookPermissionResult</span>
@@ -333,7 +333,7 @@ child.stdin.end()</code></pre></figure>
 )
 <span class="hl-kw">const</span> permissionDecision = resolved.decision</code></pre></figure>
 <p><strong>PreToolUse hook 先跑完</strong>，再把 hook 的判定（如果有）喂给 <code>resolveHookPermissionDecision</code>。hook 在权限判定<strong>之前</strong>。</p>
-<h3>6.2 非对称的决策权</h3>
+<h3 id="6-2-非对称的决策权">6.2 非对称的决策权<a class="h-anchor" href="#6-2-非对称的决策权" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/services/tools/toolHooks.ts:347-406（节选）</span>
 <span class="hl-kw">if</span> (hookPermissionResult?.behavior === &#x27;allow&#x27;) {
   <span class="hl-kw">const</span> hookInput = hookPermissionResult.updatedInput ?? input
@@ -363,7 +363,7 @@ child.stdin.end()</code></pre></figure>
 <li><strong>hook ask</strong>：走正常 <code>canUseTool</code> 链路，但 hook 的 <code>message</code> 当作 dialog 标题显示。</li>
 </ol>
 <p>设计取舍：<strong>用户可以用 hook 放松权限，不能用 hook 绕过 managed 的 deny</strong>。IT 部署 managed 层写了 <code>Bash(curl *)</code> deny，用户写 <code>PreToolUse</code> hook 强行 allow 也无效。这是护栏。</p>
-<h3>6.3 <code>updatedInput</code> 的特别路径</h3>
+<h3 id="6-3-updatedinput-的特别路径">6.3 <code>updatedInput</code> 的特别路径<a class="h-anchor" href="#6-3-updatedinput-的特别路径" aria-label="permalink">¶</a></h3>
 <p>hook 可以只改 tool 参数但<strong>不做权限决策</strong>。比如"给所有 Bash command 前置加 <code>nice -n 10</code>"：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">json</span></figcaption><pre><code class="language-json">{ &quot;hookSpecificOutput&quot;: {
     &quot;hookEventName&quot;: &quot;PreToolUse&quot;,
@@ -374,9 +374,9 @@ child.stdin.end()</code></pre></figure>
   processedInput = result.updatedInput
   <span class="hl-kw">break</span></code></pre></figure>
 <p><code>processedInput</code> 被替换成改过的 input，然后<strong>继续走正常权限链路</strong>——因为 hook 没表态。这让 hook 能只做"改参数"而不干预权限，保持职责单一。</p>
-<h2>7. Stop hook：Agent Loop 的 pivot</h2>
+<h2 id="7-stop-hook-agent-loop-的-pivot">7. Stop hook：Agent Loop 的 pivot<a class="h-anchor" href="#7-stop-hook-agent-loop-的-pivot" aria-label="permalink">¶</a></h2>
 <p>为什么 <code class="ref">src/query/stopHooks.ts</code> 单独抽一个文件——不是因为 Stop hook 特别复杂，而是因为它站在了 Agent Loop 的战略点上。</p>
-<h3>7.1 触发位置</h3>
+<h3 id="7-1-触发位置">7.1 触发位置<a class="h-anchor" href="#7-1-触发位置" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/query.ts:1267-1306（节选）</span>
 <span class="hl-kw">const</span> stopHookResult = <span class="hl-kw">yield</span>* handleStopHooks(
   messagesForQuery, assistantMessages, systemPrompt,
@@ -401,7 +401,7 @@ child.stdin.end()</code></pre></figure>
 <li><code>blockingErrors</code> 非空 → 消息 append 回 <code>messagesForQuery</code>，再进一轮（相当于告诉模型"你还没做完"）</li>
 <li>都没有 → 正常退出</li>
 </ul>
-<h3>7.2 搭便车的后台任务</h3>
+<h3 id="7-2-搭便车的后台任务">7.2 搭便车的后台任务<a class="h-anchor" href="#7-2-搭便车的后台任务" aria-label="permalink">¶</a></h3>
 <p><code>handleStopHooks</code>（<code class="ref">src/query/stopHooks.ts:65</code>）不只跑 Stop hook。它借"一轮结束"这个 pivot，fire-and-forget 触发了一串任务：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/query/stopHooks.ts:137-157（节选）</span>
 <span class="hl-kw">if</span> (!isEnvDefinedFalsy(process.env.<span class="hl-type">CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION</span>)) {
@@ -415,7 +415,7 @@ child.stdin.end()</code></pre></figure>
 }</code></pre></figure>
 <p>以及 <code>saveCacheSafeParams</code>（给 <code>/btw</code> 斜杠命令用，<code class="ref">stopHooks.ts:94-98</code>）、<code>jobClassifierModule.classifyAndWriteState</code>（模板任务分类，<code class="ref">stopHooks.ts:108-132</code>）、<code>cleanupComputerUseAfterTurn</code>（Computer Use 会话清理，<code class="ref">stopHooks.ts:164-173</code>）。</p>
 <p><strong>设计理由</strong>：每一轮结束都是做后台工作的天然 pivot。把它们都挂在这里避免散落在 Agent Loop 各处。Stop hook 本身反而成了这个 pivot 里的一件事。</p>
-<h3>7.3 防递归：<code>stop_hook_active</code></h3>
+<h3 id="7-3-防递归-stop_hook_active">7.3 防递归：<code>stop_hook_active</code><a class="h-anchor" href="#7-3-防递归-stop_hook_active" aria-label="permalink">¶</a></h3>
 <p>如果 Stop hook 让 Loop 再跑一轮，新的一轮结束又会触发 Stop hook——无限递归的素材。防护是透传一个 flag：</p>
 <figure class="codeblock"><figcaption><span class="file">src/utils/hooks.ts:3683</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">hook_event_name: &#x27;<span class="hl-type">Stop</span>&#x27;,
 stop_hook_active: stopHookActive,   <span class="hl-cm">// 从 query.ts:1275 传入</span></code></pre></figure>
@@ -423,14 +423,14 @@ stop_hook_active: stopHookActive,   <span class="hl-cm">// 从 query.ts:1275 传
 <figure class="codeblock"><figcaption><span></span><span class="lang">bash</span></figcaption><pre><code class="language-bash">if [ &quot;$(jq -r .stop_hook_active)&quot; = &quot;true&quot; ]; then
   exit 0  # 已经被 block 过一次了，这次放行
 fi</code></pre></figure>
-<h3>7.4 API 错误分流</h3>
+<h3 id="7-4-api-错误分流">7.4 API 错误分流<a class="h-anchor" href="#7-4-api-错误分流" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/query.ts:1262-1265</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">if</span> (lastMessage?.isApiErrorMessage) {
   <span class="hl-kw">void</span> executeStopFailureHooks(lastMessage, toolUseContext)
   <span class="hl-kw">return</span> { reason: &#x27;completed&#x27; }
 }</code></pre></figure>
 <p>最后一条是 API 错误（rate limit / auth fail / billing）时走 <code>executeStopFailureHooks</code>（不同事件），不走普通 Stop。注释写得很明确："Error → hook blocking → retry → error → … 的死螺旋"。StopFailure hook 是 fire-and-forget，不看返回也不 block，只通知用户。</p>
-<h2>8. 配置合并：5 个来源</h2>
-<h3>8.1 SOURCES 顺序</h3>
+<h2 id="8-配置合并-5-个来源">8. 配置合并：5 个来源<a class="h-anchor" href="#8-配置合并-5-个来源" aria-label="permalink">¶</a></h2>
+<h3 id="8-1-sources-顺序">8.1 SOURCES 顺序<a class="h-anchor" href="#8-1-sources-顺序" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/utils/settings/constants.ts:7-22</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">SETTING_SOURCES</span> = [
   &#x27;userSettings&#x27;, &#x27;projectSettings&#x27;, &#x27;localSettings&#x27;,
   &#x27;flagSettings&#x27;, &#x27;policySettings&#x27;,
@@ -448,7 +448,7 @@ fi</code></pre></figure>
 }</code></pre></figure>
 <p>数组走 <code>mergeArrays</code>（concat + dedup），标量走 lodash <code>mergeWith</code> 覆盖。hooks 字段在 schema 里是 <code>Partial&lt;Record&lt;HookEvent, HookMatcher[]&gt;&gt;</code>——事件名是标量 key，matcher 数组会被 concat。</p>
 <p>结果：user 层和 project 层给同一个 <code>PreToolUse</code> 配了不同 matcher，<strong>两边都跑</strong>，不是 project 盖 user。</p>
-<h3>8.2 Kill switch</h3>
+<h3 id="8-2-kill-switch">8.2 Kill switch<a class="h-anchor" href="#8-2-kill-switch" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/hooks/hooksConfigSnapshot.ts:18-53（节选）</span>
 <span class="hl-kw">function</span> getHooksFromAllowedSources(): <span class="hl-type">HooksSettings</span> {
   <span class="hl-kw">const</span> policySettings = settingsModule.getSettingsForSource(&#x27;policySettings&#x27;)
@@ -468,18 +468,18 @@ fi</code></pre></figure>
 </ol>
 <p>管理员的安全护栏：<strong>用户能关自己的 hook，但关不掉 IT 部署的 hook</strong>。</p>
 <p>注意第 4 条的副作用：非 policy 层写 <code>disableAllHooks: true</code> 会让 <code>shouldAllowManagedHooksOnly()</code> 返回 <code>true</code>（<code class="ref">hooksConfigSnapshot.ts:62-76</code>），下游 analytics / telemetry 里这次会话的 <code>allowManagedHooksOnly</code> 字段也变 true。你在用户 settings 里关 hook，回头看管理面板数据，这个会话会被分到"仅 managed"桶里。</p>
-<h3>8.3 快照：防 ABA</h3>
+<h3 id="8-3-快照-防-aba">8.3 快照：防 ABA<a class="h-anchor" href="#8-3-快照-防-aba" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/utils/hooks/hooksConfigSnapshot.ts:95-97</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">function</span> captureHooksConfigSnapshot(): <span class="hl-kw">void</span> {
   initialHooksConfig = getHooksFromAllowedSources()
 }</code></pre></figure>
 <p>启动时拍一次快照，<code>/hooks</code> UI 改了才 <code>updateHooksConfigSnapshot()</code> 重拍。原因：如果 hook 执行到一半用户在外部编辑器把 <code class="ref">settings.json</code> 改掉，下一次 <code>getMatchingHooks</code> 拿到的是新配置——同一次 PreToolUse 的前后 hook 看到不同的 config 是诡异的。快照锁死"一次会话内的 hook 集合"。</p>
-<h2>9. 内置事件源 vs 用户配置 hook</h2>
+<h2 id="9-内置事件源-vs-用户配置-hook">9. 内置事件源 vs 用户配置 hook<a class="h-anchor" href="#9-内置事件源-vs-用户配置-hook" aria-label="permalink">¶</a></h2>
 <p>这里容易混，单独开一节厘清。</p>
-<h3>9.1 <code>src/hooks/notifs/</code> 是 React hook 不是 Notification 消费者</h3>
+<h3 id="9-1-src-hooks-notifs-是-react-hook-不是-notification-消费者">9.1 <code>src/hooks/notifs/</code> 是 React hook 不是 Notification 消费者<a class="h-anchor" href="#9-1-src-hooks-notifs-是-react-hook-不是-notification-消费者" aria-label="permalink">¶</a></h3>
 <p><code>src/hooks/notifs/</code> 下全是 <code>use*.ts(x)</code> React hook，import <code>useEffect</code>、<code>useNotifications</code>——管的是终端 UI 里的通知条（"update available" / "MCP disconnected" 等）。这些<strong>不消费 Notification shell hook 事件</strong>，是 UI 状态机的一部分。属于 <a class="chref" href="../ch21/">ch.21</a>。</p>
-<h3>9.2 <code class="ref">src/costHook.ts</code> 是 React hook</h3>
+<h3 id="9-2-src-costhook-ts-是-react-hook">9.2 <code class="ref">src/costHook.ts</code> 是 React hook<a class="h-anchor" href="#9-2-src-costhook-ts-是-react-hook" aria-label="permalink">¶</a></h3>
 <p>就一个 <code>useCostSummary</code>，<code>process.on(&#x27;exit&#x27;, ...)</code> 里打印成本。名字里的 "Hook" 指 React hook。跟本章主题无关，属于 <a class="chref" href="../ch22/">ch.22</a>。</p>
-<h3>9.3 <code>useNotifyAfterTimeout</code> 是 Notification <strong>发射器</strong></h3>
+<h3 id="9-3-usenotifyaftertimeout-是-notification-发射器">9.3 <code>useNotifyAfterTimeout</code> 是 Notification <strong>发射器</strong><a class="h-anchor" href="#9-3-usenotifyaftertimeout-是-notification-发射器" aria-label="permalink">¶</a></h3>
 <figure class="codeblock"><figcaption><span class="file">src/hooks/useNotifyAfterTimeout.ts:53-62</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">useEffect(() =&gt; {
   <span class="hl-kw">let</span> hasNotified = <span class="hl-kw">false</span>
   <span class="hl-kw">const</span> timer = setInterval(() =&gt; {
@@ -506,7 +506,7 @@ fi</code></pre></figure>
 <li><code class="ref">src/services/mcp/elicitationHandler.ts</code> 几处 MCP elicitation 节点（<code>:183 / :283 / :298 / :307</code>）</li>
 </ul>
 <p>这些位置是"谁在触发 Notification 事件"，不是"Notification 事件能做什么"。用户配置的 Notification hook 才是消费者。</p>
-<h3>9.4 内部 callback hook</h3>
+<h3 id="9-4-内部-callback-hook">9.4 内部 callback hook<a class="h-anchor" href="#9-4-内部-callback-hook" aria-label="permalink">¶</a></h3>
 <p>除了用户的 command / prompt / agent / http hook，Claude Code 内部还注册了 <code>type: &#x27;callback&#x27;</code> 的 hook——在代码里直接写回调，不过 settings.json。典型例子在 <code class="ref">src/types/sessionFileAccessHooks.ts</code>（PostToolUse 回调用于分析 session 的文件访问模式）。</p>
 <p>这些 callback hook 走跟用户 hook 一样的 <code>executeHooks</code> 通道，但有快路径优化：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/utils/hooks.ts:2036-2067（节选）</span>
@@ -524,7 +524,7 @@ fi</code></pre></figure>
 }</code></pre></figure>
 <p>注释说微基准快 70%。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/types/hooks.ts:224-225</code>）：标了 <code>internal: true</code> 的 callback hook <strong>不上报 <code>tengu_run_hook</code> analytics</strong>，避免 <code>sessionFileAccessHooks</code> / <code>attributionHooks</code> 这类 SDK 内部 hook 污染统计。实际效果：你在分析面板里看到的 hook 执行次数只含用户配置的那部分，内部 callback 被隐藏了。debug 时若疑惑"这个 PostToolUse 事件明明有回调跑过，为什么没计数"，要记得这条规则。SDK 侧怎么注入这类 callback 见 <a class="chref" href="../ch23/">ch.23</a>。</p></blockquote>
-<h2>10. 设计取舍</h2>
+<h2 id="10-设计取舍">10. 设计取舍<a class="h-anchor" href="#10-设计取舍" aria-label="permalink">¶</a></h2>
 <p>按"这样做的成本 vs 收益"列，不是夸。</p>
 <ul>
 <li><strong>JSON-over-stdio + exit code 双通道</strong>。成本：协议面大，<code>syncHookResponseSchema</code> 里有十几个事件各自的 <code>hookSpecificOutput</code> 形态，写完整 hook 要查文档。收益：简单场景 <code>exit 2</code> 一行搞定，复杂场景 JSON 给够粒度；跟 git hooks 的"只有 exit code"相比能表达更多。</li>
@@ -536,7 +536,7 @@ fi</code></pre></figure>
 <li><strong>配置快照（<code>captureHooksConfigSnapshot</code>）</strong>。成本：<code>/hooks</code> UI 改配置要额外调 <code>update</code> 重拍。收益：防运行中 settings.json 被外部编辑器改掉导致同一轮前后看到不同 hook。</li>
 <li><strong>信任门集中判</strong>。成本：每个 hook 入口都得调 <code>shouldSkipHookDueToTrust</code>。收益：注释里列的两个漏洞（SessionEnd / SubagentStop 早于 trust 跑）都堵在一个点，防回归。</li>
 </ul>
-<h2>11. 可迁移的点</h2>
+<h2 id="11-可迁移的点">11. 可迁移的点<a class="h-anchor" href="#11-可迁移的点" aria-label="permalink">¶</a></h2>
 <p>读者可以带走：</p>
 <ol>
 <li><strong>用 stdin/stdout JSON + exit code 做"用户可编程事件回调"</strong>。比写 SDK 插件简单得多——用户只要能写 shell 脚本就能接。很多工具可以这么做而没做：lint runner 加一个 pre-lint hook、包管理器加一个 pre-install hook。</li>

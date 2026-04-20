@@ -39,7 +39,7 @@
 
 <article class="article">
   <div class="prose">
-<h2>20.1 用户看到什么</h2>
+<h2 id="20-1-用户看到什么">20.1 用户看到什么<a class="h-anchor" href="#20-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 的输入框表面上是一个普通的终端 prompt，但它背后有三套平行的"输入翻译层"：</p>
 <ul>
 <li>按 <code>Ctrl+T</code> 显示 todo，按 <code>Ctrl+O</code> 切换 transcript —— 走的是<strong>键位系统</strong>。在 <code class="ref">~/.claude/keybindings.json</code> 改一行就能换键。</li>
@@ -47,12 +47,12 @@
 <li><code>/voice</code> 打开后，按住 <code>Space</code> 说话，一小段波形在 footer 亮起，松开后文字插到光标处 —— 走的是 <strong>voice 通路</strong>：音频采集 → voice_stream WebSocket STT → 写回输入框。</li>
 </ul>
 <p>这三件事挨着讲，是因为它们都在"物理输入（按键、音波）到应用接收一个语义动作"之间做翻译。要讲透的不是每件的全貌，而是它们共享什么（事件总线）、各自取什么舍什么（vim 故意不走键位系统，voice 故意借用键位系统），以及有什么可以搬走的抽象。</p>
-<h2>20.2 为什么挑这个设计出来讲</h2>
+<h2 id="20-2-为什么挑这个设计出来讲">20.2 为什么挑这个设计出来讲<a class="h-anchor" href="#20-2-为什么挑这个设计出来讲" aria-label="permalink">¶</a></h2>
 <p>一句话：<strong>把"键盘"从组件里抽出来，抽成一张带作用域的动作表</strong>。</p>
 <p>多数终端应用把 <code>useInput</code> 散在组件里 —— Ink 的官方例子也是。键位系统的做法正相反：业务组件不监听按键，只声明 <code>useKeybinding(&#x27;app:toggleTodos&#x27;, handler)</code>；键位本身（<code>ctrl+t</code>）由一个 JSON 文件或默认表决定，用户可改。键位表跟组件树并存，模态打开 → 推一个 context 上堆栈 → 相关 binding 优先。模态关闭 → 自动回退。</p>
 <p>这个抽象跑通后，用户自定义键位几乎零成本，vim 可以选择性接入，voice 甚至可以"读键位表当配置源"自己写 hold 检测 —— 三种截然不同的输入需求共用一张表。本章把这三层拆开讲，每层讲到够用的深度，然后在 20.6 合流。</p>
-<h2>20.3 键位系统</h2>
-<h3>20.3.1 三个数据类型</h3>
+<h2 id="20-3-键位系统">20.3 键位系统<a class="h-anchor" href="#20-3-键位系统" aria-label="permalink">¶</a></h2>
+<h3 id="20-3-1-三个数据类型">20.3.1 三个数据类型<a class="h-anchor" href="#20-3-1-三个数据类型" aria-label="permalink">¶</a></h3>
 <p>核心类型只有三个（<code class="ref">src/keybindings/parser.ts:191-203</code> 的 <code>parseBindings</code> 返回的对象形状）：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// 根据 parser.ts / resolver.ts 的实际用法组合</span>
 <span class="hl-kw">type</span> <span class="hl-type">ParsedKeystroke</span> = {
@@ -72,7 +72,7 @@
 <p>[^1]: <code class="ref">src/keybindings/types.ts</code> 里同名类型的字段与 resolver 实际用到的字段有出入（types.ts 只有 17 行，像是 restoration 裁切过度）。本章以 <code class="ref">parser.ts:191-203</code> 产生的实际对象形状为准。</p>
 <p>一条 binding 是"按什么键（chord） → 在什么场景下（context） → 触发什么语义（action）"。<strong>action 是 string 枚举</strong>，不是函数引用 —— 这点决定了整个体系。binding 可以存在 JSON 文件里，组件负责"拿 action 名字找函数"；<code class="ref">schema.ts</code> 里的 <code>KEYBINDING_ACTIONS</code> 就是这份枚举（约 80 个，命名空间前缀如 <code>app:</code> / <code>chat:</code> / <code>voice:</code> 区分归属）。</p>
 <p>chord 是 key 的数组。<code>ctrl+k</code> 是长度 1 的 chord，<code>ctrl+x ctrl+k</code> 是长度 2。解析时空格分隔 chord、<code>+</code> 分隔 modifier（<code class="ref">parser.ts:80-83</code>）。</p>
-<h3>20.3.2 context 列表</h3>
+<h3 id="20-3-2-context-列表">20.3.2 context 列表<a class="h-anchor" href="#20-3-2-context-列表" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/keybindings/schema.ts:12-32</code> 列出 18 个 context：</p>
 <figure class="codeblock"><figcaption><span class="file">src/keybindings/schema.ts:12-32</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">const</span> <span class="hl-type">KEYBINDING_CONTEXTS</span> = [
   &#x27;<span class="hl-type">Global</span>&#x27;, &#x27;<span class="hl-type">Chat</span>&#x27;, &#x27;<span class="hl-type">Autocomplete</span>&#x27;, &#x27;<span class="hl-type">Confirmation</span>&#x27;, &#x27;<span class="hl-type">Help</span>&#x27;,
@@ -82,7 +82,7 @@
 ] <span class="hl-kw">as</span> <span class="hl-kw">const</span></code></pre></figure>
 <p><code class="ref">defaultBindings.ts</code> 里另有一个 <code>Scroll</code> block（<code class="ref">src/keybindings/defaultBindings.ts:196-213</code>），schema 没列。官方文档列了 20 个（加 <code>Scroll</code> 和 <code>Doctor</code>）[^2]。这是常见的"代码、schema、文档三方轻微漂移"现象，工程上不影响运行（硬编码的 Scroll block 照样生效），但提醒读者 schema 不是权威。</p>
 <p>[^2]: <a href="https://code.claude.com/docs/en/keybindings" rel="noreferrer">https://code.claude.com/docs/en/keybindings</a>，访问于 2026-04-19。</p>
-<h3>20.3.3 默认绑定 + 用户覆盖的合并规则</h3>
+<h3 id="20-3-3-默认绑定-用户覆盖的合并规则">20.3.3 默认绑定 + 用户覆盖的合并规则<a class="h-anchor" href="#20-3-3-默认绑定-用户覆盖的合并规则" aria-label="permalink">¶</a></h3>
 <p>默认绑定写死在代码里（<code class="ref">src/keybindings/defaultBindings.ts</code>，340 行，按 context 分块）。用户绑定从 <code class="ref">~/.claude/keybindings.json</code> 读。合并规则只有一行：</p>
 <figure class="codeblock"><figcaption><span class="file">src/keybindings/loadUserBindings.ts:196-197</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// User bindings come after defaults, so they override</span>
 <span class="hl-kw">const</span> mergedBindings = [...defaultBindings, ...userParsed]</code></pre></figure>
@@ -94,7 +94,7 @@
 <li><strong><code>/keybindings</code> 命令也受同一 gate 控制</strong>（<code class="ref">src/commands/keybindings/index.ts:6-8</code>），非启用用户看不到该命令。</li>
 </ul>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/commands/keybindings/index.ts:6-8</code>）：<code>/keybindings</code> 命令的 <code>isEnabled: () =&gt; isKeybindingCustomizationEnabled()</code> 直接挂在 GrowthBook flag 上。若你本地 <code>tengu_keybinding_customization_release</code> 没 ramp 到，斜杠命令 autocomplete 里<strong>连这个名字都查不到</strong>，不是功能报错，是"产品上不存在"。官方 blog 说 v2.1.18 GA，但运行期仍看 flag —— 安装了新版但 flag 没 ramp，用户依旧用不上。</p></blockquote>
-<h3>20.3.4 Chord 的表达：空格分隔，用 ref 存 pending</h3>
+<h3 id="20-3-4-chord-的表达-空格分隔-用-ref-存-pending">20.3.4 Chord 的表达：空格分隔，用 ref 存 pending<a class="h-anchor" href="#20-3-4-chord-的表达-空格分隔-用-ref-存-pending" aria-label="permalink">¶</a></h3>
 <p>chord 的状态机在 <code class="ref">src/keybindings/resolver.ts:166-244</code>。用户按下一个键时：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">当前 chord = pending + 当前键
 1. 查有没有&quot;更长的 chord 以这个前缀开头&quot;且未被 null-unbind
@@ -121,7 +121,7 @@
   <span class="hl-kw">if</span> (action !== <span class="hl-kw">null</span>) { hasLongerChords = <span class="hl-kw">true</span>; <span class="hl-kw">break</span> }
 }</code></pre></figure>
 <p>含义：如果用户把所有以 <code>ctrl+x</code> 开头的 chord 都 <code>null</code> 掉，<code>hasLongerChords</code> 会是 false，<code>ctrl+x</code> 就不进入 chord-wait 状态，可以当成单键绑定使用。但只 null 一部分，剩下的仍会让 <code>ctrl+x</code> 挂起 1 秒。文档里专门有一节描述这个行为[^2]。</p>
-<h3>20.3.5 作用域堆栈</h3>
+<h3 id="20-3-5-作用域堆栈">20.3.5 作用域堆栈<a class="h-anchor" href="#20-3-5-作用域堆栈" aria-label="permalink">¶</a></h3>
 <p><code class="ref">useKeybinding.ts:52-62</code> 构造解析时用的 context 列表：</p>
 <figure class="codeblock"><figcaption><span class="file">src/keybindings/useKeybinding.ts:52-60</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> contextsToCheck: <span class="hl-type">KeybindingContextName</span>[] = [
   ...keybindingContext.activeContexts,
@@ -141,7 +141,7 @@
 }</code></pre></figure>
 <p>作用域堆栈的价值在"同一 chord 在不同 UI 下走不同 action"的场景里体现最清楚。<code>ctrl+t</code> 在 Global 是切换 todo 列表（<code class="ref">defaultBindings.ts:43</code>），在 ThemePicker 里是切换 syntax highlighting（<code class="ref">defaultBindings.ts:192</code>）。ThemePicker 一打开就 <code>useRegisterKeybindingContext(&#x27;ThemePicker&#x27;)</code>，该 context 会在 <code>activeContexts</code> 里，解析时排在 <code>Global</code> 前面命中。ThemePicker 卸载 → 自动 unregister → <code>ctrl+t</code> 又是 toggleTodos。</p>
 <p>替代方案是"先挂的 useInput 先响应"（Ink 本来的约定）。作用域堆栈的好处：<strong>UI 组件控制 binding 优先级靠的是生命周期，不是 useInput 的注册顺序</strong>。顺序依赖在重 render 下很脆弱。</p>
-<h3>20.3.6 两种注册 + 一个根节点 interceptor</h3>
+<h3 id="20-3-6-两种注册-一个根节点-interceptor">20.3.6 两种注册 + 一个根节点 interceptor<a class="h-anchor" href="#20-3-6-两种注册-一个根节点-interceptor" aria-label="permalink">¶</a></h3>
 <p>业务组件通过两个 hook 注册 handler：</p>
 <figure class="codeblock"><figcaption><span class="file">src/keybindings/useKeybinding.ts:33-46</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">useKeybinding(&#x27;app:toggleTodos&#x27;, handler, { context: &#x27;<span class="hl-type">Global</span>&#x27; })
 
@@ -184,13 +184,13 @@ useKeybindings({
 <li><strong>chord_started</strong>：吃掉事件，避免单键匹配把第一步当普通字符输入写进 text buffer。</li>
 </ul>
 <p>这套双层设计的代价是两次 resolve，收益是 pending 状态集中管理、unbound 能可靠吃键、chord 的第二键不会丢。</p>
-<h3>20.3.7 保留键和校验</h3>
+<h3 id="20-3-7-保留键和校验">20.3.7 保留键和校验<a class="h-anchor" href="#20-3-7-保留键和校验" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/keybindings/reservedShortcuts.ts:16-33</code> 定义了三个硬禁键：<code>Ctrl+C</code>（interrupt）、<code>Ctrl+D</code>（exit）、<code>Ctrl+M</code>（= Enter，终端二者编码一致）。它们在 <code class="ref">defaultBindings.ts</code> 里仍有 binding 让 resolver 找得到，但 <code class="ref">validate.ts</code> 会拒绝用户覆盖。</p>
 <p>另一类是平台级警告：<code>Ctrl+Z</code>、macOS 的 <code>Cmd+C/V/X/Q/W/Tab/Space</code>（<code class="ref">reservedShortcuts.ts:43-67</code>）—— 给 warning，不阻止。</p>
 <p>还有一个值得一提的校验：<code class="ref">validate.ts</code> 里的 <code>checkDuplicateKeysInJson</code> 对<strong>原始 JSON 文本</strong>做重复键检测。原因是 <code>JSON.parse</code> 会静默丢弃先出现的重复键，用户如果写了：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">json</span></figcaption><pre><code class="language-json">{ &quot;bindings&quot;: { &quot;ctrl+k&quot;: &quot;action1&quot;, &quot;ctrl+k&quot;: &quot;action2&quot; } }</code></pre></figure>
 <p><code>JSON.parse</code> 会给你 <code>action2</code>，<code>action1</code> 无声消失。纯 parse 后的对象无法复原这种错误，只能扫原文。</p>
-<h3>20.3.8 命令型 binding</h3>
+<h3 id="20-3-8-命令型-binding">20.3.8 命令型 binding<a class="h-anchor" href="#20-3-8-命令型-binding" aria-label="permalink">¶</a></h3>
 <p>除了 <code>app:toggleTodos</code> 这样的 action 字符串，value 还可以是 <code>command:&lt;name&gt;</code>（<code class="ref">schema.ts:193-198</code>）。例如用户在 <code class="ref">keybindings.json</code> 里写：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">json</span></figcaption><pre><code class="language-json">{ &quot;context&quot;: &quot;Chat&quot;, &quot;bindings&quot;: { &quot;ctrl+alt+c&quot;: &quot;command:commit&quot; } }</code></pre></figure>
 <p>按下组合键时提交 <code>/commit</code> 斜杠命令。实现是扫一遍 bindings 找以 <code>command:</code> 开头的 action，建 handler map，每个 handler 体里 <code>onSubmit(&#x27;/&#x27; + name, ...)</code>：</p>
@@ -201,11 +201,11 @@ useKeybindings({
 }
 useKeybindings(handlers, { context: &#x27;<span class="hl-type">Chat</span>&#x27;, isActive: ... })</code></pre></figure>
 <p>这是"让 binding 绕过组件触发任意命令"的口子。配合 plugin 和 skill，用户可以把任何命令挂到快捷键上。</p>
-<h2>20.4 Vim 模式</h2>
-<h3>20.4.1 为什么不嵌入真 vim</h3>
+<h2 id="20-4-vim-模式">20.4 Vim 模式<a class="h-anchor" href="#20-4-vim-模式" aria-label="permalink">¶</a></h2>
+<h3 id="20-4-1-为什么不嵌入真-vim">20.4.1 为什么不嵌入真 vim<a class="h-anchor" href="#20-4-1-为什么不嵌入真-vim" aria-label="permalink">¶</a></h3>
 <p>目标不是编辑文件，是编辑一行到多行的 prompt。字符集是 <code>string</code>，光标是一个 offset（<code>useTextInput</code> 暴露的接口，详见 <a class="chref" href="../ch21/">ch.21</a> §21.8）。真 vim 的 buffer 模型、寄存器、ex 命令、插件生态在这里都是负担。Claude Code 选择实现一个 motion 子集 + operator 子集 + text object 子集，总计约 65 个可组合 token，不到 200 行状态转移代码。</p>
 <p>Grep 证实：<strong>只有 INSERT 和 NORMAL，没有 Visual 模式</strong>。<code>visualMode|Visual</code> 在 <code>src/vim/</code> 下零命中。Visual 模式在单行 prompt 场景里代价高收益低（选区 UI、shift+方向键已经能覆盖多数选择需求），砍掉是合理取舍。</p>
-<h3>20.4.2 状态机：两层嵌套</h3>
+<h3 id="20-4-2-状态机-两层嵌套">20.4.2 状态机：两层嵌套<a class="h-anchor" href="#20-4-2-状态机-两层嵌套" aria-label="permalink">¶</a></h3>
 <p>主状态只有两个（<code class="ref">src/vim/types.ts:49-51</code>）：</p>
 <figure class="codeblock"><figcaption><span class="file">src/vim/types.ts:49-51</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">export</span> <span class="hl-kw">type</span> <span class="hl-type">VimState</span> =
   | { mode: &#x27;<span class="hl-type">INSERT</span>&#x27;; insertedText: string }
@@ -232,7 +232,7 @@ useKeybindings(handlers, { context: &#x27;<span class="hl-type">Chat</span>&#x27
 <li><code>&gt;&gt;</code>/<code>&lt;&lt;</code> 缩进</li>
 </ul>
 <p>转移表在 <code class="ref">src/vim/transitions.ts</code> 里，每个 <code>type</code> 对应一个 <code>fromXxx</code> 函数，用 TypeScript 的 <code>switch</code> + <code>type</code> discriminator 强制穷举（<code class="ref">transitions.ts:59-88</code>）。</p>
-<h3>20.4.3 实际支持的操作清单</h3>
+<h3 id="20-4-3-实际支持的操作清单">20.4.3 实际支持的操作清单<a class="h-anchor" href="#20-4-3-实际支持的操作清单" aria-label="permalink">¶</a></h3>
 <p>不写 vim 教程，只列仓里有什么（从源码核实）：</p>
 <p><strong>Operators（3）</strong>：<code>d</code> delete、<code>c</code> change、<code>y</code> yank。<code class="ref">src/vim/types.ts:125-129</code>。这是仓里 operator 一层的全集。</p>
 <p><strong>Simple motions（~17）</strong>：<code>h l j k</code>、<code>w e b</code>、<code>W E B</code>、<code>0 ^ $</code>、<code>G</code>、<code>gg</code>、<code>gj gk</code>。其中 <code>gj/gk</code> 区分"屏幕行"和"逻辑行"，在 <code class="ref">motions.ts:40-43</code> 直接映射到 Cursor 的不同方法。</p>
@@ -241,7 +241,7 @@ useKeybindings(handlers, { context: &#x27;<span class="hl-type">Chat</span>&#x27
 <p><strong>Line-wise 复合</strong>：<code>dd cc yy</code>（在 <code>fromOperator</code> 里判 <code>input === state.op[0]</code>，<code class="ref">transitions.ts:288-291</code>）。</p>
 <p><strong>Text objects（9 组 × 2 scope）</strong>：<code>w W &quot; &#x27; \</code> ( [ { &lt;<code>（括号开闭形式等价）配 </code>i<code>（inner）/</code>a<code>（around）。</code>src/vim/types.ts:153-180<code>、</code>src/vim/textObjects.ts:19-33`。</p>
 <p>总 token 约 65 个，组合后覆盖了大部分日常编辑动作。没有的：Visual 模式、多寄存器（只有一个默认寄存器）、宏（<code>q</code>）、<code>:</code> ex 命令、search（<code>/</code>、<code>?</code> 留给 help）、mark（<code>m</code>）。</p>
-<h3>20.4.4 dot-repeat 的实现</h3>
+<h3 id="20-4-4-dot-repeat-的实现">20.4.4 dot-repeat 的实现<a class="h-anchor" href="#20-4-4-dot-repeat-的实现" aria-label="permalink">¶</a></h3>
 <p><code>RecordedChange</code> 是一个 discriminated union（<code class="ref">src/vim/types.ts:92-119</code>），11 种结构化变化。每次执行 operator 时 <code>ctx.recordChange(change)</code> 把本次动作的参数存进去：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/vim/operators.ts:52-54 （节选）</span>
 applyOperator(op, range.<span class="hl-kw">from</span>, range.to, ctx, range.linewise)
@@ -266,7 +266,7 @@ ctx.recordChange({ <span class="hl-kw">type</span>: &#x27;operator&#x27;, op, mo
 }</code></pre></figure>
 <p>INSERT 的记录路径：<code class="ref">useVimInput.ts:209-229</code> 累加 <code>insertedText</code>，<code>Esc</code> 时（<code class="ref">useVimInput.ts:62-68</code>）把整串存为 <code>{ type: &#x27;insert&#x27;, text }</code>。注意这是一个简化实现 —— 如果用户在 INSERT 里按方向键/paste/Enter，<code>insertedText</code> 不跟进（只跟进了 backspace），dot-repeat 在复杂 INSERT 下不完全等价真 vim。对 single-line prompt 场景够用。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/hooks/useVimInput.ts:209-229</code>）：<code>.</code> dot-repeat 对 INSERT 里的<strong>方向键、粘贴、Enter 换行</strong>完全不追踪。写 <code>i hello&lt;Left&gt;&lt;Left&gt;X&lt;Esc&gt;</code> 然后 <code>.</code>，真 vim 会重放 <code>hello&lt;Left&gt;&lt;Left&gt;X</code>，本实现只会重放最后一次 operator 或一段连续的 <code>insert</code> 字符。单行 prompt 里用户基本不会复杂编辑，这个简化无感；但若有人把 Claude Code 当通用编辑器用，dot-repeat 行为就与肌肉记忆不符。</p></blockquote>
-<h3>20.4.5 与 useTextInput 的边界</h3>
+<h3 id="20-4-5-与-usetextinput-的边界">20.4.5 与 useTextInput 的边界<a class="h-anchor" href="#20-4-5-与-usetextinput-的边界" aria-label="permalink">¶</a></h3>
 <p><code>useVimInput</code> 是 <code>useTextInput</code>（Ink UI 的基座 TextInput hook，详见 <a class="chref" href="../ch21/">ch.21</a> §21.8）的一层包裹：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/useVimInput.ts:34-47 （节选）</span>
 <span class="hl-kw">export</span> <span class="hl-kw">function</span> useVimInput(props: <span class="hl-type">UseVimInputProps</span>): <span class="hl-type">VimInputState</span> {
@@ -307,8 +307,8 @@ ctx.recordChange({ <span class="hl-kw">type</span>: &#x27;operator&#x27;, op, mo
 <p>这里有一个容易踩到的语义冲突：<strong>NORMAL 模式下按 <code>Ctrl+W</code> 不是真 vim 的"删上一个词"，而是键位系统里绑的 action</strong>（默认 <code>chat:clearLine</code> 或类似）。vim 用户肌肉记忆里 <code>Ctrl+W</code> = 删词，这里按下去会直接清行。代码注释没提这条冲突，文档也没列 —— 这是"选择性透传"的代价。</p>
 <p>启用路径很直：<code>/vim</code> 命令切 <code>config.editorMode</code>（<code class="ref">src/commands/vim/vim.ts:17-22</code>），<code class="ref">src/components/PromptInput/utils.ts:12-15</code> 的 <code>isVimModeEnabled()</code> 读 config，<code class="ref">src/components/VimTextInput.tsx</code> 条件渲染 <code>useVimInput</code> 而非 <code>useTextInput</code>。</p>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/hooks/useVimInput.ts:34</code> / <code>src/hooks/useVoice.ts:180+</code>）：<strong>sub-agent（Task 工具调用的子会话）里 vim mode 和 voice 都不生效</strong>。<code>useVimInput</code> 和 <code>useVoice</code> 都挂在 <code>PromptInput</code> 子树里，sub-agent 是 headless run，不渲染 PromptInput —— 根本没有这两个 hook 的挂载点。直觉上会以为"vim 模式是全局 config 所以处处都生效"，实际 vim 是"文本输入层的模式"，没有文本输入层就没这回事（详见 <a class="chref" href="../ch04/">ch.04</a> §4.6 的 sub-agent 上下文隔离）。</p></blockquote>
-<h2>20.5 Voice</h2>
-<h3>20.5.1 全局：三个 hook + 两个 service</h3>
+<h2 id="20-5-voice">20.5 Voice<a class="h-anchor" href="#20-5-voice" aria-label="permalink">¶</a></h2>
+<h3 id="20-5-1-全局-三个-hook-两个-service">20.5.1 全局：三个 hook + 两个 service<a class="h-anchor" href="#20-5-1-全局-三个-hook-两个-service" aria-label="permalink">¶</a></h3>
 <p>文件布局：</p>
 <div class="table-wrap"><table><thead><tr><th>文件</th><th>作用</th></tr></thead><tbody><tr><td><code class="ref">src/voice/voiceModeEnabled.ts</code></td><td>三态 enable 判断（auth + GB + 设置）</td></tr>
 <tr><td><code class="ref">src/hooks/useVoiceEnabled.ts</code></td><td>React 包装，memoize auth</td></tr>
@@ -316,7 +316,7 @@ ctx.recordChange({ <span class="hl-kw">type</span>: &#x27;operator&#x27;, op, mo
 <tr><td><code class="ref">src/hooks/useVoiceIntegration.tsx</code></td><td>transcript 写入 prompt + 与键位接合</td></tr>
 <tr><td><code class="ref">src/services/voice.ts</code></td><td>采集层（native + SoX/arecord fallback）</td></tr>
 <tr><td><code class="ref">src/services/voiceStreamSTT.ts</code></td><td>WebSocket STT 客户端</td></tr></tbody></table></div>
-<h3>20.5.2 采集层：native + fallback</h3>
+<h3 id="20-5-2-采集层-native-fallback">20.5.2 采集层：native + fallback<a class="h-anchor" href="#20-5-2-采集层-native-fallback" aria-label="permalink">¶</a></h3>
 <p><code class="ref">src/services/voice.ts:20-36</code> 的核心是 lazy 加载原生模块：</p>
 <figure class="codeblock"><figcaption><span class="file">src/services/voice.ts:20-36</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">type</span> <span class="hl-type">AudioNapi</span> = <span class="hl-kw">typeof</span> <span class="hl-kw">import</span>(&#x27;audio-capture-napi&#x27;)
 <span class="hl-kw">let</span> audioNapi: <span class="hl-type">AudioNapi</span> | <span class="hl-kw">null</span> = <span class="hl-kw">null</span>
@@ -337,7 +337,7 @@ ctx.recordChange({ <span class="hl-kw">type</span>: &#x27;operator&#x27;, op, mo
 <p>Linux 上原生模块加载失败时，fallback 到 <code>arecord</code>（ALSA）或 <code>rec</code>（SoX），用 spawn 拿 stdout 的 PCM 流（<code class="ref">voice.ts:75-100</code> 的 <code>probeArecord</code> 探测可用性）。</p>
 <p>采样：16 kHz / 单声道 / 16-bit PCM（<code class="ref">voice.ts:40-41</code>）。</p>
 <p>[^3]: 本仓是 source-map restoration，<code>audio-capture-napi</code> 是一个外部依赖（从 npm 或 vendor 引），具体 native 实现不在本仓。本章只讨论调用方。</p>
-<h3>20.5.3 STT 走远端</h3>
+<h3 id="20-5-3-stt-走远端">20.5.3 STT 走远端<a class="h-anchor" href="#20-5-3-stt-走远端" aria-label="permalink">¶</a></h3>
 <p>STT 不是本地模型，也不是 Whisper：</p>
 <figure class="codeblock"><figcaption><span class="file">src/services/voiceStreamSTT.ts:1-8</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// Anthropic voice_stream speech-to-text client for push-to-talk.</span>
 <span class="hl-cm">//</span>
@@ -360,7 +360,7 @@ ctx.recordChange({ <span class="hl-kw">type</span>: &#x27;operator&#x27;, op, mo
 </ul>
 <p>另外，ASR 热词也值得一提：<code class="ref">src/services/voiceKeyterms.ts</code> 把当前项目名、git 分支名等作为 keyterms 送给 Deepgram（官方文档："Transcription is tuned for coding vocabulary..." 这句背后就是这张热词表），让"CamelCase 函数名 / git 分支名"不会被识成普通英文词。</p>
 <p>[^4]: <a href="https://code.claude.com/docs/en/voice-dictation" rel="noreferrer">https://code.claude.com/docs/en/voice-dictation</a>，访问于 2026-04-19。文档明确说"Audio is not processed locally."</p>
-<h3>20.5.4 Hold-to-talk 的几个时限</h3>
+<h3 id="20-5-4-hold-to-talk-的几个时限">20.5.4 Hold-to-talk 的几个时限<a class="h-anchor" href="#20-5-4-hold-to-talk-的几个时限" aria-label="permalink">¶</a></h3>
 <p>"按住说话、松开结束"在终端里没有 native API，只能靠<strong>监听 auto-repeat</strong>推断：按键按住 → 终端每 30-80ms 发一次重复事件；松开 → 停发。<code class="ref">src/hooks/useVoice.ts:160-177</code>：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/useVoice.ts:160-172 （节选）</span>
 <span class="hl-kw">const</span> <span class="hl-type">RELEASE_TIMEOUT_MS</span> = <span class="hl-num">200</span>    <span class="hl-cm">// 两次事件超过此间隔视为松开</span>
@@ -372,7 +372,7 @@ ctx.recordChange({ <span class="hl-kw">type</span>: &#x27;operator&#x27;, op, mo
 <li><strong>修饰键组合</strong>（如 <code>meta+k</code>）：首键就激活。修饰键组合不可能被当正常输入，直接当 hold。</li>
 </ul>
 <p>这两档策略在配置里就能选：用户把 <code>voice:pushToTalk</code> 绑到 <code>meta+k</code> 就没有 warmup。</p>
-<h3>20.5.5 Audio buffer 与 silent-drop 重放</h3>
+<h3 id="20-5-5-audio-buffer-与-silent-drop-重放">20.5.5 Audio buffer 与 silent-drop 重放<a class="h-anchor" href="#20-5-5-audio-buffer-与-silent-drop-重放" aria-label="permalink">¶</a></h3>
 <p>WebSocket 握手 ~1-2s，音频要马上开始录。<code class="ref">useVoice.ts:683-731</code> 的策略：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">text</span></figcaption><pre><code class="language-text">audioBuffer: Buffer[] = []
 录音 callback(chunk) {
@@ -390,7 +390,7 @@ onReady(conn) {
 }</code></pre></figure>
 <p>这是"<strong>边录边连，边连边发</strong>"的标准做法。代价：slice 批处理有一点延迟，但换来流畅的"按下立即开始录"的体感。</p>
 <p><code class="ref">useVoice.ts:380-454</code> 还有一段"silent-drop 重放"：<code>finalize()</code> 返回 <code>no_data_timeout</code> + 确认有音频信号 + WebSocket 确实连上过 → 用 <code>fullAudioRef.current</code>（本次录音的完整音频副本）在新 WS 上重放一次。后端偶尔有 CE pod 的 session-sticky bug 接了音但返空，本地重试一次挡下。注释里标了内部 issue 号（<code>anthropic#287008</code>）—— 这种"前端侧重试掩盖后端间歇故障"在产品上是被动但实用的选择。</p>
-<h3>20.5.6 Transcript 往 prompt 的写入：anchor + submit race</h3>
+<h3 id="20-5-6-transcript-往-prompt-的写入-anchor-submit-race">20.5.6 Transcript 往 prompt 的写入：anchor + submit race<a class="h-anchor" href="#20-5-6-transcript-往-prompt-的写入-anchor-submit-race" aria-label="permalink">¶</a></h3>
 <p>录音开始时，光标所在位置把 input 切成 <code>prefix</code> + <code>suffix</code>，存到两个 ref：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// src/hooks/useVoiceIntegration.tsx:234-248 （简化）</span>
 useEffect(() =&gt; {
@@ -415,7 +415,7 @@ useEffect(() =&gt; {
 insertTextRef.current.setInputWithCursor(newValue, prefix.length + leadingSpace.length + voiceInterimTranscript.length)
 lastSetInputRef.current = newValue</code></pre></figure>
 <p><code>lastSetInputRef</code> 这个守护守住一个竞态：用户按 Enter 提交后 input 被清空；紧接着几百毫秒内 WebSocket 还在往外推 refined transcript；若不校验就会"提交完了又被填回去"。比较值而不是长度，是因为 <code>text.length</code> 可能在补标点后大于 interim —— 只有完全等于上次写入值，才算这个 hook 还是 input 的"作者"。</p>
-<h3>20.5.7 Voice 与键位系统的接合：读 bindings 当配置</h3>
+<h3 id="20-5-7-voice-与键位系统的接合-读-bindings-当配置">20.5.7 Voice 与键位系统的接合：读 bindings 当配置<a class="h-anchor" href="#20-5-7-voice-与键位系统的接合-读-bindings-当配置" aria-label="permalink">¶</a></h3>
 <p><code>useVoiceKeybindingHandler</code> 不用 <code>useKeybinding</code>。它自己写了一个 <code>handleKeyDown</code>，但<strong>读键位系统的 bindings 来知道"当前 pushToTalk 绑到哪个键"</strong>：</p>
 <figure class="codeblock"><figcaption><span class="file">src/hooks/useVoiceIntegration.tsx:405-421</span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-kw">const</span> voiceKeystroke = useMemo((): <span class="hl-type">ParsedKeystroke</span> | <span class="hl-kw">null</span> =&gt; {
   <span class="hl-kw">if</span> (!keybindingContext) <span class="hl-kw">return</span> <span class="hl-type">DEFAULT_VOICE_KEYSTROKE</span>
@@ -435,13 +435,13 @@ lastSetInputRef.current = newValue</code></pre></figure>
 }, [keybindingContext])</code></pre></figure>
 <p>为什么不走 <code>useKeybinding(&#x27;voice:pushToTalk&#x27;, handleKeyEvent)</code>：<code>useKeybinding</code> 是"按下触发"语义，但 voice 需要"按住"—— 需要自己处理 auto-repeat、release 检测、key 多次按下之间的间隔。<code>useKeybinding</code> 的契约不匹配。</p>
 <p>这是<strong>键位系统作为配置源，而非分发器</strong>的典型用法：voice 读"pushToTalk 被绑到什么 chord"，然后 voice 自己写 <code>handleKeyDown</code> 监听原始键盘事件。好处：用户在 <code class="ref">keybindings.json</code> 里改 <code>voice:pushToTalk</code> 的绑定，voice 立刻生效，不用新的配置项。</p>
-<h3>20.5.8 几条容易被忽视的降级路径</h3>
+<h3 id="20-5-8-几条容易被忽视的降级路径">20.5.8 几条容易被忽视的降级路径<a class="h-anchor" href="#20-5-8-几条容易被忽视的降级路径" aria-label="permalink">¶</a></h3>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/services/voice.ts</code> + <code class="ref">src/hooks/useVoice.ts:524-536</code>）：<strong>原生采集失败 → Linux 上静默 fallback 到 <code>arecord</code> / <code>rec</code>；macOS/Windows 上则直接报"voice 不可用"</strong>。<code class="ref">voice.ts</code> 的 <code>probeArecord</code>（:75-100）和 <code>rec</code> spawn 只在 Linux 分支里；其它平台原生模块不可用就到此为止。用户看到的只是 "voice disabled"，不知道 fallback 链条只覆盖一个平台。</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/hooks/useVoiceIntegration.tsx:323</code> + <code class="ref">src/hooks/useVoice.ts:572-630</code>）：<strong><code>useVoice</code> 写了完整的 focus-driven 录音路径（终端获焦自动开录、失焦停录），但 <code>useVoiceIntegration</code> 调它时把 <code>focusMode</code> 常量传 <code>false</code></strong>。这段代码完整但在 PromptInput 路径下<strong>未启用</strong>，属于典型的"代码里能看到、产品里摸不到"的功能切片。对照 <a class="chref" href="../ch15/">ch.15</a> §15.4 讲的 Proactive terminalFocus —— 那边的 focus 检测是上了产品的，这边的 focus 触发录音是藏着的同型号机制。</p></blockquote>
 <blockquote><p><strong>隐藏细节</strong>（<code class="ref">src/hooks/useVoice.ts:370-454</code>，内部 issue <code>anthropic#287008</code>）：<strong>CE 后端偶尔会 session-sticky 到一个"接音但返空"的 pod</strong>，前端在 <code>finalizeSource === &#x27;no_data_timeout&#x27;</code> + 确认有音频信号 + WebSocket 确实连上过时，<strong>用 <code>fullAudioRef</code> 缓存的整段音频在新 WebSocket 上重放一次</strong>。用户感知只是"按住说话偶尔要停顿一下才出文字"，代码层是明确的一次性重试。属于"前端掩盖后端间歇故障"的被动补偿。</p></blockquote>
 <p><strong>OS 权限被拒后的体感</strong>：macOS 上首次 voice 按下会弹 TCC 对话框，用户拒绝后 <code>audio-capture-napi</code> 的后续 start 会在 init 阶段抛出；<code>useVoice</code> 把错误捕获并设 <code>voiceState</code> 为 <code>idle + error</code>，footer 上显示一个短提示，其他输入路径照常工作。<strong>不会</strong>把 voice 键当正常按键透传 —— 因为 <code>voiceKeystroke</code> 只要绑定存在就吃掉按键。这是"绑定存在但功能拒用"的边界情况，修法是用户回到系统设置给权限或 <code>/voice</code> 关掉功能。</p>
-<h2>20.6 三者怎么共存</h2>
-<h3>20.6.1 事件分发的三层</h3>
+<h2 id="20-6-三者怎么共存">20.6 三者怎么共存<a class="h-anchor" href="#20-6-三者怎么共存" aria-label="permalink">¶</a></h2>
+<h3 id="20-6-1-事件分发的三层">20.6.1 事件分发的三层<a class="h-anchor" href="#20-6-1-事件分发的三层" aria-label="permalink">¶</a></h3>
 <p>一个按键事件从 Ink 出来，大致穿过三层：</p>
 <ol>
 <li><strong><code>ChordInterceptor</code></strong>（<code class="ref">KeybindingProviderSetup.tsx</code>）：最先 subscribe 的 useInput，处理 chord pending 和 unbound 吞噬。</li>
@@ -449,7 +449,7 @@ lastSetInputRef.current = newValue</code></pre></figure>
 <li><strong><code>useTextInput</code> 或 <code>useVimInput</code></strong>：最后看到没被 stopImmediatePropagation 的事件，处理文本输入。</li>
 </ol>
 <p><code>stopImmediatePropagation</code> 是各层彼此隔离的唯一机制。unbound 在第 1 层就吃掉；chord_started 在第 1 层吃掉；单键 match 在第 2 层由对应 <code>useKeybinding</code> 调 handler 并吃掉；没匹配任何 binding 的普通字符流到第 3 层。</p>
-<h3>20.6.2 Vim 和键位的边界</h3>
+<h3 id="20-6-2-vim-和键位的边界">20.6.2 Vim 和键位的边界<a class="h-anchor" href="#20-6-2-vim-和键位的边界" aria-label="permalink">¶</a></h3>
 <p>vim 开启时，<code>useVimInput</code> 替代了 <code>useTextInput</code>，坐在第 3 层。它主动把自己不关心的事件<strong>透传给 textInput</strong>（等价于放行到键位系统，因为 textInput 自己也只处理未被吞的事件）：</p>
 <ul>
 <li><code>Ctrl+...</code> 全部透传 → <code>ctrl+t</code>、<code>ctrl+o</code> 等键位照常工作</li>
@@ -459,7 +459,7 @@ lastSetInputRef.current = newValue</code></pre></figure>
 <li>其他 NORMAL 事件 → vim 状态机消化</li>
 </ul>
 <p>官方文档[^2]在 "Vim mode interaction" 一节里把这个边界描述得很清楚："Vim mode handles input at the text input level; keybindings handle actions at the component level. The Escape key in vim mode switches INSERT to NORMAL mode; it does not trigger <code>chat:cancel</code>. Most Ctrl+key shortcuts pass through vim mode to the keybinding system."</p>
-<h3>20.6.3 Voice 和其他层的关系</h3>
+<h3 id="20-6-3-voice-和其他层的关系">20.6.3 Voice 和其他层的关系<a class="h-anchor" href="#20-6-3-voice-和其他层的关系" aria-label="permalink">¶</a></h3>
 <p>voice 激活在 <code>Chat</code> context，vim 也跑在 <code>Chat</code> context。它们不直接冲突：</p>
 <ul>
 <li>voice 只劫持 <code>voice:pushToTalk</code> 绑的那个具体键，通过读 bindings 知道是哪个</li>
@@ -471,7 +471,7 @@ lastSetInputRef.current = newValue</code></pre></figure>
 <li><strong>Buddy 的共享 tick 与 <code>companionReservedColumns</code></strong>：footer 里 voice 的波形条、chord 提示、Buddy sprite 都挤在同一条右侧预留列（见 <a class="chref" href="../ch19/">ch.19</a> §19.4 和 <a class="chref" href="../ch21/">ch.21</a> §21.9）。三方共享的是 Ink 的 measureElement 帧调度 —— voice 在录音期间会 <code>requestAnimationFrame</code> 级别重绘波形，节奏上与 Buddy 的 sprite tick 互让，由 <a class="chref" href="../ch19/">ch.19</a> 的 Buddy soul 统一调度。</li>
 <li><strong>Proactive 的 terminalFocus</strong>：<a class="chref" href="../ch15/">ch.15</a> §15.4 讲到的 terminal focus/blur 事件是复用的同一源（Ink 的 <code>stdin.setRawMode</code> + CSI 焦点序列）。voice 的 focus-mode 未启用并不影响 Proactive 对焦点的利用。</li>
 </ul>
-<h2>20.7 值得借鉴的一点</h2>
+<h2 id="20-7-值得借鉴的一点">20.7 值得借鉴的一点<a class="h-anchor" href="#20-7-值得借鉴的一点" aria-label="permalink">¶</a></h2>
 <p>本章讲了三件事，其实只有一个核心设计值得单拎出来：</p>
 <p><strong>把"键盘"看成一个带作用域的动作表，而不是散落在组件里的 useInput。</strong></p>
 <p>这个设计在三个维度产生了复利：</p>
@@ -496,7 +496,7 @@ lastSetInputRef.current = newValue</code></pre></figure>
 <li>一个根 effect（或 useInput）在 resolve 命中时调对应 handler 并停止事件传播</li>
 </ol>
 <p>chord 支持、热重载、校验都是可选的加花。核心的"作用域动作表"在 300 行之内就能跑起来。</p>
-<h2>跨章边界</h2>
+<h2 id="跨章边界">跨章边界<a class="h-anchor" href="#跨章边界" aria-label="permalink">¶</a></h2>
 <ul>
 <li>Ink 的 <code>useInput</code> API、<code>useTextInput</code> 的内部实现、cursor 计算（<code>Cursor</code> 类的 vim-style word motion 等）：详见 <a class="chref" href="../ch21/">ch.21</a> §21.8</li>
 <li>Sub-agent 里 vim mode / voice 为什么不激活（上下文隔离与 PromptInput 挂载点）：详见 <a class="chref" href="../ch04/">ch.04</a> §4.6</li>
