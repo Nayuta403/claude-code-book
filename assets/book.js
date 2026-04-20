@@ -70,6 +70,27 @@
     }
     initProgressBar();
     initTopBtn();
+    initKeyNav();
+  }
+
+  function initKeyNav() {
+    var prev = document.querySelector(".chap-nav .nav-link.prev");
+    var next = document.querySelector(".chap-nav .nav-link.next");
+    if (!prev && !next) return;
+    document.addEventListener("keydown", function (e) {
+      // Ignore when user is typing in a form field or with modifier keys held.
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      var tag = e.target && e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.target && e.target.isContentEditable) return;
+
+      var k = e.key;
+      if (k === "ArrowLeft" || k === "[") {
+        if (prev && prev.tagName === "A") { prev.click(); e.preventDefault(); }
+      } else if (k === "ArrowRight" || k === "]") {
+        if (next && next.tagName === "A") { next.click(); e.preventDefault(); }
+      }
+    });
   }
 
   function initProgressBar() {

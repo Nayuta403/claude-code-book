@@ -587,6 +587,26 @@ h1.chap-title .cn {
   text-transform: uppercase;
   color: var(--rose);
   font-weight: 500;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+.chap-nav .nav-link .kb {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--mist);
+  border-radius: 3px;
+  color: var(--ash);
+  background: var(--paper);
+  font-weight: 400;
+  text-transform: none;
+  transition: border-color .15s, color .15s;
+}
+.chap-nav .nav-link:hover .kb { border-color: var(--rose); color: var(--rose); }
+@media (hover: none) {
+  .chap-nav .nav-link .kb { display: none; }
 }
 .chap-nav .nav-link .t {
   font-family: var(--display);

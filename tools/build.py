@@ -634,7 +634,7 @@ def build_prev_next_nav(ch: dict) -> str:
         p = CHAPTERS[idx - 1]
         prev_html = (
             f'<a class="nav-link prev" href="../ch{p["id"]:02d}/">'
-            f'<span class="dir">← Ch.{p["id"]:02d} · prev</span>'
+            f'<span class="dir">← Ch.{p["id"]:02d} · prev <kbd class="kb">[</kbd></span>'
             f'<span class="t">{html.escape(p["en"])}<span class="cn">{html.escape(p["cn"])}</span></span>'
             f'</a>'
         )
@@ -644,7 +644,7 @@ def build_prev_next_nav(ch: dict) -> str:
         nxt = CHAPTERS[idx + 1]
         next_html = (
             f'<a class="nav-link next" href="../ch{nxt["id"]:02d}/">'
-            f'<span class="dir">Ch.{nxt["id"]:02d} · next →</span>'
+            f'<span class="dir"><kbd class="kb">]</kbd> Ch.{nxt["id"]:02d} · next →</span>'
             f'<span class="t">{html.escape(nxt["en"])}<span class="cn">{html.escape(nxt["cn"])}</span></span>'
             f'</a>'
         )
