@@ -755,3 +755,137 @@ footer.colophon .right {
 }
 
 ::selection { background: var(--rose-dim); color: var(--ink); }
+
+/* ========================================================== */
+/* Print stylesheet — chapter pages render clean as PDF / paper */
+/* ========================================================== */
+@media print {
+  /* Hide all interactive / fixed chrome */
+  .showcase-bar,
+  .read-progress,
+  .to-top-btn,
+  .copy-btn,
+  .chap-nav,
+  .article .prose .chap-outline,
+  .article .prose .h-anchor { display: none !important; }
+
+  /* Neutral bg & full black ink */
+  html, body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  body { font-size: 10.5pt; line-height: 1.55; }
+
+  /* Chapter head */
+  .chap-head {
+    display: block !important;
+    padding: 0 0 16pt 0 !important;
+    margin: 0 !important;
+    border-bottom: 1px solid #bbb;
+  }
+  .chap-head h1.chap-title { font-size: 22pt; line-height: 1.1; }
+  .chap-head h1.chap-title .cn { font-size: 13pt; }
+  .crumb { margin-bottom: 6pt; }
+  .crumb .part-tag { background: transparent !important; border: 1px solid #bbb; color: #333 !important; }
+  .chap-num { color: #666 !important; }
+  .chap-meta {
+    background: transparent !important;
+    border: 1px solid #ddd !important;
+    margin-top: 10pt;
+    padding: 8pt !important;
+    grid-template-columns: repeat(4, 1fr) !important;
+    gap: 6pt 12pt !important;
+  }
+  .chap-meta .km { color: #666 !important; font-size: 7pt; }
+
+  /* Article body */
+  .article { padding: 12pt 0 !important; max-width: 100% !important; }
+  .article .prose { max-width: 100% !important; font-size: 10.5pt; line-height: 1.55; color: #111; }
+  .article .prose h2 {
+    font-size: 16pt; margin-top: 22pt; margin-bottom: 6pt;
+    border-bottom: 1px solid #bbb; color: #111 !important;
+    page-break-after: avoid;
+  }
+  .article .prose h2::before { color: #666 !important; }
+  .article .prose h3 { font-size: 13pt; margin-top: 14pt; page-break-after: avoid; }
+  .article .prose h4 { font-size: 11pt; }
+  .article .prose p { orphans: 3; widows: 3; }
+  .article .prose em { color: #111 !important; }
+
+  /* Inline code + refs — subtle gray bg, solid black text */
+  .article .prose code,
+  .article .prose code.ref {
+    background: #f0f0f0 !important;
+    color: #111 !important;
+    border: none !important;
+    padding: 0.04em 0.3em !important;
+    border-radius: 2px !important;
+  }
+  .article .prose a { color: #111 !important; border-bottom: 1px dotted #888; }
+  .article .prose a.chref { background: #f0f0f0 !important; color: #111 !important; }
+  /* URL disclosure for external links */
+  .article .prose a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.78em;
+    color: #666;
+    font-family: var(--mono);
+    word-break: break-all;
+  }
+
+  /* Code blocks — wrap instead of scroll, lighter border */
+  .article .prose figure.codeblock {
+    page-break-inside: avoid;
+    margin: 10pt 0;
+  }
+  .article .prose figure.codeblock figcaption {
+    color: #444 !important;
+  }
+  .article .prose figure.codeblock figcaption .file { color: #222 !important; }
+  .article .prose figure.codeblock pre {
+    background: #fafafa !important;
+    border: 1px solid #ddd !important;
+    color: #111 !important;
+    font-size: 9pt;
+    line-height: 1.55;
+    white-space: pre-wrap !important;
+    overflow: visible !important;
+    word-break: break-word;
+  }
+  .article .prose figure.codeblock pre .hl-kw,
+  .article .prose figure.codeblock pre .hl-type,
+  .article .prose figure.codeblock pre .hl-str,
+  .article .prose figure.codeblock pre .hl-num { color: #111 !important; font-weight: 500; }
+  .article .prose figure.codeblock pre .hl-cm  { color: #666 !important; }
+
+  /* Blockquote */
+  .article .prose blockquote {
+    border-left-color: #bbb !important;
+    color: #111 !important;
+  }
+
+  /* Tables — full borders */
+  .article .prose .table-wrap {
+    border: 1px solid #ccc !important;
+    page-break-inside: avoid;
+  }
+  .article .prose th {
+    background: #f5f5f5 !important;
+    color: #333 !important;
+    border-bottom: 1px solid #aaa !important;
+  }
+  .article .prose td { border-bottom: 1px solid #ddd !important; }
+
+  /* Footer */
+  footer.colophon {
+    border-top: 1px solid #bbb !important;
+    padding: 12pt 0 0 !important;
+    margin-top: 24pt !important;
+  }
+  footer.colophon .left { color: #333 !important; font-size: 14pt; }
+  footer.colophon .left .dot { color: #333 !important; }
+  footer.colophon .right { color: #666 !important; }
+
+  @page {
+    margin: 22mm 18mm 22mm 18mm;
+  }
+}
