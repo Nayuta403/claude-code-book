@@ -42,7 +42,7 @@
   <div class="prose">
 <details class="chap-outline"><summary>§ 本章目录 <span class="count">· 10 节</span></summary><ol><li><a href="#23-1-用户看到什么">23.1 用户看到什么</a></li><li><a href="#23-2-本章关注点">23.2 本章关注点</a></li><li><a href="#23-3-sdk-的表面积">23.3 SDK 的表面积</a></li><li><a href="#23-4-控制协议-把回调变成消息">23.4 控制协议：把回调变成消息</a></li><li><a href="#23-5-cli-侧的运行时-ndjson-structuredio-runheadless">23.5 CLI 侧的运行时：NDJSON StructuredIO + runHeadless</a></li><li><a href="#23-6-sdk-与-cli-的代码复用面">23.6 SDK 与 CLI 的代码复用面</a></li><li><a href="#23-7-session-生命周期与错误恢复">23.7 Session 生命周期与错误恢复</a></li><li><a href="#23-8-src-entrypoints-mcp-ts-sdk-的另一种入口">23.8 src/entrypoints/mcp.ts：SDK 的另一种入口</a></li><li><a href="#23-9-设计取舍">23.9 设计取舍</a></li><li><a href="#23-10-可迁移的点">23.10 可迁移的点</a></li></ol></details><h2 id="23-1-用户看到什么">23.1 用户看到什么<a class="h-anchor" href="#23-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 有两个日常入口。一个是终端 REPL：</p>
-<figure class="codeblock"><figcaption><span></span><span class="lang">bash</span></figcaption><pre><code class="language-bash">claude &quot;fix the bug in auth.ts&quot;</code></pre></figure>
+<figure class="codeblock"><figcaption><span></span><span class="lang">bash</span></figcaption><pre><code class="language-bash">claude <span class="hl-str">&quot;fix the bug in auth.ts&quot;</span></code></pre></figure>
 <p>另一个是 npm 库：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">ts</span></figcaption><pre><code class="language-ts"><span class="hl-cm">// SDK 用法</span>
 <span class="hl-kw">import</span> { query } <span class="hl-kw">from</span> &#x27;@anthropic-ai/claude-agent-sdk&#x27;

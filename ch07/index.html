@@ -114,11 +114,11 @@ Contents of ~/.claude/CLAUDE.md (...):
 - [Q2 merge freeze](project_q2_freeze.md) — 2026-03-05 mobile release cut
 - [Linear INGEST](reference_linear.md) — pipeline bugs tracked here</code></pre></figure>
 <p>每条一行，指向一个话题文件，附带 one-line hook（做决策用）。话题文件本身带 frontmatter：</p>
-<figure class="codeblock"><figcaption><span></span><span class="lang">markdown</span></figcaption><pre><code class="language-markdown">---
-name: No DB mocks in tests
-description: Integration tests must hit a real database, not mocks
-type: feedback
----
+<figure class="codeblock"><figcaption><span></span><span class="lang">markdown</span></figcaption><pre><code class="language-markdown"><span class="hl-kw">---</span>
+<span class="hl-type">name</span>: No DB mocks in tests
+<span class="hl-type">description</span>: Integration tests must hit a real database, not mocks
+<span class="hl-type">type</span>: feedback
+<span class="hl-kw">---</span>
 
 Integration tests must hit a real database, not mocks.
 

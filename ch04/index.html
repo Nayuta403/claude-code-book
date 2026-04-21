@@ -50,13 +50,13 @@ agentId: a1b2-... (internal ID - do not mention to user.
 The agent is working in the background. You will be notified automatically when it completes.
 ...</code></pre></figure>
 <p>主 agent 拿到这条确认，本轮就结束。过若干分钟，一条 <strong>"user 角色的消息"</strong> 被塞回对话：</p>
-<figure class="codeblock"><figcaption><span></span><span class="lang">xml</span></figcaption><pre><code class="language-xml">&lt;task-notification&gt;
-&lt;task-id&gt;a1b2-...&lt;/task-id&gt;
-&lt;status&gt;completed&lt;/status&gt;
-&lt;summary&gt;Agent &quot;Investigate auth bug&quot; completed&lt;/summary&gt;
-&lt;result&gt;Found null pointer in src/auth/validate.ts:42 ...&lt;/result&gt;
-&lt;usage&gt;&lt;total_tokens&gt;12048&lt;/total_tokens&gt;&lt;tool_uses&gt;9&lt;/tool_uses&gt;&lt;/usage&gt;
-&lt;/task-notification&gt;</code></pre></figure>
+<figure class="codeblock"><figcaption><span></span><span class="lang">xml</span></figcaption><pre><code class="language-xml"><span class="hl-cm">&lt;</span><span class="hl-kw">task-notification</span><span class="hl-cm">&gt;</span>
+<span class="hl-cm">&lt;</span><span class="hl-kw">task-id</span><span class="hl-cm">&gt;</span>a1b2-...<span class="hl-cm">&lt;/</span><span class="hl-kw">task-id</span><span class="hl-cm">&gt;</span>
+<span class="hl-cm">&lt;</span><span class="hl-kw">status</span><span class="hl-cm">&gt;</span>completed<span class="hl-cm">&lt;/</span><span class="hl-kw">status</span><span class="hl-cm">&gt;</span>
+<span class="hl-cm">&lt;</span><span class="hl-kw">summary</span><span class="hl-cm">&gt;</span>Agent &quot;Investigate auth bug&quot; completed<span class="hl-cm">&lt;/</span><span class="hl-kw">summary</span><span class="hl-cm">&gt;</span>
+<span class="hl-cm">&lt;</span><span class="hl-kw">result</span><span class="hl-cm">&gt;</span>Found null pointer in src/auth/validate.ts:42 ...<span class="hl-cm">&lt;/</span><span class="hl-kw">result</span><span class="hl-cm">&gt;</span>
+<span class="hl-cm">&lt;</span><span class="hl-kw">usage</span><span class="hl-cm">&gt;</span><span class="hl-cm">&lt;</span><span class="hl-kw">total_tokens</span><span class="hl-cm">&gt;</span>12048<span class="hl-cm">&lt;/</span><span class="hl-kw">total_tokens</span><span class="hl-cm">&gt;</span><span class="hl-cm">&lt;</span><span class="hl-kw">tool_uses</span><span class="hl-cm">&gt;</span>9<span class="hl-cm">&lt;/</span><span class="hl-kw">tool_uses</span><span class="hl-cm">&gt;</span><span class="hl-cm">&lt;/</span><span class="hl-kw">usage</span><span class="hl-cm">&gt;</span>
+<span class="hl-cm">&lt;/</span><span class="hl-kw">task-notification</span><span class="hl-cm">&gt;</span></code></pre></figure>
 <p>它看起来像用户说话，其实是系统塞进来的通知。主 agent 的系统提示里教过它识别 <code>&lt;task-notification&gt;</code> 开头，当成 sub-agent 的"回流信号"处理（coordinator 模式下这条规则在 <code class="ref">src/coordinator/coordinatorMode.ts:144-160</code> 有完整模板）。</p>
 <p>终端底部还有一个背景任务 pill（ant 构建下走 Coordinator Panel，external 构建下走 pill）。键入 <code>/tasks</code> 可以展开：每条任务显示状态、描述、耗时。</p>
 <h2 id="4-2-为什么挑这个设计出来讲">4.2　为什么挑这个设计出来讲<a class="h-anchor" href="#4-2-为什么挑这个设计出来讲" aria-label="permalink">¶</a></h2>

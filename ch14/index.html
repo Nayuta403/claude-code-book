@@ -421,7 +421,7 @@ child.stdin.end()</code></pre></figure>
 <figure class="codeblock"><figcaption><span class="file">src/utils/hooks.ts:3683</span><span class="lang">ts</span></figcaption><pre><code class="language-ts">hook_event_name: &#x27;<span class="hl-type">Stop</span>&#x27;,
 stop_hook_active: stopHookActive,   <span class="hl-cm">// 从 query.ts:1275 传入</span></code></pre></figure>
 <p>Hook 脚本自己判断是不是在二次调用里。标准模式是：</p>
-<figure class="codeblock"><figcaption><span></span><span class="lang">bash</span></figcaption><pre><code class="language-bash">if [ &quot;$(jq -r .stop_hook_active)&quot; = &quot;true&quot; ]; then
+<figure class="codeblock"><figcaption><span></span><span class="lang">bash</span></figcaption><pre><code class="language-bash">if [ <span class="hl-str">&quot;$(jq -r .stop_hook_active)&quot;</span> = <span class="hl-str">&quot;true&quot;</span> ]; then
   exit 0  # 已经被 block 过一次了，这次放行
 fi</code></pre></figure>
 <h3 id="7-4-api-错误分流">7.4 API 错误分流<a class="h-anchor" href="#7-4-api-错误分流" aria-label="permalink">¶</a></h3>

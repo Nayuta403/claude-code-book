@@ -149,18 +149,84 @@ def highlight(code: str, lang: str) -> str:
         return highlight_ts(esc)
     if lang in ("json", "jsonc"):
         return highlight_json(esc)
-    # bash/xml/md/text etc. — no highlighting, but preserve comment-line rose hint
-    if lang == "bash":
-        # highlight leading $ prompts and # comments
-        lines = esc.split("\n")
-        out = []
-        for ln in lines:
-            if ln.lstrip().startswith("#"):
-                out.append(f'<span class="hl-cm">{ln}</span>')
-            else:
-                out.append(ln)
-        return "\n".join(out)
+    if lang in ("md", "markdown"):
+        return highlight_markdown(esc)
+    if lang in ("xml", "html"):
+        return highlight_xml(esc)
+    if lang in ("bash", "sh", "shell", "zsh"):
+        return highlight_bash(esc)
     return esc
+
+# --- extra language tokenizers ---
+
+_MD_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+_MD_HEADING_RE   = re.compile(r"^(#+)(\s.*)$")
+
+def _md_inline(s: str) -> str:
+    return _MD_CODE_SPAN_RE.sub(r'<span class="hl-str">`\1`</span>', s)
+
+def highlight_markdown(code_escaped: str) -> str:
+    out = []
+    for ln in code_escaped.split("\n"):
+        if ln.strip() == "---":
+            out.append(f'<span class="hl-kw">{ln}</span>')
+            continue
+        m = _MD_HEADING_RE.match(ln)
+        if m:
+            out.append(f'<span class="hl-kw">{m.group(1)}</span>{_md_inline(m.group(2))}')
+            continue
+        # YAML-ish frontmatter "key: value"
+        m = re.match(r"^([A-Za-z][A-Za-z0-9_-]*):(\s.*)$", ln)
+        if m:
+            out.append(f'<span class="hl-type">{m.group(1)}</span>:{_md_inline(m.group(2))}')
+            continue
+        out.append(_md_inline(ln))
+    return "\n".join(out)
+
+_XML_TAG_RE = re.compile(r"(&lt;/?)([a-zA-Z][a-zA-Z0-9_.-]*)(\s[^&]*?)?(/?&gt;)")
+
+def highlight_xml(code_escaped: str) -> str:
+    def repl(m: re.Match) -> str:
+        lt    = m.group(1)
+        name  = m.group(2)
+        attrs = m.group(3) or ""
+        gt    = m.group(4)
+        # color attribute values inside attrs
+        attrs_colored = re.sub(
+            r"(&quot;[^&]*&quot;|'[^']*')",
+            r'<span class="hl-str">\1</span>',
+            attrs,
+        )
+        return (
+            f'<span class="hl-cm">{lt}</span>'
+            f'<span class="hl-kw">{name}</span>'
+            f'{attrs_colored}'
+            f'<span class="hl-cm">{gt}</span>'
+        )
+    return _XML_TAG_RE.sub(repl, code_escaped)
+
+def highlight_bash(code_escaped: str) -> str:
+    out = []
+    for ln in code_escaped.split("\n"):
+        stripped = ln.lstrip()
+        if stripped.startswith("#"):
+            out.append(f'<span class="hl-cm">{ln}</span>')
+            continue
+        # Colourise leading "$ " prompt
+        m = re.match(r"^(\s*)(\$\s)(.*)$", ln)
+        if m:
+            rest = _bash_strings(m.group(3))
+            out.append(f'{m.group(1)}<span class="hl-kw">{m.group(2)}</span>{rest}')
+            continue
+        out.append(_bash_strings(ln))
+    return "\n".join(out)
+
+def _bash_strings(s: str) -> str:
+    return re.sub(
+        r"(&quot;[^&\n]*?&quot;|'[^'\n]*?')",
+        r'<span class="hl-str">\1</span>',
+        s,
+    )
 
 # ------------------------------------------------------------------
 # Inline markdown

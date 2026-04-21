@@ -142,11 +142,11 @@ isolation: z.<span class="hl-kw">enum</span>([&#x27;worktree&#x27;]).optional().
 <li>护栏层：用户可以再加一个 PreToolUse hook（详见 <a class="chref" href="../ch14/">ch.14</a> hooks），拦掉 sub-agent 里的高危 Bash。官方给过脚本模板：
 <figure class="codeblock"><figcaption><span></span><span class="lang">bash</span></figcaption><pre><code class="language-bash"><span class="hl-cm"># protect-files.sh —— 官方示例（hooks-guide 页）</span>
 INPUT=$(cat)
-FILE_PATH=$(echo &quot;$INPUT&quot; | jq -r &#x27;.tool_input.file_path // empty&#x27;)
-PROTECTED_PATTERNS=(&quot;.env&quot; &quot;package-lock.json&quot; &quot;.git/&quot;)
-for p in &quot;${PROTECTED_PATTERNS[@]}&quot;; do
-  if [[ &quot;$FILE_PATH&quot; == *&quot;$p&quot;* ]]; then
-    echo &quot;Blocked: $FILE_PATH matches $p&quot; &gt;&amp;2
+FILE_PATH=$(echo <span class="hl-str">&quot;$INPUT&quot;</span> | jq -r &#x27;.tool_input.file_path // empty&#x27;)
+PROTECTED_PATTERNS=(<span class="hl-str">&quot;.env&quot;</span> <span class="hl-str">&quot;package-lock.json&quot;</span> <span class="hl-str">&quot;.git/&quot;</span>)
+for p in <span class="hl-str">&quot;${PROTECTED_PATTERNS[@]}&quot;</span>; do
+  if [[ <span class="hl-str">&quot;$FILE_PATH&quot;</span> == *<span class="hl-str">&quot;$p&quot;</span>* ]]; then
+    echo <span class="hl-str">&quot;Blocked: $FILE_PATH matches $p&quot;</span> &gt;&amp;2
     exit 2
   fi
 done</code></pre></figure>

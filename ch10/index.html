@@ -72,15 +72,15 @@
 └── scripts/
     └── helper.py</code></pre></figure>
 <p><code class="ref">SKILL.md</code> 两段式：YAML frontmatter + markdown 正文。看一个真实的 bundled skill：</p>
-<figure class="codeblock"><figcaption><span class="file">src/skills/bundled/verify/SKILL.md:1-12</span><span class="lang">md</span></figcaption><pre><code class="language-md">---
-description: Verify a code change by running the app, the relevant command, or a focused server flow and reporting concrete evidence.
----
+<figure class="codeblock"><figcaption><span class="file">src/skills/bundled/verify/SKILL.md:1-12</span><span class="lang">md</span></figcaption><pre><code class="language-md"><span class="hl-kw">---</span>
+<span class="hl-type">description</span>: Verify a code change by running the app, the relevant command, or a focused server flow and reporting concrete evidence.
+<span class="hl-kw">---</span>
 
-# Verify
+<span class="hl-kw">#</span> Verify
 
 Use this skill when a task is not finished until the change is exercised.
 
-## Goal
+<span class="hl-kw">##</span> Goal
 
 Produce a short verification result grounded in execution, not inference.</code></pre></figure>
 <p>官方文档的完整 frontmatter 字段表见 <code>docs.claude.com</code> 的 skills 页（访问于 2026-04-19，<a href="https://code.claude.com/docs/en/skills" rel="noreferrer">https://code.claude.com/docs/en/skills</a>）。本仓库源码层面的解析口径在 <code class="ref">src/skills/loadSkillsDir.ts:185-265</code>，覆盖：</p>

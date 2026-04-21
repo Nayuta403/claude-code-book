@@ -319,9 +319,9 @@ getTokenCounter()?.add(usage.cache_creation_input_tokens ?? <span class="hl-num"
 <p>—— 数据源头就是 §22.3 讲的 cost-tracker 的 getter，没有第二份。</p>
 <p>官方文档（来源：<a href="https://code.claude.com/docs/en/statusline" rel="noreferrer">https://code.claude.com/docs/en/statusline</a>，访问于 2026-04-19）给的 Available Data 表和这份字段清单一一对应。用户要在 shell 里打印 "model + context 剩余 %"，就是：</p>
 <figure class="codeblock"><figcaption><span></span><span class="lang">bash</span></figcaption><pre><code class="language-bash">input=$(cat)
-MODEL=$(echo &quot;$input&quot; | jq -r &#x27;.model.display_name&#x27;)
-REMAIN=$(echo &quot;$input&quot; | jq -r &#x27;.context_window.remaining_percentage // empty&#x27;)
-echo &quot;[$MODEL] ${REMAIN}% remaining&quot;</code></pre></figure>
+MODEL=$(echo <span class="hl-str">&quot;$input&quot;</span> | jq -r &#x27;.model.display_name&#x27;)
+REMAIN=$(echo <span class="hl-str">&quot;$input&quot;</span> | jq -r &#x27;.context_window.remaining_percentage // empty&#x27;)
+echo <span class="hl-str">&quot;[$MODEL] ${REMAIN}% remaining&quot;</span></code></pre></figure>
 <h3 id="22-7-4-触发-四路事件-300ms-debounce-abort">22.7.4 触发：四路事件 + 300ms debounce + Abort<a class="h-anchor" href="#22-7-4-触发-四路事件-300ms-debounce-abort" aria-label="permalink">¶</a></h3>
 <p>性能敏感的问题：每次都 fork 子进程很贵，不能每帧刷。Claude Code 的调度是 React 驱动的：</p>
 <figure class="codeblock"><figcaption><span class="file">src/components/StatusLine.tsx:237-246</span><span class="lang">tsx</span></figcaption><pre><code class="language-tsx">useEffect(() =&gt; {
