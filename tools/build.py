@@ -790,24 +790,43 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
         next_link = f'<link rel="next" href="../ch{n["id"]:02d}/" title="Ch.{n["id"]:02d} {html.escape(n["cn"])}">'
     up_link = f'<link rel="up" href="../" title="目录">'
     seq_links = prev_link + next_link + up_link
-    # JSON-LD Article schema (escape-safe: pre-build dict, json.dumps for safety)
+    # JSON-LD Article + BreadcrumbList schemas
     import json as _json
-    jsonld = {
+    article = {
         "@context": "https://schema.org",
         "@type": "Article",
         "headline": f"Ch.{ch['id']:02d} {display_en} · {display_cn}",
         "description": og_desc,
         "inLanguage": "zh-Hans",
         "datePublished": "2026-04-20",
+        "dateModified": last_edit or "2026-04-20",
         "author":    {"@type": "Person",       "name": "Nayuta"},
         "publisher": {"@type": "Organization", "name": "Claude Code 源码解读"},
         "isPartOf":  {"@type": "Book", "name": "Claude Code 源码解读", "url": book_url},
         "mainEntityOfPage": chapter_url,
-        "position":  ch["id"],
+        "image": f"https://nayuta403.github.io/claude-code-book/assets/og-ch{ch['id']:02d}.png",
+    }
+    breadcrumbs = {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1,
+             "name": "《Claude Code 源码解读》",
+             "item": book_url},
+            {"@type": "ListItem", "position": 2,
+             "name": f"Part {part['id']} · {part['cn']}",
+             "item": book_url + "#catalogue"},
+            {"@type": "ListItem", "position": 3,
+             "name": f"Ch.{ch['id']:02d} {display_en}",
+             "item": chapter_url},
+        ],
     }
     jsonld_script = (
         '<script type="application/ld+json">'
-        + _json.dumps(jsonld, ensure_ascii=False, separators=(",", ":"))
+        + _json.dumps(article, ensure_ascii=False, separators=(",", ":"))
+        + '</script>'
+        '<script type="application/ld+json">'
+        + _json.dumps(breadcrumbs, ensure_ascii=False, separators=(",", ":"))
         + '</script>'
     )
 
