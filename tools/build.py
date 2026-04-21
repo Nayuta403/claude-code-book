@@ -726,6 +726,29 @@ def build_prev_next_nav(ch: dict) -> str:
 def count_refs(src: str) -> int:
     return sum(1 for _ in re.finditer(r"`[A-Za-z0-9_./@-]+\.(ts|tsx|js|json|md|css|sh|py):\d", src))
 
+def source_mtime(ch: dict) -> str:
+    """Return YYYY-MM-DD from the chapter's source .md file.
+    Prefers git log (tracked) else filesystem mtime."""
+    import subprocess
+    from datetime import datetime
+    src_path = SRC_DIR / f"{ch['slug']}.md"
+    # Try git log -1 (research repo). If the file is untracked, empty output.
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(SRC_DIR.parent.parent),
+             "log", "-1", "--format=%cI", "--", f"book/chapters/{ch['slug']}.md"],
+            capture_output=True, text=True, timeout=3,
+        )
+        iso = r.stdout.strip()
+        if iso:
+            return iso[:10]
+    except Exception:
+        pass
+    try:
+        return datetime.fromtimestamp(src_path.stat().st_mtime).strftime("%Y-%m-%d")
+    except OSError:
+        return ""
+
 def estimate_reading_minutes(src: str) -> int:
     # strip code blocks roughly
     plain = re.sub(r"```[\s\S]*?```", "", src)
@@ -738,6 +761,7 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
     part = PARTS[ch["part"]]
     refs = count_refs(src)
     read_min = estimate_reading_minutes(src)
+    last_edit = source_mtime(ch)
     showcase_bar = build_showcase_bar()
     chap_nav = build_prev_next_nav(ch)
     outline_entries = extract_h2_outline(body_html)
@@ -818,10 +842,10 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
     <h1 class="chap-title">{html.escape(display_en)}<span class="cn">{html.escape(display_cn)}</span></h1>
   </div>
   <aside class="chap-meta">
-    <div><div class="km">part</div><div class="vm">{html.escape(part['cn'])}（{html.escape(part['en'])}）</div></div>
     <div><div class="km">topic</div><div class="vm m">{html.escape(ch['topic'])}</div></div>
     <div><div class="km">reading</div><div class="vm">≈ {read_min} min</div></div>
     <div><div class="km">source refs</div><div class="vm m">{refs}</div></div>
+    <div><div class="km">last edit</div><div class="vm m">{html.escape(last_edit or '—')}</div></div>
   </aside>
 </header>
 
