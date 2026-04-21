@@ -462,7 +462,7 @@
   }
   .ch-list a {
     display: grid;
-    grid-template-columns: 38px 1fr auto;
+    grid-template-columns: 38px 1fr auto 60px;
     gap: 14px;
     align-items: baseline;
     padding: 14px 0;
@@ -504,6 +504,15 @@
     color: var(--ash);
     white-space: nowrap;
   }
+  .ch-list .ch-time {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    color: var(--ash);
+    text-align: right;
+    white-space: nowrap;
+  }
+  .ch-list a:hover .ch-time { color: var(--rose); }
 
   /* SAMPLE reading — magazine article layout */
   .sample {
@@ -957,8 +966,8 @@
         <p class="part-note">先把"功能叫什么"和"真实形态"铺平</p>
       </div>
       <ol class="ch-list">
-        <li><a href="./ch01/"><span class="ch-num">01</span><span class="ch-title"><span class="en">Feature Inventory</span><span class="sep">·</span>功能全景清单</span><span class="ch-meta">入口 · 命令 · 工具</span></a></li>
-        <li><a href="./ch02/"><span class="ch-num">02</span><span class="ch-title"><span class="en">Showcase</span><span class="sep">·</span>典型使用场景</span><span class="ch-meta">five real tasks</span></a></li>
+        <li><a href="./ch01/"><span class="ch-num">01</span><span class="ch-title"><span class="en">Feature Inventory</span><span class="sep">·</span>功能全景清单</span><span class="ch-meta">入口 · 命令 · 工具</span><span class="ch-time">~23 min</span></a></li>
+        <li><a href="./ch02/"><span class="ch-num">02</span><span class="ch-title"><span class="en">Showcase</span><span class="sep">·</span>典型使用场景</span><span class="ch-meta">five real tasks</span><span class="ch-time">~14 min</span></a></li>
       </ol>
     </div>
 
@@ -970,13 +979,13 @@
         <p class="part-note">主循环、子 agent、计划、隔离、上下文、工具、权限</p>
       </div>
       <ol class="ch-list">
-        <li><a href="./ch03/"><span class="ch-num">03</span><span class="ch-title"><span class="en">Agent Loop</span><span class="sep">·</span>推理·工具循环</span><span class="ch-meta">QueryEngine · query</span></a></li>
-        <li><a href="./ch04/"><span class="ch-num">04</span><span class="ch-title"><span class="en">Multi-Agent</span><span class="sep">·</span>Sub-Agent 协程调度</span><span class="ch-meta">coroutine</span></a></li>
-        <li><a href="./ch05/"><span class="ch-num">05</span><span class="ch-title"><span class="en">Plan Mode</span><span class="sep">·</span>让 Agent 先想后做</span><span class="ch-meta">read-only</span></a></li>
-        <li><a href="./ch06/"><span class="ch-num">06</span><span class="ch-title"><span class="en">Worktree</span><span class="sep">·</span>隔离模式</span><span class="ch-meta">git isolation</span></a></li>
-        <li><a href="./ch07/"><span class="ch-num">07</span><span class="ch-title"><span class="en">Context</span><span class="sep">·</span>上下文管理与记忆</span><span class="ch-meta">compaction</span></a></li>
-        <li><a href="./ch08/"><span class="ch-num">08</span><span class="ch-title"><span class="en">Tools</span><span class="sep">·</span>Tool 接口与 ToolSearch</span><span class="ch-meta">deferred tools</span></a></li>
-        <li><a href="./ch09/"><span class="ch-num">09</span><span class="ch-title"><span class="en">Permissions</span><span class="sep">·</span>每次都问却不烦</span><span class="ch-meta">ladder</span></a></li>
+        <li><a href="./ch03/"><span class="ch-num">03</span><span class="ch-title"><span class="en">Agent Loop</span><span class="sep">·</span>推理·工具循环</span><span class="ch-meta">QueryEngine · query</span><span class="ch-time">~25 min</span></a></li>
+        <li><a href="./ch04/"><span class="ch-num">04</span><span class="ch-title"><span class="en">Multi-Agent</span><span class="sep">·</span>Sub-Agent 协程调度</span><span class="ch-meta">coroutine</span><span class="ch-time">~27 min</span></a></li>
+        <li><a href="./ch05/"><span class="ch-num">05</span><span class="ch-title"><span class="en">Plan Mode</span><span class="sep">·</span>让 Agent 先想后做</span><span class="ch-meta">read-only</span><span class="ch-time">~13 min</span></a></li>
+        <li><a href="./ch06/"><span class="ch-num">06</span><span class="ch-title"><span class="en">Worktree</span><span class="sep">·</span>隔离模式</span><span class="ch-meta">git isolation</span><span class="ch-time">~15 min</span></a></li>
+        <li><a href="./ch07/"><span class="ch-num">07</span><span class="ch-title"><span class="en">Context</span><span class="sep">·</span>上下文管理与记忆</span><span class="ch-meta">compaction</span><span class="ch-time">~22 min</span></a></li>
+        <li><a href="./ch08/"><span class="ch-num">08</span><span class="ch-title"><span class="en">Tools</span><span class="sep">·</span>Tool 接口与 ToolSearch</span><span class="ch-meta">deferred tools</span><span class="ch-time">~20 min</span></a></li>
+        <li><a href="./ch09/"><span class="ch-num">09</span><span class="ch-title"><span class="en">Permissions</span><span class="sep">·</span>每次都问却不烦</span><span class="ch-meta">ladder</span><span class="ch-time">~20 min</span></a></li>
       </ol>
     </div>
 
@@ -988,11 +997,11 @@
         <p class="part-note">四层扩展面如何分工</p>
       </div>
       <ol class="ch-list">
-        <li><a href="./ch10/"><span class="ch-num">10</span><span class="ch-title"><span class="en">Skills</span><span class="sep">·</span>技能系统</span><span class="ch-meta">prompt pack</span></a></li>
-        <li><a href="./ch11/"><span class="ch-num">11</span><span class="ch-title"><span class="en">Plugins</span><span class="sep">·</span>插件系统</span><span class="ch-meta">out-of-tree</span></a></li>
-        <li><a href="./ch12/"><span class="ch-num">12</span><span class="ch-title"><span class="en">MCP</span><span class="sep">·</span>集成与 upstream 代理</span><span class="ch-meta">bridge</span></a></li>
-        <li><a href="./ch13/"><span class="ch-num">13</span><span class="ch-title"><span class="en">Cron</span><span class="sep">·</span>定时任务</span><span class="ch-meta">schedule</span></a></li>
-        <li><a href="./ch14/"><span class="ch-num">14</span><span class="ch-title"><span class="en">Hooks</span><span class="sep">·</span>可编程生命周期</span><span class="ch-meta">lifecycle</span></a></li>
+        <li><a href="./ch10/"><span class="ch-num">10</span><span class="ch-title"><span class="en">Skills</span><span class="sep">·</span>技能系统</span><span class="ch-meta">prompt pack</span><span class="ch-time">~21 min</span></a></li>
+        <li><a href="./ch11/"><span class="ch-num">11</span><span class="ch-title"><span class="en">Plugins</span><span class="sep">·</span>插件系统</span><span class="ch-meta">out-of-tree</span><span class="ch-time">~18 min</span></a></li>
+        <li><a href="./ch12/"><span class="ch-num">12</span><span class="ch-title"><span class="en">MCP</span><span class="sep">·</span>集成与 upstream 代理</span><span class="ch-meta">bridge</span><span class="ch-time">~23 min</span></a></li>
+        <li><a href="./ch13/"><span class="ch-num">13</span><span class="ch-title"><span class="en">Cron</span><span class="sep">·</span>定时任务</span><span class="ch-meta">schedule</span><span class="ch-time">~23 min</span></a></li>
+        <li><a href="./ch14/"><span class="ch-num">14</span><span class="ch-title"><span class="en">Hooks</span><span class="sep">·</span>可编程生命周期</span><span class="ch-meta">lifecycle</span><span class="ch-time">~18 min</span></a></li>
       </ol>
     </div>
 
@@ -1004,12 +1013,12 @@
         <p class="part-note">从主动提示到多端，从后台到远程</p>
       </div>
       <ol class="ch-list">
-        <li><a href="./ch15/"><span class="ch-num">15</span><span class="ch-title"><span class="en">Proactive</span><span class="sep">·</span>主动提示而不打扰</span><span class="ch-meta">nudges</span></a></li>
-        <li><a href="./ch16/"><span class="ch-num">16</span><span class="ch-title"><span class="en">Background</span><span class="sep">·</span>后台任务</span><span class="ch-meta">async</span></a></li>
-        <li><a href="./ch17/"><span class="ch-num">17</span><span class="ch-title"><span class="en">Remote</span><span class="sep">·</span>Sessions 与 Teleport</span><span class="ch-meta">broker</span></a></li>
-        <li><a href="./ch18/"><span class="ch-num">18</span><span class="ch-title"><span class="en">Multi-host</span><span class="sep">·</span>IDE / Chrome / Computer Use</span><span class="ch-meta">integration</span></a></li>
-        <li><a href="./ch19/"><span class="ch-num">19</span><span class="ch-title"><span class="en">Buddy</span><span class="sep">·</span>宠物系统</span><span class="ch-meta">companion</span></a></li>
-        <li><a href="./ch20/"><span class="ch-num">20</span><span class="ch-title"><span class="en">Input</span><span class="sep">·</span>语音 / Vim / 键位</span><span class="ch-meta">input stack</span></a></li>
+        <li><a href="./ch15/"><span class="ch-num">15</span><span class="ch-title"><span class="en">Proactive</span><span class="sep">·</span>主动提示而不打扰</span><span class="ch-meta">nudges</span><span class="ch-time">~22 min</span></a></li>
+        <li><a href="./ch16/"><span class="ch-num">16</span><span class="ch-title"><span class="en">Background</span><span class="sep">·</span>后台任务</span><span class="ch-meta">async</span><span class="ch-time">~18 min</span></a></li>
+        <li><a href="./ch17/"><span class="ch-num">17</span><span class="ch-title"><span class="en">Remote</span><span class="sep">·</span>Sessions 与 Teleport</span><span class="ch-meta">broker</span><span class="ch-time">~24 min</span></a></li>
+        <li><a href="./ch18/"><span class="ch-num">18</span><span class="ch-title"><span class="en">Multi-host</span><span class="sep">·</span>IDE / Chrome / Computer Use</span><span class="ch-meta">integration</span><span class="ch-time">~21 min</span></a></li>
+        <li><a href="./ch19/"><span class="ch-num">19</span><span class="ch-title"><span class="en">Buddy</span><span class="sep">·</span>宠物系统</span><span class="ch-meta">companion</span><span class="ch-time">~20 min</span></a></li>
+        <li><a href="./ch20/"><span class="ch-num">20</span><span class="ch-title"><span class="en">Input</span><span class="sep">·</span>语音 / Vim / 键位</span><span class="ch-meta">input stack</span><span class="ch-time">~22 min</span></a></li>
       </ol>
     </div>
 
@@ -1021,9 +1030,9 @@
         <p class="part-note">从 Ink UI 到可观测，再到把它当库用</p>
       </div>
       <ol class="ch-list">
-        <li><a href="./ch21/"><span class="ch-num">21</span><span class="ch-title"><span class="en">Ink UI</span><span class="sep">·</span>终端 UI 背后的工程</span><span class="ch-meta">react in terminal</span></a></li>
-        <li><a href="./ch22/"><span class="ch-num">22</span><span class="ch-title"><span class="en">Observability</span><span class="sep">·</span>成本 / 可观测 / 调试</span><span class="ch-meta">cost · trace</span></a></li>
-        <li><a href="./ch23/"><span class="ch-num">23</span><span class="ch-title"><span class="en">Agent SDK</span><span class="sep">·</span>把 Claude Code 当库用</span><span class="ch-meta">embed</span></a></li>
+        <li><a href="./ch21/"><span class="ch-num">21</span><span class="ch-title"><span class="en">Ink UI</span><span class="sep">·</span>终端 UI 背后的工程</span><span class="ch-meta">react in terminal</span><span class="ch-time">~18 min</span></a></li>
+        <li><a href="./ch22/"><span class="ch-num">22</span><span class="ch-title"><span class="en">Observability</span><span class="sep">·</span>成本 / 可观测 / 调试</span><span class="ch-meta">cost · trace</span><span class="ch-time">~18 min</span></a></li>
+        <li><a href="./ch23/"><span class="ch-num">23</span><span class="ch-title"><span class="en">Agent SDK</span><span class="sep">·</span>把 Claude Code 当库用</span><span class="ch-meta">embed</span><span class="ch-time">~17 min</span></a></li>
       </ol>
     </div>
 
