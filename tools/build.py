@@ -803,6 +803,8 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到正文</a>
+
 {showcase_bar}
 
 <header class="chap-head">
@@ -823,7 +825,7 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
   </aside>
 </header>
 
-<article class="article">
+<article class="article" id="main">
   <div class="prose">
 {outline_html}{body_html}
   </div>

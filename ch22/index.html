@@ -26,6 +26,8 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到正文</a>
+
 <nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
 
 <header class="chap-head">
@@ -46,7 +48,7 @@
   </aside>
 </header>
 
-<article class="article">
+<article class="article" id="main">
   <div class="prose">
 <details class="chap-outline"><summary>§ 本章目录 <span class="count">· 12 节</span></summary><ol><li><a href="#22-1-用户看到的三层观测">22.1 用户看到的三层观测</a></li><li><a href="#22-2-为什么挑这个设计出来讲">22.2 为什么挑这个设计出来讲</a></li><li><a href="#22-3-cost-从-api-usage-到屏幕">22.3 Cost：从 API usage 到屏幕</a></li><li><a href="#22-4-cost-stats-usage-的分工">22.4 /cost、/stats、/usage 的分工</a></li><li><a href="#22-5-costhook-作为消费者">22.5 costHook：作为消费者</a></li><li><a href="#22-6-prompt-cache-命中暴露在哪里">22.6 Prompt cache 命中暴露在哪里</a></li><li><a href="#22-7-statusline-shell-stdin-替代-dsl">22.7 Statusline：shell + stdin 替代 DSL</a></li><li><a href="#22-8-heapdump-内存取证">22.8 /heapdump：内存取证</a></li><li><a href="#22-9-debug-tool-call-在本仓库是-stub">22.9 /debug-tool-call：在本仓库是 stub</a></li><li><a href="#22-10-doctor-诊断-不自愈">22.10 /doctor：诊断，不自愈</a></li><li><a href="#22-11-设计取舍">22.11 设计取舍</a></li><li><a href="#22-12-可迁移的点">22.12 可迁移的点</a></li></ol></details><h2 id="22-1-用户看到的三层观测">22.1 用户看到的三层观测<a class="h-anchor" href="#22-1-用户看到的三层观测" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 是长跑进程。一次会话可能跨几小时、调上百次 tool、读写上千文件、烧几块钱 token，还可能把 Node 堆吃到 2 GB。工程师需要三件事：</p>

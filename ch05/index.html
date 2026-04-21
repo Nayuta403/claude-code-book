@@ -26,6 +26,8 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到正文</a>
+
 <nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
 
 <header class="chap-head">
@@ -46,7 +48,7 @@
   </aside>
 </header>
 
-<article class="article">
+<article class="article" id="main">
   <div class="prose">
 <details class="chap-outline"><summary>§ 本章目录 <span class="count">· 8 节</span></summary><ol><li><a href="#1-用户看到什么">1. 用户看到什么</a></li><li><a href="#2-为什么挑这个设计出来讲">2. 为什么挑这个设计出来讲</a></li><li><a href="#3-关键数据结构">3. 关键数据结构</a></li><li><a href="#4-关键流程">4. 关键流程</a></li><li><a href="#5-设计取舍">5. 设计取舍</a></li><li><a href="#6-可迁移的点">6. 可迁移的点</a></li><li><a href="#7-ultraplan-不在这章">7. /ultraplan 不在这章</a></li><li><a href="#8-本章回顾">8. 本章回顾</a></li></ol></details><h2 id="1-用户看到什么">1. 用户看到什么<a class="h-anchor" href="#1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">按下 Shift+Tab 两次，终端状态行从 <code>⏵⏵ accept edits on</code> 切到 <code>⏸ plan mode on</code>。Claude 此后读代码、跑 <code>git</code>、查结构，但<strong>不会</strong>动源文件——它会把思考过程写进一个 plan 文件，最后弹出一个"Exit plan mode?"对话框等你批准；批准后进入实现阶段，并把整份计划连同"你已批准，现在可以开始写代码"的提示一并送回模型。</p>

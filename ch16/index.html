@@ -26,6 +26,8 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到正文</a>
+
 <nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
 
 <header class="chap-head">
@@ -46,7 +48,7 @@
   </aside>
 </header>
 
-<article class="article">
+<article class="article" id="main">
   <div class="prose">
 <details class="chap-outline"><summary>§ 本章目录 <span class="count">· 8 节</span></summary><ol><li><a href="#术语先对齐-claude-code-里有两个-后台">术语先对齐 —— Claude Code 里有两个"后台"</a></li><li><a href="#值得借鉴的一点">值得借鉴的一点</a></li><li><a href="#进程级后台-五个角色">进程级后台 —— 五个角色</a></li><li><a href="#三个-watchdog-自动化">三个 watchdog / 自动化</a></li><li><a href="#回灌与重同步">回灌与重同步</a></li><li><a href="#会话级后台">会话级后台</a></li><li><a href="#设计取舍">设计取舍</a></li><li><a href="#可迁移的点">可迁移的点</a></li></ol></details><h2 id="术语先对齐-claude-code-里有两个-后台">术语先对齐 —— Claude Code 里有两个"后台"<a class="h-anchor" href="#术语先对齐-claude-code-里有两个-后台" aria-label="permalink">¶</a></h2>
 <p class="drop">本章要写的"后台"在 Claude Code 里至少分两层。它们不是同一种抽象，只是共用了一部分基础设施和同一个按键。Owner 先把这两层分清楚，正文再逐层讲：</p>

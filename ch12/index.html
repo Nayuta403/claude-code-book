@@ -26,6 +26,8 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到正文</a>
+
 <nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
 
 <header class="chap-head">
@@ -46,7 +48,7 @@
   </aside>
 </header>
 
-<article class="article">
+<article class="article" id="main">
   <div class="prose">
 <details class="chap-outline"><summary>§ 本章目录 <span class="count">· 10 节</span></summary><ol><li><a href="#1-先说一段-mcp-是什么">1. 先说一段 MCP 是什么</a></li><li><a href="#2-claude-code-的三重-mcp-身份">2. Claude Code 的三重 MCP 身份</a></li><li><a href="#3-为什么挑-工具适配层-出来讲">3. 为什么挑"工具适配层"出来讲</a></li><li><a href="#4-关键数据结构">4. 关键数据结构</a></li><li><a href="#5-关键流程">5. 关键流程</a></li><li><a href="#7-mcp-认证-把-oauth-包装成一个伪工具">7. MCP 认证：把 OAuth 包装成一个伪工具</a></li><li><a href="#8-claude-code-作为-mcp-server">8. Claude Code 作为 MCP server</a></li><li><a href="#9-shims-下的两个-mcp-只讲怎么接入">9. shims 下的两个 MCP：只讲怎么接入</a></li><li><a href="#10-名字容易混的两个目录-bridge-和-upstreamproxy">10. 名字容易混的两个目录：bridge 和 upstreamproxy</a></li><li><a href="#11-可迁移的设计点">11. 可迁移的设计点</a></li></ol></details><blockquote><p><strong>关于章节标题的澄清</strong>：标题里保留"upstream 代理"字样是历史排版原因（STATE.json 的章节 ID 与索引已稳定，本次 Editor 不改 title）。本章主体是 <strong>MCP 集成</strong>。两个名字容易让人误会的目录都<strong>与 MCP 协议无关</strong>：</p>
 <ul>

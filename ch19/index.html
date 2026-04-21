@@ -26,6 +26,8 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到正文</a>
+
 <nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
 
 <header class="chap-head">
@@ -46,7 +48,7 @@
   </aside>
 </header>
 
-<article class="article">
+<article class="article" id="main">
   <div class="prose">
 <details class="chap-outline"><summary>§ 本章目录 <span class="count">· 12 节</span></summary><ol><li><a href="#19-1-用户看到的是什么">19.1 用户看到的是什么</a></li><li><a href="#19-2-为什么挑这个功能出来讲">19.2 为什么挑这个功能出来讲</a></li><li><a href="#19-3-关键数据结构-bones-soul-分层">19.3 关键数据结构：bones / soul 分层</a></li><li><a href="#19-4-sprite-系统">19.4 Sprite 系统</a></li><li><a href="#19-5-状态机-弱">19.5 状态机（弱）</a></li><li><a href="#19-6-prompt-注入-不让主-agent-串戏">19.6 Prompt 注入：不让主 agent 串戏</a></li><li><a href="#19-7-通知集成-三条触发路径">19.7 通知集成：三条触发路径</a></li><li><a href="#19-8-不打扰-是怎么做到的">19.8 "不打扰"是怎么做到的</a></li><li><a href="#19-9-完整的消费图">19.9 完整的消费图</a></li><li><a href="#19-10-设计取舍">19.10 设计取舍</a></li><li><a href="#19-11-可以带走的三个点">19.11 可以带走的三个点</a></li><li><a href="#19-12-边界说明">19.12 边界说明</a></li></ol></details><h2 id="19-1-用户看到的是什么">19.1 用户看到的是什么<a class="h-anchor" href="#19-1-用户看到的是什么" aria-label="permalink">¶</a></h2>
 <p class="drop">Buddy 是 Claude Code 在 2026-04-01 释出的一个小玩意儿：终端输入框右下角蹲着一只 5 行高、12 列宽的 ASCII 小动物，缓慢扭动，偶尔眨眼。主 agent 回了一轮话后，动物上方会浮出一个 round-border 的气泡，它讲一句跟这轮对话有关的俏皮话，10 秒后自动退去；用户滚屏一下，气泡立刻消失。</p>

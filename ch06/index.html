@@ -26,6 +26,8 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到正文</a>
+
 <nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
 
 <header class="chap-head">
@@ -46,7 +48,7 @@
   </aside>
 </header>
 
-<article class="article">
+<article class="article" id="main">
   <div class="prose">
 <details class="chap-outline"><summary>§ 本章目录 <span class="count">· 9 节</span></summary><ol><li><a href="#6-1-用户看到什么">6.1 用户看到什么</a></li><li><a href="#6-2-为什么挑这个设计出来讲">6.2 为什么挑这个设计出来讲</a></li><li><a href="#6-3-关键数据结构">6.3 关键数据结构</a></li><li><a href="#6-4-关键流程">6.4 关键流程</a></li><li><a href="#6-5-两条并行路径-session-与-agent">6.5 两条并行路径：session 与 agent</a></li><li><a href="#6-6-hook-作为-vcs-抽象">6.6 Hook 作为 VCS 抽象</a></li><li><a href="#6-7-设计取舍">6.7 设计取舍</a></li><li><a href="#6-8-可迁移的点">6.8 可迁移的点</a></li><li><a href="#6-9-边界-交叉引用">6.9 边界（交叉引用）</a></li></ol></details><h2 id="6-1-用户看到什么">6.1 用户看到什么<a class="h-anchor" href="#6-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 提供三条进入 worktree 的路径，底层共用同一套机制。</p>

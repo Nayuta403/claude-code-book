@@ -26,6 +26,8 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到正文</a>
+
 <nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
 
 <header class="chap-head">
@@ -46,7 +48,7 @@
   </aside>
 </header>
 
-<article class="article">
+<article class="article" id="main">
   <div class="prose">
 <details class="chap-outline"><summary>§ 本章目录 <span class="count">· 13 节</span></summary><ol><li><a href="#17-1-用户看到什么">17.1 用户看到什么</a></li><li><a href="#17-2-为什么挑这个设计出来讲">17.2 为什么挑这个设计出来讲</a></li><li><a href="#17-3-remote-session-的四种形态-先把概念对齐">17.3 Remote session 的四种形态（先把概念对齐）</a></li><li><a href="#17-4-关键数据结构">17.4 关键数据结构</a></li><li><a href="#17-5-关键流程之一-remote-session-的主干">17.5 关键流程之一：Remote session 的主干</a></li><li><a href="#17-6-关键流程之二-permission-反向回路-本章核心">17.6 关键流程之二：permission 反向回路（本章核心）</a></li><li><a href="#17-7-teleport-的确切语义">17.7 Teleport 的确切语义</a></li><li><a href="#17-8-关键流程之三-断线重连与-transport-抽象">17.8 关键流程之三：断线重连与 transport 抽象</a></li><li><a href="#17-9-bridge-本地跑-agent-远端-ui-的另一面">17.9 Bridge：本地跑 agent、远端 UI 的另一面</a></li><li><a href="#17-10-directconnect-与-ssh-两个简化版本">17.10 DirectConnect 与 SSH：两个简化版本</a></li><li><a href="#17-11-设计取舍总结">17.11 设计取舍总结</a></li><li><a href="#17-12-可迁移的点">17.12 可迁移的点</a></li><li><a href="#17-13-延伸阅读">17.13 延伸阅读</a></li></ol></details><h2 id="17-1-用户看到什么">17.1 用户看到什么<a class="h-anchor" href="#17-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">Claude Code 里"跨机器"有四个入口，用户感知不同：</p>

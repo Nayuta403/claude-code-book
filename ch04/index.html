@@ -26,6 +26,8 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到正文</a>
+
 <nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
 
 <header class="chap-head">
@@ -46,7 +48,7 @@
   </aside>
 </header>
 
-<article class="article">
+<article class="article" id="main">
   <div class="prose">
 <details class="chap-outline"><summary>§ 本章目录 <span class="count">· 12 节</span></summary><ol><li><a href="#4-1-用户看到什么">4.1　用户看到什么</a></li><li><a href="#4-2-为什么挑这个设计出来讲">4.2　为什么挑这个设计出来讲</a></li><li><a href="#4-3-两种形态-agenttool-同步-异步-vs-task-家族">4.3　两种形态：AgentTool 同步/异步 vs. Task 家族</a></li><li><a href="#4-4-关键数据结构">4.4　关键数据结构</a></li><li><a href="#4-5-关键流程-一次-sub-agent-跑完一生">4.5　关键流程：一次 sub-agent 跑完一生</a></li><li><a href="#4-6-上下文隔离的落地">4.6　上下文隔离的落地</a></li><li><a href="#4-7-task-家族的-6-个工具">4.7　Task 家族的 6 个工具</a></li><li><a href="#4-8-fork-最大化-prompt-cache-共享的-sub-agent-变体">4.8　Fork：最大化 prompt cache 共享的 sub-agent 变体</a></li><li><a href="#4-9-coordinator-与-swarm-sub-agent-之上再加一层">4.9　Coordinator 与 Swarm：sub-agent 之上再加一层</a></li><li><a href="#4-10-权限回传-sub-agent-怎么问父-用户">4.10　权限回传：sub-agent 怎么问父/用户</a></li><li><a href="#4-11-设计取舍">4.11　设计取舍</a></li><li><a href="#4-12-可迁移的点">4.12　可迁移的点</a></li></ol></details><h2 id="4-1-用户看到什么">4.1　用户看到什么<a class="h-anchor" href="#4-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">在 Claude Code 的交互里，sub-agent 有两种观感。</p>

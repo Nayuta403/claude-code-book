@@ -26,6 +26,8 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到正文</a>
+
 <nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
 
 <header class="chap-head">
@@ -46,7 +48,7 @@
   </aside>
 </header>
 
-<article class="article">
+<article class="article" id="main">
   <div class="prose">
 <details class="chap-outline"><summary>§ 本章目录 <span class="count">· 7 节</span></summary><ol><li><a href="#15-1-用户看到什么">15.1 用户看到什么</a></li><li><a href="#15-2-为什么挑这个设计讲">15.2 为什么挑这个设计讲</a></li><li><a href="#15-3-关键数据结构">15.3 关键数据结构</a></li><li><a href="#15-4-关键流程">15.4 关键流程</a></li><li><a href="#15-5-设计取舍">15.5 设计取舍</a></li><li><a href="#15-6-可迁移的点">15.6 可迁移的点</a></li><li><a href="#附注-仓库恢复期的已知缺口">附注：仓库恢复期的已知缺口</a></li></ol></details><h2 id="15-1-用户看到什么">15.1 用户看到什么<a class="h-anchor" href="#15-1-用户看到什么" aria-label="permalink">¶</a></h2>
 <p class="drop">常规的 Claude Code 会话里，用户说一句、模型回一句。<code>claude --proactive</code> （或者设 <code>CLAUDE_CODE_PROACTIVE=1</code>）启动之后，模型不再等待用户输入 —— 它自己会不停"醒来"，检查有没有活干、没活就睡一会儿再试。REPL 的 footer 区在 proactive 启用时会多出一行 <code>waiting 30s</code> 的倒计时提示，告诉用户下一次 心跳什么时候到。用户按 Esc 中断，心跳就暂停；用户下一次提交输入，心跳 自动恢复。</p>

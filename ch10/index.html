@@ -26,6 +26,8 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到正文</a>
+
 <nav class="showcase-bar"><a href="../">← 回目录</a><div class="switcher"><a href="../showcase.html">设计备选</a></div></nav>
 
 <header class="chap-head">
@@ -46,7 +48,7 @@
   </aside>
 </header>
 
-<article class="article">
+<article class="article" id="main">
   <div class="prose">
 <details class="chap-outline"><summary>§ 本章目录 <span class="count">· 11 节</span></summary><ol><li><a href="#10-1-用户看到什么">10.1 用户看到什么</a></li><li><a href="#10-2-为什么挑这个设计讲">10.2 为什么挑这个设计讲</a></li><li><a href="#10-3-一个-skill-的形态">10.3 一个 skill 的形态</a></li><li><a href="#10-4-加载路径-四种来源合流">10.4 加载路径：四种来源合流</a></li><li><a href="#10-5-两阶段召回-描述常驻-正文按需">10.5 两阶段召回：描述常驻，正文按需</a></li><li><a href="#10-6-mcp-wrapped-skill-的信任边界">10.6 MCP-wrapped skill 的信任边界</a></li><li><a href="#10-7-权限-skilltool-的自动放行白名单">10.7 权限：SkillTool 的自动放行白名单</a></li><li><a href="#10-8-skills-命令与-ui">10.8 /skills 命令与 UI</a></li><li><a href="#10-9-bundled-skill-的形态学">10.9 Bundled skill 的形态学</a></li><li><a href="#10-10-设计取舍">10.10 设计取舍</a></li><li><a href="#10-11-可迁移的点">10.11 可迁移的点</a></li></ol></details><p class="drop">本章讲 Claude Code 里被叫作 <strong>skill</strong> 的那套扩展机制。它不是工具（Tool，<a class="chref" href="../ch08/">ch.08</a>），也不是记忆（memdir，<a class="chref" href="../ch07/">ch.07</a>），是专门放"知识 + 流程 + playbook"的一等扩展。</p>
 <blockquote><p><strong>本章的价值判断</strong>：Claude Code 把"模型可以调用的动作"和"要注入到 prompt 的内容"分到两条完全独立的通道，用不同的注册机制、不同的缓存、不同的 token 预算治理。skill 是后一条通道的完整实现。这个分离本身——而不是具体某个 skill——是值得借鉴的。</p></blockquote>
