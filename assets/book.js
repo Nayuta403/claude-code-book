@@ -74,6 +74,66 @@
     initHelpOverlay();
     initOutlineSpy();
     initPrintExpand();
+    initTocFilter();
+  }
+
+  function initTocFilter() {
+    var input = document.getElementById("toc-filter");
+    if (!input) return;
+    var parts = document.querySelectorAll(".toc .part");
+    var count = document.querySelector(".toc-count");
+    var empty = document.querySelector(".toc-empty");
+    var emptyQ = empty && empty.querySelector(".q");
+
+    function apply() {
+      var q = input.value.trim().toLowerCase();
+      var shown = 0;
+      for (var i = 0; i < parts.length; i++) {
+        var part = parts[i];
+        var items = part.querySelectorAll(".ch-list li");
+        var visibleInPart = 0;
+        for (var j = 0; j < items.length; j++) {
+          var item = items[j];
+          var text = (item.textContent || "").toLowerCase();
+          var match = q === "" || text.indexOf(q) >= 0;
+          item.style.display = match ? "" : "none";
+          if (match) { visibleInPart++; shown++; }
+        }
+        part.style.display = visibleInPart > 0 ? "" : "none";
+      }
+      if (count) {
+        count.textContent = q === "" ? "" : "· " + shown + " 章匹配";
+      }
+      if (empty) {
+        if (q !== "" && shown === 0) {
+          if (emptyQ) emptyQ.textContent = input.value;
+          empty.removeAttribute("hidden");
+        } else {
+          empty.setAttribute("hidden", "");
+        }
+      }
+    }
+
+    input.addEventListener("input", apply);
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        input.value = "";
+        apply();
+        input.blur();
+      }
+    });
+
+    // Global "/" to focus the search (vim / GitHub convention)
+    document.addEventListener("keydown", function (e) {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      var tag = e.target && e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "/" && !e.shiftKey) {
+        input.focus();
+        input.select();
+        e.preventDefault();
+      }
+    });
   }
 
   function initPrintExpand() {
@@ -172,6 +232,7 @@
         '<dl>' +
           '<dt><kbd>[</kbd><span class="or">/</span><kbd>←</kbd></dt><dd>上一章</dd>' +
           '<dt><kbd>]</kbd><span class="or">/</span><kbd>→</kbd></dt><dd>下一章</dd>' +
+          '<dt><kbd>/</kbd></dt><dd>聚焦首页搜索框</dd>' +
           '<dt><kbd>?</kbd></dt><dd>显示 / 隐藏此面板</dd>' +
           '<dt><kbd>Esc</kbd></dt><dd>关闭此面板</dd>' +
         '</dl>' +
