@@ -910,6 +910,47 @@ footer.colophon .right {
 }
 
 /* ========================================================== */
+/* Forced-colors (Windows High Contrast) — keep everything legible */
+/* ========================================================== */
+@media (forced-colors: active) {
+  /* Visible borders on interactive chrome */
+  .copy-btn,
+  .to-top-btn,
+  .btn,
+  .kb-help-card,
+  .chap-meta,
+  .chap-nav .nav-link,
+  .article .prose figure.codeblock pre,
+  .article .prose blockquote,
+  .article .prose .chap-outline,
+  .crumb .part-tag {
+    border: 1px solid CanvasText !important;
+  }
+  /* Route key colors through system tokens */
+  body,
+  .article .prose { color: CanvasText; background: Canvas; }
+  .article .prose a { color: LinkText; }
+  .article .prose a:visited { color: VisitedText; }
+  .article .prose code,
+  .article .prose code.ref,
+  .article .prose .chap-outline a.current,
+  .chap-num,
+  .crumb .part-tag { color: CanvasText !important; background: Canvas !important; }
+  /* Decorative gradients in the hero card add no info — strip them */
+  .hero-right::before,
+  body::before { display: none !important; }
+  /* Focus rings are critical */
+  *:focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px !important;
+  }
+  /* Progress bar uses a visible color */
+  .read-progress { background: Highlight !important; }
+  /* h-anchor pilcrow can stay opacity-based but ensure it renders */
+  .article .prose .h-anchor { color: LinkText !important; }
+}
+
+/* ========================================================== */
 /* Print stylesheet — chapter pages render clean as PDF / paper */
 /* ========================================================== */
 @media print {

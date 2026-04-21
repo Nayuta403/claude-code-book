@@ -910,6 +910,16 @@
     outline-offset: 2px;
   }
 
+  @media (forced-colors: active) {
+    .btn, .kb-help-card, .copy-btn, .to-top-btn { border: 1px solid CanvasText !important; }
+    body { color: CanvasText; background: Canvas; }
+    a { color: LinkText; }
+    a:visited { color: VisitedText; }
+    .hero-right::before { display: none !important; }
+    *:focus-visible { outline: 2px solid Highlight !important; outline-offset: 2px !important; }
+    .read-progress { background: Highlight !important; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.001ms !important;
