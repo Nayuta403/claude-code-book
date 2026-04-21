@@ -286,6 +286,15 @@ h1.chap-title .cn {
   color: var(--rose);
   border-bottom-color: var(--rose-dim);
 }
+.article .prose .chap-outline a.current {
+  color: var(--rose);
+  font-weight: 500;
+  border-bottom: 1px solid var(--rose-dim);
+}
+.article .prose .chap-outline li:has(a.current)::before {
+  color: var(--rose);
+  font-weight: 600;
+}
 @media (max-width: 720px) {
   .article .prose .chap-outline ol { columns: 1; }
 }

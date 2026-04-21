@@ -72,6 +72,55 @@
     initTopBtn();
     initKeyNav();
     initHelpOverlay();
+    initOutlineSpy();
+  }
+
+  function initOutlineSpy() {
+    var outline = document.querySelector(".chap-outline");
+    if (!outline || !("IntersectionObserver" in window)) return;
+
+    var links = outline.querySelectorAll('a[href^="#"]');
+    if (!links.length) return;
+
+    var map = {};
+    for (var i = 0; i < links.length; i++) {
+      var href = links[i].getAttribute("href") || "";
+      var id;
+      try { id = decodeURIComponent(href.slice(1)); } catch (e) { id = href.slice(1); }
+      if (id) map[id] = links[i];
+    }
+
+    var currentLink = null;
+    function setCurrent(link) {
+      if (currentLink === link) return;
+      if (currentLink) currentLink.classList.remove("current");
+      if (link) link.classList.add("current");
+      currentLink = link;
+    }
+
+    // Choose the intersecting heading that sits highest in the viewport.
+    var visible = {};  // id → intersectionRatio (or a "seen" flag)
+    var io = new IntersectionObserver(function (entries) {
+      for (var j = 0; j < entries.length; j++) {
+        var e = entries[j];
+        if (e.isIntersecting) visible[e.target.id] = e.boundingClientRect.top;
+        else delete visible[e.target.id];
+      }
+      // pick the visible heading with the smallest top (closest to top of viewport)
+      var bestId = null, bestTop = Infinity;
+      for (var id in visible) {
+        if (visible[id] < bestTop) { bestId = id; bestTop = visible[id]; }
+      }
+      setCurrent(bestId ? map[bestId] : null);
+    }, {
+      rootMargin: "-72px 0px -60% 0px",
+      threshold: [0, 0.5, 1]
+    });
+
+    for (var id2 in map) {
+      var h = document.getElementById(id2);
+      if (h) io.observe(h);
+    }
   }
 
   function initHelpOverlay() {
