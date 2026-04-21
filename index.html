@@ -811,6 +811,43 @@
     .showcase-bar .switcher { gap: 14px; }
   }
 
+  /* Keyboard shortcut help overlay */
+  .kb-help {
+    position: fixed; inset: 0; z-index: 90;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+    background: color-mix(in oklch, var(--ink) 36%, transparent);
+    backdrop-filter: blur(3px);
+  }
+  .kb-help[hidden] { display: none; }
+  .kb-help-card {
+    background: var(--paper);
+    border: 1px solid var(--mist);
+    border-radius: 10px;
+    box-shadow: 0 24px 48px -20px oklch(20% 0.005 350 / 0.28);
+    padding: 28px 32px; max-width: 420px; width: 100%;
+  }
+  .kb-help h2 {
+    font-family: var(--display); font-style: italic; font-weight: 400;
+    font-size: 1.6rem; line-height: 1.1; letter-spacing: -0.01em;
+    color: var(--ink); margin: 0 0 18px;
+  }
+  .kb-help dl { margin: 0 0 14px; display: grid; grid-template-columns: auto 1fr; gap: 12px 24px; align-items: baseline; }
+  .kb-help dt { display: flex; align-items: center; gap: 6px; font-family: var(--mono); white-space: nowrap; }
+  .kb-help dt .or { color: var(--ash); font-size: 11px; }
+  .kb-help kbd {
+    display: inline-block; padding: 2px 8px;
+    background: var(--cream); border: 1px solid var(--mist); border-radius: 4px;
+    font-family: var(--mono); font-size: 12px; color: var(--ink);
+    min-width: 22px; text-align: center; line-height: 1.4;
+  }
+  .kb-help dd { margin: 0; font-family: var(--body); font-size: 15px; color: var(--charcoal); line-height: 1.4; }
+  .kb-help-foot {
+    margin: 18px 0 0; padding-top: 14px; border-top: 1px dashed var(--mist);
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--ash); text-align: center;
+  }
+
   /* Reading progress bar */
   .read-progress {
     position: fixed; top: 0; left: 0;

@@ -71,6 +71,54 @@
     initProgressBar();
     initTopBtn();
     initKeyNav();
+    initHelpOverlay();
+  }
+
+  function initHelpOverlay() {
+    if (document.querySelector(".kb-help")) return;
+    var el = document.createElement("div");
+    el.className = "kb-help";
+    el.setAttribute("hidden", "");
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-label", "键盘快捷键");
+    el.innerHTML =
+      '<div class="kb-help-card" role="document">' +
+        '<h2>键盘快捷键</h2>' +
+        '<dl>' +
+          '<dt><kbd>[</kbd><span class="or">/</span><kbd>←</kbd></dt><dd>上一章</dd>' +
+          '<dt><kbd>]</kbd><span class="or">/</span><kbd>→</kbd></dt><dd>下一章</dd>' +
+          '<dt><kbd>?</kbd></dt><dd>显示 / 隐藏此面板</dd>' +
+          '<dt><kbd>Esc</kbd></dt><dd>关闭此面板</dd>' +
+        '</dl>' +
+        '<p class="kb-help-foot">点击外部关闭</p>' +
+      '</div>';
+    document.body.appendChild(el);
+
+    function show() { el.removeAttribute("hidden"); }
+    function hide() { el.setAttribute("hidden", ""); }
+    function toggle() {
+      if (el.hasAttribute("hidden")) show(); else hide();
+    }
+
+    document.addEventListener("keydown", function (e) {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      var tag = e.target && e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.target && e.target.isContentEditable) return;
+
+      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        toggle();
+        e.preventDefault();
+      } else if (e.key === "Escape" && !el.hasAttribute("hidden")) {
+        hide();
+        e.preventDefault();
+      }
+    });
+    el.addEventListener("click", function (ev) {
+      // Close when clicking on the backdrop (element itself), not on the card
+      if (ev.target === el) hide();
+    });
   }
 
   function initKeyNav() {
