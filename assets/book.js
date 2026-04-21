@@ -127,7 +127,9 @@
     document.body.appendChild(btn);
 
     btn.addEventListener("click", function () {
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      var quiet = window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      window.scrollTo({ top: 0, behavior: quiet ? "auto" : "smooth" });
     });
 
     var visible = false;

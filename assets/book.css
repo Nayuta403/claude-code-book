@@ -774,6 +774,25 @@ footer.colophon .right {
 ::selection { background: var(--rose-dim); color: var(--ink); }
 
 /* ========================================================== */
+/* Accessibility — respect prefers-reduced-motion              */
+/* ========================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .read-progress { transition: none !important; }
+  .copy-btn,
+  .to-top-btn,
+  .h-anchor,
+  .btn-primary .arrow { transform: none !important; }
+}
+
+/* ========================================================== */
 /* Print stylesheet — chapter pages render clean as PDF / paper */
 /* ========================================================== */
 @media print {
