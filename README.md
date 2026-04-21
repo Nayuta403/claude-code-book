@@ -2,6 +2,8 @@
 
 《Claude Code 源码解读》一书的网页。
 
+🌐 **上线站点：[https://nayuta403.github.io/claude-code-book/](https://nayuta403.github.io/claude-code-book/)**
+
 四个排版方向的 showcase：
 
 - `/` — 方向选择首页
