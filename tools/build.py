@@ -787,7 +787,12 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://nayuta403.github.io/claude-code-book/ch{ch['id']:02d}/">
 <meta property="og:locale" content="zh_CN">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://nayuta403.github.io/claude-code-book/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Claude &amp; Code · 源码解读 · 二十三章">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://nayuta403.github.io/claude-code-book/assets/og.png">
 <link rel="icon" type="image/svg+xml" href="../favicon.svg">
 {FONTS_HEAD}
 <link rel="stylesheet" href="../assets/book.css">
