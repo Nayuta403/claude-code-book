@@ -917,6 +917,52 @@ def render_outline(entries: list[tuple[str, str]]) -> str:
         '</details>'
     )
 
+def build_sitemap() -> Path:
+    """Regenerate /sitemap.xml with current per-chapter lastmod dates.
+
+    Includes site root, 23 chapters, showcase archive. 404 is excluded
+    (noindex) and the a/b/c/d-magazine archives are omitted as design
+    artifacts."""
+    from datetime import datetime
+    SITE = "https://nayuta403.github.io/claude-code-book"
+
+    def mtime_for(rel_path: str) -> str:
+        p = OUT_ROOT / rel_path
+        if not p.exists():
+            return datetime.now().strftime("%Y-%m-%d")
+        return datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d")
+
+    urls: list[tuple[str, str, str, str]] = []
+    urls.append((f"{SITE}/",            mtime_for("index.html"),    "1.00", "weekly"))
+    for ch in CHAPTERS:
+        urls.append((
+            f"{SITE}/ch{ch['id']:02d}/",
+            source_mtime(ch) or mtime_for(f"ch{ch['id']:02d}/index.html"),
+            "0.90",
+            "monthly",
+        ))
+    urls.append((f"{SITE}/showcase.html", mtime_for("showcase.html"), "0.30", "yearly"))
+
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for loc, lastmod, priority, freq in urls:
+        lines.extend([
+            "  <url>",
+            f"    <loc>{loc}</loc>",
+            f"    <lastmod>{lastmod[:10]}</lastmod>",
+            f"    <changefreq>{freq}</changefreq>",
+            f"    <priority>{priority}</priority>",
+            "  </url>",
+        ])
+    lines.append("</urlset>")
+    lines.append("")
+
+    out = OUT_ROOT / "sitemap.xml"
+    out.write_text("\n".join(lines), encoding="utf-8")
+    return out
+
 def build_chapter(ch: dict) -> Path:
     src_path = SRC_DIR / f"{ch['slug']}.md"
     src = src_path.read_text(encoding="utf-8")
@@ -945,6 +991,10 @@ def main() -> int:
             print(f"  FAIL  ch{ch['id']:02d}: {e}", file=sys.stderr)
             raise
     print(f"\n  total: {len(built)} chapters")
+    # Regenerate sitemap only when building the full set (not --only a chapter)
+    if not only:
+        sm = build_sitemap()
+        print(f"  sitemap: {sm}")
     return 0
 
 if __name__ == "__main__":
