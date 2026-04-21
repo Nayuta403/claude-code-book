@@ -73,6 +73,41 @@
     initKeyNav();
     initHelpOverlay();
     initOutlineSpy();
+    initPrintExpand();
+  }
+
+  function initPrintExpand() {
+    // Force <details> open on print so the outline becomes a static
+    // Contents block in the exported PDF; restore after print.
+    function openAll() {
+      var dets = document.querySelectorAll("details.chap-outline");
+      for (var i = 0; i < dets.length; i++) {
+        if (dets[i].dataset._wasOpen == null) {
+          dets[i].dataset._wasOpen = dets[i].open ? "1" : "0";
+        }
+        dets[i].open = true;
+      }
+    }
+    function restore() {
+      var dets = document.querySelectorAll("details.chap-outline");
+      for (var i = 0; i < dets.length; i++) {
+        if (dets[i].dataset._wasOpen != null) {
+          dets[i].open = dets[i].dataset._wasOpen === "1";
+          delete dets[i].dataset._wasOpen;
+        }
+      }
+    }
+    window.addEventListener("beforeprint", openAll);
+    window.addEventListener("afterprint", restore);
+    // Safari also supports MediaQueryList 'change' for print
+    if (window.matchMedia) {
+      var mql = window.matchMedia("print");
+      if (mql.addEventListener) {
+        mql.addEventListener("change", function (m) {
+          if (m.matches) openAll(); else restore();
+        });
+      }
+    }
   }
 
   function initOutlineSpy() {

@@ -919,8 +919,47 @@ footer.colophon .right {
   .to-top-btn,
   .copy-btn,
   .chap-nav,
-  .article .prose .chap-outline,
+  .kb-help,
+  .skip-link,
   .article .prose .h-anchor { display: none !important; }
+
+  /* Repurpose the chap-outline as a static Contents block on print */
+  .article .prose .chap-outline {
+    background: transparent !important;
+    border: 1px solid #bbb !important;
+    padding: 10pt 14pt !important;
+    margin: 0 0 18pt 0 !important;
+    break-inside: avoid;
+  }
+  .article .prose .chap-outline summary { display: none !important; }
+  .article .prose .chap-outline ol {
+    display: block !important;
+    columns: 2 !important;
+    column-gap: 16pt !important;
+    margin: 0 !important;
+    font-size: 9pt !important;
+    line-height: 1.5 !important;
+  }
+  .article .prose .chap-outline li { padding-left: 22pt !important; }
+  .article .prose .chap-outline li::before {
+    color: #666 !important;
+    font-size: 8pt !important;
+  }
+  .article .prose .chap-outline a {
+    color: #111 !important;
+    border: none !important;
+    text-decoration: none !important;
+  }
+  /* Label the block so readers know what it is */
+  .article .prose .chap-outline::before {
+    content: "CONTENTS";
+    display: block;
+    font-family: var(--mono);
+    font-size: 8pt;
+    letter-spacing: 0.22em;
+    color: #666;
+    margin-bottom: 6pt;
+  }
 
   /* Neutral bg & full black ink */
   html, body {
