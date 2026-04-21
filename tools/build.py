@@ -853,7 +853,9 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
 <link rel="manifest" href="../manifest.webmanifest">
 <link rel="canonical" href="{chapter_url}">
 {seq_links}
-<meta name="theme-color" content="#DD4B8E">
+<meta name="author" content="Nayuta">
+<meta name="theme-color" content="#F5EEF0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#DD4B8E" media="(prefers-color-scheme: dark)">
 {FONTS_HEAD}
 <link rel="stylesheet" href="../assets/book.css">
 {jsonld_script}
