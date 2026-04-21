@@ -377,6 +377,23 @@ h1.chap-title .cn {
 .article .prose a code.ref { color: var(--rose); }
 .article .prose a { color: var(--rose); text-decoration: none; border-bottom: 1px solid var(--rose-dim); transition: border-color .2s; }
 .article .prose a:hover { border-bottom-color: var(--rose); }
+
+/* Subtle ↗ cue after external links so readers know it leaves the site.
+   .chref is never http-prefixed so no need to exclude it. */
+.article .prose a[href^="http"]::after {
+  content: "↗";
+  font-size: 0.7em;
+  margin-left: 0.15em;
+  vertical-align: 0.18em;
+  color: var(--ash);
+  border-bottom: none;
+  display: inline-block;
+  transition: color .15s, transform .15s var(--ease-out);
+}
+.article .prose a[href^="http"]:hover::after {
+  color: var(--rose);
+  transform: translate(1px, -1px);
+}
 .article .prose a.chref {
   font-family: var(--mono);
   font-size: 0.86em;
