@@ -1,0 +1,34 @@
+{
+  "name": "Claude Code 源码解读",
+  "short_name": "CC 源码解读",
+  "description": "二十三章深读一个十万行的终端 agent。每章只讲一个值得借鉴的工程设计点。",
+  "lang": "zh-Hans",
+  "dir": "ltr",
+  "start_url": "/claude-code-book/",
+  "scope": "/claude-code-book/",
+  "display": "minimal-ui",
+  "orientation": "any",
+  "background_color": "#F5EEF0",
+  "theme_color": "#DD4B8E",
+  "categories": ["books", "education", "reference"],
+  "icons": [
+    {
+      "src": "/claude-code-book/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/claude-code-book/assets/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/claude-code-book/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

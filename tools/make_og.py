@@ -15,6 +15,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 OUT = Path("/Users/nayuta/ai/claude-code-book/assets/og.png")
+APPLE_OUT = Path("/Users/nayuta/ai/claude-code-book/assets/apple-touch-icon.png")
+ICON_512_OUT = Path("/Users/nayuta/ai/claude-code-book/assets/icon-512.png")
 
 FONT_LATIN_IT = "/System/Library/Fonts/Supplemental/Georgia Italic.ttf"
 FONT_LATIN_BOLD = "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf"
@@ -125,5 +127,60 @@ def main() -> None:
     img.save(OUT, format="PNG", optimize=True)
     print(f"  wrote {OUT}  ({OUT.stat().st_size // 1024} KB)")
 
+def draw_icon(size: int) -> Image.Image:
+    """Draw a square app icon: cream bg + rose book-spine + italic & glyph.
+    Designed to read at 40px yet still feel composed at 512px."""
+    img = Image.new("RGB", (size, size), CREAM)
+    d = ImageDraw.Draw(img)
+
+    # Proportions relative to size
+    spine_x0 = int(size * 0.28)
+    spine_x1 = int(size * 0.72)
+    spine_y0 = int(size * 0.11)
+    spine_y1 = int(size * 0.89)
+    r = max(2, int(size * 0.035))
+
+    # Rose spine with light inner dividers near each edge
+    d.rounded_rectangle(
+        (spine_x0, spine_y0, spine_x1, spine_y1),
+        radius=r,
+        fill=ROSE,
+    )
+    divider_inset = max(2, int(size * 0.03))
+    dim_cream = (250, 240, 240, 140)
+    overlay = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    od.line(
+        [(spine_x0 + divider_inset, spine_y0 + r),
+         (spine_x0 + divider_inset, spine_y1 - r)],
+        fill=dim_cream, width=max(1, int(size * 0.008)),
+    )
+    od.line(
+        [(spine_x1 - divider_inset, spine_y0 + r),
+         (spine_x1 - divider_inset, spine_y1 - r)],
+        fill=dim_cream, width=max(1, int(size * 0.008)),
+    )
+    img.paste(overlay, (0, 0), overlay)
+
+    # italic ampersand centered on spine
+    # pick font size ~50% of icon height
+    f = load(FONT_LATIN_BOLD, int(size * 0.5))
+    amp = "&"
+    bbox = d.textbbox((0, 0), amp, font=f)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    tx = (size - tw) // 2 - bbox[0]
+    ty = (size - th) // 2 - bbox[1] - int(size * 0.02)
+    d.text((tx, ty), amp, font=f, fill=CREAM)
+    return img
+
+def make_app_icons() -> None:
+    APPLE_OUT.parent.mkdir(parents=True, exist_ok=True)
+    draw_icon(180).save(APPLE_OUT, format="PNG", optimize=True)
+    print(f"  wrote {APPLE_OUT}  ({APPLE_OUT.stat().st_size // 1024} KB)")
+    draw_icon(512).save(ICON_512_OUT, format="PNG", optimize=True)
+    print(f"  wrote {ICON_512_OUT}  ({ICON_512_OUT.stat().st_size // 1024} KB)")
+
 if __name__ == "__main__":
     main()
+    make_app_icons()

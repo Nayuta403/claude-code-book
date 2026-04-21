@@ -794,6 +794,9 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://nayuta403.github.io/claude-code-book/assets/og.png">
 <link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
+<link rel="manifest" href="../manifest.webmanifest">
+<meta name="theme-color" content="#DD4B8E">
 {FONTS_HEAD}
 <link rel="stylesheet" href="../assets/book.css">
 {jsonld_script}
