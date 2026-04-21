@@ -779,6 +779,17 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
 
     chapter_url = f"https://nayuta403.github.io/claude-code-book/ch{ch['id']:02d}/"
     book_url    = "https://nayuta403.github.io/claude-code-book/"
+    idx = ch["id"] - 1
+    prev_link = ""
+    next_link = ""
+    if idx > 0:
+        p = CHAPTERS[idx - 1]
+        prev_link = f'<link rel="prev" href="../ch{p["id"]:02d}/" title="Ch.{p["id"]:02d} {html.escape(p["cn"])}">'
+    if idx < len(CHAPTERS) - 1:
+        n = CHAPTERS[idx + 1]
+        next_link = f'<link rel="next" href="../ch{n["id"]:02d}/" title="Ch.{n["id"]:02d} {html.escape(n["cn"])}">'
+    up_link = f'<link rel="up" href="../" title="目录">'
+    seq_links = prev_link + next_link + up_link
     # JSON-LD Article schema (escape-safe: pre-build dict, json.dumps for safety)
     import json as _json
     jsonld = {
@@ -821,6 +832,8 @@ def render_page(ch: dict, title: str, cn_hint: str, body_html: str, src: str) ->
 <link rel="icon" type="image/svg+xml" href="../favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
 <link rel="manifest" href="../manifest.webmanifest">
+<link rel="canonical" href="{chapter_url}">
+{seq_links}
 <meta name="theme-color" content="#DD4B8E">
 {FONTS_HEAD}
 <link rel="stylesheet" href="../assets/book.css">
