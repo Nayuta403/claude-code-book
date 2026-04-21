@@ -17,6 +17,39 @@ from PIL import Image, ImageDraw, ImageFont
 OUT = Path("/Users/nayuta/ai/claude-code-book/assets/og.png")
 APPLE_OUT = Path("/Users/nayuta/ai/claude-code-book/assets/apple-touch-icon.png")
 ICON_512_OUT = Path("/Users/nayuta/ai/claude-code-book/assets/icon-512.png")
+OG_CH_DIR = Path("/Users/nayuta/ai/claude-code-book/assets")
+
+# ------- per-chapter info (kept in sync with tools/build.py CHAPTERS) -------
+CHAPTERS = [
+    {"id": 1,  "en": "Feature Inventory",    "cn": "功能全景清单",             "part": 1},
+    {"id": 2,  "en": "Showcase",             "cn": "典型使用场景",             "part": 1},
+    {"id": 3,  "en": "Agent Loop",           "cn": "推理·工具循环主引擎",       "part": 2},
+    {"id": 4,  "en": "Multi-Agent",          "cn": "Sub-Agent 协程调度",       "part": 2},
+    {"id": 5,  "en": "Plan Mode",            "cn": "让 Agent 先想后做",        "part": 2},
+    {"id": 6,  "en": "Worktree",             "cn": "隔离模式",                  "part": 2},
+    {"id": 7,  "en": "Context",              "cn": "上下文管理与记忆",          "part": 2},
+    {"id": 8,  "en": "Tools",                "cn": "Tool 接口与 ToolSearch",   "part": 2},
+    {"id": 9,  "en": "Permissions",          "cn": "每次都问却不烦",            "part": 2},
+    {"id": 10, "en": "Skills",               "cn": "技能系统",                  "part": 3},
+    {"id": 11, "en": "Plugins",              "cn": "插件系统",                  "part": 3},
+    {"id": 12, "en": "MCP",                  "cn": "集成与 upstream 代理",      "part": 3},
+    {"id": 13, "en": "Cron",                 "cn": "定时任务",                  "part": 3},
+    {"id": 14, "en": "Hooks",                "cn": "可编程生命周期",            "part": 3},
+    {"id": 15, "en": "Proactive",            "cn": "主动提示而不打扰",          "part": 4},
+    {"id": 16, "en": "Background",           "cn": "后台任务",                  "part": 4},
+    {"id": 17, "en": "Remote",               "cn": "Sessions 与 Teleport",      "part": 4},
+    {"id": 18, "en": "Multi-host",           "cn": "IDE / Chrome / Computer Use", "part": 4},
+    {"id": 19, "en": "Buddy",                "cn": "宠物系统",                  "part": 4},
+    {"id": 20, "en": "Input",                "cn": "语音 / Vim / 键位",         "part": 4},
+    {"id": 21, "en": "Ink UI",               "cn": "终端 UI 背后的工程",        "part": 5},
+    {"id": 22, "en": "Observability",        "cn": "成本 / 可观测 / 调试",      "part": 5},
+    {"id": 23, "en": "Agent SDK",            "cn": "把 Claude Code 当库用",     "part": 5},
+]
+PART_NAMES = {
+    1: "Overview",   2: "Core Engine",   3: "Extensions",
+    4: "Interactions", 5: "Engineering",
+}
+ROMAN = {1: "I", 2: "II", 3: "III", 4: "IV", 5: "V"}
 
 FONT_LATIN_IT = "/System/Library/Fonts/Supplemental/Georgia Italic.ttf"
 FONT_LATIN_BOLD = "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf"
@@ -181,6 +214,90 @@ def make_app_icons() -> None:
     draw_icon(512).save(ICON_512_OUT, format="PNG", optimize=True)
     print(f"  wrote {ICON_512_OUT}  ({ICON_512_OUT.stat().st_size // 1024} KB)")
 
+def draw_chapter_og(ch: dict) -> Image.Image:
+    """Per-chapter 1200x630 social card: big italic chapter number on the
+    right, English title + Chinese title on the left, part eyebrow up top."""
+    img = Image.new("RGB", (W, H), CREAM)
+
+    # same warm glows as the main OG
+    blush = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(blush)
+    for r, a in [(420, 28), (300, 48), (180, 70)]:
+        bd.ellipse((80 - r, -60 - r, 80 + r, -60 + r), fill=(235, 190, 210, a))
+    for r, a in [(440, 26), (320, 42), (180, 60)]:
+        bd.ellipse((W + 40 - r, H - 40 - r, W + 40 + r, H - 40 + r),
+                   fill=(238, 220, 195, a))
+    img.paste(blush, (0, 0), blush)
+
+    d = ImageDraw.Draw(img)
+
+    # inset border
+    d.rectangle((28, 28, W - 28, H - 28), outline=MIST, width=1)
+
+    # eyebrow: "PART II · CORE ENGINE · CHAPTER 03"
+    f_eye = load(FONT_CJK_SANS, 20, index=1)
+    eyebrow = f"PART {ROMAN[ch['part']]}  ·  {PART_NAMES[ch['part']].upper()}  ·  CHAPTER {ch['id']:02d}"
+    d.text((70, 74), eyebrow, font=f_eye, fill=ROSE)
+
+    # English chapter name — big italic, wraps if long
+    f_en = load(FONT_LATIN_IT, 122)
+    max_w = 680
+    # naive wrap: break on space if too wide
+    words = ch["en"].split()
+    lines = []
+    buf = ""
+    for w in words:
+        test = (buf + " " + w).strip()
+        if d.textlength(test, font=f_en) <= max_w:
+            buf = test
+        else:
+            if buf: lines.append(buf)
+            buf = w
+    if buf: lines.append(buf)
+    lh = 120
+    y0 = 128
+    for i, line in enumerate(lines[:2]):
+        d.text((68, y0 + i * lh), line, font=f_en, fill=INK)
+
+    # Chinese chapter topic (subtitle)
+    f_cn = load(FONT_CJK_SERIF, 46, index=3)
+    d.text((68, y0 + len(lines) * lh + 12), ch["cn"], font=f_cn, fill=CHARCOAL)
+
+    # Meta row at bottom
+    f_meta = load(FONT_CJK_SANS, 18, index=1)
+    meta = f"ch.{ch['id']:02d} / 23      ·      nayuta403.github.io/claude-code-book"
+    d.text((70, H - 76), meta, font=f_meta, fill=ASH)
+
+    # Right — BIG italic chapter number
+    f_num = load(FONT_LATIN_IT, 400)
+    num_text = f"{ch['id']:02d}"
+    tw = d.textlength(num_text, font=f_num)
+    nx = W - 70 - tw
+    ny = 150
+    # First digit ink, second rose
+    digits = list(num_text)
+    w_a = d.textlength(digits[0], font=f_num)
+    d.text((nx, ny), digits[0], font=f_num, fill=INK)
+    d.text((nx + w_a, ny), digits[1], font=f_num, fill=ROSE)
+
+    # Small vertical label next to the numeral
+    f_cap = load(FONT_CJK_SANS, 15, index=1)
+    cap = "CHAPTER · SOURCE READING · CLAUDE CODE"
+    sub = Image.new("RGBA", (620, 32), (0, 0, 0, 0))
+    ImageDraw.Draw(sub).text((0, 0), cap, font=f_cap, fill=ASH)
+    sub = sub.rotate(90, expand=True, resample=Image.BICUBIC)
+    img.paste(sub, (W - 92, 5), sub)
+
+    return img
+
+def make_chapter_ogs() -> None:
+    OG_CH_DIR.mkdir(parents=True, exist_ok=True)
+    for ch in CHAPTERS:
+        out = OG_CH_DIR / f"og-ch{ch['id']:02d}.png"
+        draw_chapter_og(ch).save(out, format="PNG", optimize=True)
+        print(f"  wrote {out.name}  ({out.stat().st_size // 1024} KB)")
+
 if __name__ == "__main__":
     main()
     make_app_icons()
+    make_chapter_ogs()
